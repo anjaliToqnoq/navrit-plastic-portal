@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-label="PET PP HDPE materials">
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#f0fdf4"/>
+      <stop offset="1" stop-color="#bbf7d0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="720" fill="url(#bg3)"/>
+  <rect x="140" y="150" width="260" height="340" rx="32" fill="#16a34a"/>
+  <rect x="470" y="190" width="260" height="300" rx="32" fill="#84cc16"/>
+  <rect x="800" y="130" width="260" height="360" rx="32" fill="#10b981"/>
+  <circle cx="270" cy="260" r="42" fill="#fff" fill-opacity="0.35"/>
+  <circle cx="600" cy="290" r="42" fill="#fff" fill-opacity="0.35"/>
+  <circle cx="930" cy="250" r="42" fill="#fff" fill-opacity="0.35"/>
+  <text x="270" y="400" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif" font-size="42" font-weight="800">PET</text>
+  <text x="600" y="420" text-anchor="middle" fill="#14532d" font-family="system-ui,sans-serif" font-size="42" font-weight="800">PP</text>
+  <text x="930" y="400" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif" font-size="42" font-weight="800">HDPE</text>
+  <text x="600" y="620" text-anchor="middle" fill="#14532d" font-family="system-ui,sans-serif" font-size="32" font-weight="700">Know your materials</text>
+</svg>

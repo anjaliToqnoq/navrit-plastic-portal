@@ -2,12 +2,16 @@
   "name": "plastic-portal",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "NAVRIT_SQLITE_MEMORY=1 next build",
     "start": "next start",
     "lint": "eslint .",
     "db:seed": "node --env-file=.env.local src/db/seed.mjs",
+    "db:seed:prod": "node src/db/seed.mjs",
     "db:backup": "tsx scripts/db-backup.ts",
     "db:restore": "tsx scripts/db-restore.ts",
     "db:restore:list": "tsx scripts/db-restore.ts --list",

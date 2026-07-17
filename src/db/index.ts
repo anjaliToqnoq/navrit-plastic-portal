@@ -3,17 +3,40 @@ import fs from "fs";
 import path from "path";
 
 const dataDir = path.join(process.cwd(), "data");
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
 const dbPath = path.join(dataDir, "plastic-rates.db");
 
 const globalForDb = globalThis as unknown as { __plasticDb?: DatabaseSync };
 
+/**
+ * Next.js spawns many workers during `next build` that all import API/page modules.
+ * Opening the same SQLite file from those workers causes ERR_SQLITE_ERROR "database is locked".
+ * Use in-memory DB for the entire build (set by npm script + fallbacks).
+ */
+function shouldUseMemoryDb() {
+  return (
+    process.env.NAVRIT_SQLITE_MEMORY === "1" ||
+    process.env.npm_lifecycle_event === "build" ||
+    process.env.NEXT_PHASE === "phase-production-build" ||
+    process.env.NEXT_PHASE === "phase-export"
+  );
+}
+
 function createDb() {
-  const sqlite = new DatabaseSync(dbPath);
-  sqlite.exec("PRAGMA journal_mode = WAL;");
+  const memory = shouldUseMemoryDb();
+
+  if (!memory && !fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+
+  const sqlite = new DatabaseSync(memory ? ":memory:" : dbPath);
+  sqlite.exec("PRAGMA busy_timeout = 10000;");
+  if (!memory) {
+    try {
+      sqlite.exec("PRAGMA journal_mode = WAL;");
+    } catch {
+      // Ignore if another process holds the lock briefly
+    }
+  }
   sqlite.exec("PRAGMA foreign_keys = ON;");
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS admins (
@@ -108,10 +131,20 @@ function seedSiteContent(db: DatabaseSync) {
   }
 }
 
-export const sqlite = globalForDb.__plasticDb ?? createDb();
-if (process.env.NODE_ENV !== "production") {
-  globalForDb.__plasticDb = sqlite;
+function getDb() {
+  if (!globalForDb.__plasticDb) {
+    globalForDb.__plasticDb = createDb();
+  }
+  return globalForDb.__plasticDb;
 }
+
+export const sqlite = new Proxy({} as DatabaseSync, {
+  get(_target, prop) {
+    const db = getDb();
+    const value = Reflect.get(db, prop, db);
+    return typeof value === "function" ? value.bind(db) : value;
+  },
+});
 
 export type Category = {
   id: number;
@@ -132,16 +165,6 @@ export type Material = {
   unit: string;
   sort_order: number;
   active: number;
-  created_at: string;
-  updated_at: string;
-};
-
-export type RateSnapshot = {
-  id: number;
-  material_id: number;
-  rate_date: string;
-  rate: number;
-  published: number;
   created_at: string;
   updated_at: string;
 };

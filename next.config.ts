@@ -1,9 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Fewer parallel page-data workers → fewer SQLite open races on platforms like Railway
   experimental: {
-    // Allow Node built-in sqlite in server components / route handlers
+    cpus: 1,
   },
+  output: "standalone",
   serverExternalPackages: [],
 };
 

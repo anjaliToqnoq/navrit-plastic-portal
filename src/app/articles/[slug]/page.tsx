@@ -3,6 +3,7 @@ import { getArticleBySlug, serializeArticles } from "@/lib/articles";
 import { ArticleDetailClient } from "@/components/article-detail-client";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 type Props = { params: Promise<{ slug: string }> };
 

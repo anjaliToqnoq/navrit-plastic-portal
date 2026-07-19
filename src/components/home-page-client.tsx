@@ -11,6 +11,7 @@ import type { Article } from "@/lib/articles";
 
 type Props = {
   date: string;
+  ratesAsOf?: string;
   rows: TodayRateRow[];
   stats: {
     totalCategories: number;
@@ -21,14 +22,15 @@ type Props = {
   articles: Article[];
 };
 
-export function HomePageClient({ date, rows, stats, articles }: Props) {
+export function HomePageClient({ date, ratesAsOf, rows, stats, articles }: Props) {
   const { dict } = useLocale();
   const average =
     rows.length > 0 ? rows.reduce((s, r) => s + r.rate, 0) / rows.length : null;
+  const boardDate = ratesAsOf || date;
 
   return (
     <>
-      <HomeHero date={date} rows={rows} stats={stats} />
+      <HomeHero date={date} rows={rows} stats={stats} ratesAsOf={ratesAsOf} />
 
       <div id="rates" className="scroll-mt-28">
         <div className="container-premium space-y-8 py-12 sm:py-16">
@@ -52,7 +54,7 @@ export function HomePageClient({ date, rows, stats, articles }: Props) {
             materialCount={rows.length}
             average={average}
           />
-          <RateTable rows={rows} date={date} lastUpdated={stats.lastUpdated} />
+          <RateTable rows={rows} date={boardDate} lastUpdated={stats.lastUpdated} />
         </div>
       </div>
 

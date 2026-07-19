@@ -8,6 +8,7 @@ import type { TodayRateRow } from "@/lib/rates";
 
 type Props = {
   date: string;
+  ratesAsOf?: string;
   rows: TodayRateRow[];
   stats: {
     totalCategories: number;
@@ -17,19 +18,21 @@ type Props = {
   };
 };
 
-export function HomeHero({ date, rows, stats }: Props) {
+export function HomeHero({ date, ratesAsOf, rows, stats }: Props) {
   const { locale, dict } = useLocale();
   const brand = process.env.NEXT_PUBLIC_BUSINESS_NAME || dict.brand;
 
+  // Parse as calendar date (noon local) so IST "today" doesn't shift by timezone
   const formatted = new Date(date + "T12:00:00").toLocaleDateString(
     locale === "hi" ? "hi-IN" : "en-IN",
-    { weekday: "long", year: "numeric", month: "long", day: "numeric" }
+    { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Kolkata" }
   );
+  const staleRates = ratesAsOf && ratesAsOf !== date;
 
   function onPdf() {
     downloadRatesPdf({
       title: dict.todaysRates,
-      date,
+      date: ratesAsOf || date,
       business: brand,
       locale,
       rows,
@@ -69,6 +72,13 @@ export function HomeHero({ date, rows, stats }: Props) {
             <span className="live-dot size-1.5 rounded-full bg-[#16a34a]" />
             {formatted}
           </div>
+          {staleRates ? (
+            <p className="mt-2 text-xs text-[var(--nv-muted)]">
+              {locale === "hi"
+                ? `दरें अंतिम अपडेट: ${ratesAsOf}`
+                : `Rates as of ${ratesAsOf} (today’s board not published yet)`}
+            </p>
+          ) : null}
 
           <h1 className="mt-6 max-w-xl font-display text-4xl leading-[1.05] text-[var(--nv-text)] sm:text-5xl lg:text-6xl">
             {locale === "hi" ? (

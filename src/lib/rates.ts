@@ -1,8 +1,14 @@
 import { format, startOfMonth, subDays, subMonths } from "date-fns";
 import { sqlite, type Category, type Material } from "@/db";
 
+/** Business day in India (IST) — Railway servers are often US time. */
 export function todayStr(d = new Date()) {
-  return format(d, "yyyy-MM-dd");
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
 }
 
 export function nowIso() {
@@ -48,10 +54,17 @@ export function getLatestPublishedDate(): string | null {
 }
 
 export function getPublicRates() {
+  const today = todayStr();
+  const todayRows = getTodayRates(today);
+  if (todayRows.length > 0) {
+    return { date: today, rows: todayRows, ratesAsOf: today };
+  }
+  // No rates for IST today yet — show latest board, but badge stays on calendar today
   const latest = getLatestPublishedDate();
-  const date = latest ?? todayStr();
-  const rows = getTodayRates(date);
-  return { date, rows };
+  if (latest) {
+    return { date: today, rows: getTodayRates(latest), ratesAsOf: latest };
+  }
+  return { date: today, rows: [], ratesAsOf: today };
 }
 
 export function getStats(rows: TodayRateRow[]) {

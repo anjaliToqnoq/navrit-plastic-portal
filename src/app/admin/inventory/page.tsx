@@ -22,6 +22,7 @@ export default function InventoryPage() {
   const { mode } = useBusinessMode();
   const [data,setData] = useState<any>(null);
   const [tab,setTab] = useState("purchases");
+  const [sale,setSale] = useState({customerName:"",phone:"",location:"",materialCategory:"",materialVariant:"",quantityKg:"",ratePerKg:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",saleDate:new Date().toISOString().slice(0,10),notes:""});
   const [message,setMessage] = useState("");
   const emptyPurchase = { materialId:"", materialName:"", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), notes:"", transportCharges:"", weightCharges:"", labourCharges:"" };
   const [purchase,setPurchase] = useState(emptyPurchase);
@@ -54,6 +55,16 @@ export default function InventoryPage() {
     return true;
   }
 
+  async function addSale() {
+    await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,materialCategory:sale.materialCategory,materialVariant:sale.materialVariant,quantityKg:Number(sale.quantityKg),ratePerKg:Number(sale.ratePerKg),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
+    setSale({customerName:"",phone:"",location:"",materialCategory:"",materialVariant:"",quantityKg:"",ratePerKg:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",saleDate:new Date().toISOString().slice(0,10),notes:""});
+  }
+
+  async function receiveSalePayment(s:any) {
+    const v=prompt("Payment amount",String(s.credit_amount));
+    if(v) await post("receiveSalePayment",{mode,saleId:s.id,amount:Number(v),receivedBy:prompt("Received by (Rahul / Devesh / Nitin)")||undefined,paymentMode:prompt("Payment mode","Cash")||"Cash",paymentDate:new Date().toISOString().slice(0,10)});
+  }
+
   async function addPurchase() {
     const m=materials.find((x:Material)=>String(x.id)===purchase.materialId);
     const ok=await post("addPurchase",{
@@ -63,7 +74,7 @@ export default function InventoryPage() {
       ratePerKg:Number(purchase.ratePerKg), paidAmount:purchase.paidAmount===""?undefined:Number(purchase.paidAmount), paidBy:purchase.paidBy||undefined,
       transportCharges:Number(purchase.transportCharges||0), weightCharges:Number(purchase.weightCharges||0), labourCharges:Number(purchase.labourCharges||0),
       borrowingId:purchase.borrowingId?Number(purchase.borrowingId):undefined,
-      lenderId:purchase.lenderId?Number(purchase.lenderId):undefined, purchaseDate:purchase.purchaseDate, notes:purchase.notes
+      lenderId:purchase.lenderId?Number(purchase.lenderId):undefined, purchaseDate:purchase.purchaseDate, notes:purchase.notes, materialVariant:purchase.materialName==="Natural Bottles"?purchase.materialVariant||undefined:undefined
     });
     if(ok)setPurchase({...emptyPurchase});
   }
@@ -73,7 +84,7 @@ export default function InventoryPage() {
     const m=materials.find((x:Material)=>String(x.id)===purchase.materialId);
     const ok=await post("updatePurchase",{
       purchaseId:editingPurchase, mode, materialId:m?.id, materialName:purchase.materialName||m?.name_en,
-      supplierId:purchase.supplierId?Number(purchase.supplierId):undefined, purchaseType:purchase.purchaseType,
+      supplierId:purchase.supplierId?Number(purchase.supplierId):undefined, purchaseType:purchase.purchaseType, materialVariant:purchase.materialName==="Natural Bottles"?purchase.materialVariant||undefined:undefined,
       quantityKg:Number(purchase.quantityKg), ratePerKg:Number(purchase.ratePerKg), paidBy:purchase.paidBy||undefined, purchaseDate:purchase.purchaseDate, notes:purchase.notes,
       transportCharges:Number(purchase.transportCharges||0), weightCharges:Number(purchase.weightCharges||0), labourCharges:Number(purchase.labourCharges||0)
     });
@@ -120,7 +131,7 @@ export default function InventoryPage() {
     </div>
 
     <div className="mb-4 flex flex-wrap gap-2">
-      {[["purchases","Purchases"],["inventory","Inventory"],["borrowings","Borrowings"]].map(([value,label])=><button key={value} onClick={()=>setTab(value)} className={tab===value?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{label}</button>)}
+      {[["purchases","Purchases"],["sales","Sales"],["inventory","Inventory"],["borrowings","Borrowings"]].map(([value,label])=><button key={value} onClick={()=>setTab(value)} className={tab===value?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{label}</button>)}
     </div>
 
     {tab==="purchases" && <div className="space-y-5">
@@ -135,6 +146,7 @@ export default function InventoryPage() {
             <option value="Natural Bottles">Natural Bottles</option>
             <option value="Red Bottles">Red Bottles</option>
           </select>
+          {purchase.materialName==="Natural Bottles" && <select className="ad-input" value={purchase.materialVariant} onChange={e=>setPurchase({...purchase,materialVariant:e.target.value})}><option value="">Natural type</option><option value="Green">Green</option><option value="White">White</option></select>}
           
           <input className="ad-input" type="date" value={purchase.purchaseDate} onChange={e=>setPurchase({...purchase,purchaseDate:e.target.value})}/>
           <input className="ad-input" type="number" placeholder="Quantity (kg)" value={purchase.quantityKg} onChange={e=>setPurchase({...purchase,quantityKg:e.target.value})}/>
@@ -155,6 +167,37 @@ export default function InventoryPage() {
       </tbody></table></div>
     </div>}
 
+    {tab==="sales" && <div className="space-y-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Company Balance</p><p className="mt-1 text-2xl font-bold">₹{Number(data.cashBalance?.[mode]||0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Total Sales</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.total_amount||0),0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Received</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.received_amount||0),0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Pending</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.credit_amount||0),0).toFixed(2)}</p></div>
+      </div>
+      <div className="ad-card p-4">
+        <h2 className="mb-3 font-semibold">Add Sale</h2>
+        <div className="grid gap-2 md:grid-cols-4">
+          <input className="ad-input" placeholder="Customer / Buyer name" value={sale.customerName} onChange={e=>setSale({...sale,customerName:e.target.value})}/>
+          <input className="ad-input" placeholder="Contact number" value={sale.phone} onChange={e=>setSale({...sale,phone:e.target.value})}/>
+          <input className="ad-input" placeholder="Location" value={sale.location} onChange={e=>setSale({...sale,location:e.target.value})}/>
+          <input className="ad-input" type="date" value={sale.saleDate} onChange={e=>setSale({...sale,saleDate:e.target.value})}/>
+          <select className="ad-input" value={sale.materialCategory} onChange={e=>setSale({...sale,materialCategory:e.target.value,materialVariant:e.target.value==="Red Bottles"?"Red":""})}><option value="">Material</option><option value="Natural Bottles">Natural Bottles</option><option value="Red Bottles">Red Bottles</option></select>
+          {sale.materialCategory==="Natural Bottles" && <select className="ad-input" value={sale.materialVariant} onChange={e=>setSale({...sale,materialVariant:e.target.value})}><option value="">Select type</option><option value="Green">Green</option><option value="White">White</option></select>}
+          <input className="ad-input" type="number" placeholder="Quantity (kg)" value={sale.quantityKg} onChange={e=>setSale({...sale,quantityKg:e.target.value})}/>
+          <input className="ad-input" type="number" placeholder="Selling rate / kg" value={sale.ratePerKg} onChange={e=>setSale({...sale,ratePerKg:e.target.value})}/>
+          <span className="ad-input flex items-center text-sm">Total: ₹{((Number(sale.quantityKg)||0)*(Number(sale.ratePerKg)||0)).toFixed(2)}</span>
+          <input className="ad-input" type="number" min="0" placeholder="Received amount" value={sale.receivedAmount} onChange={e=>setSale({...sale,receivedAmount:e.target.value})}/>
+          <select className="ad-input" value={sale.receivedBy} onChange={e=>setSale({...sale,receivedBy:e.target.value})}><option value="">Received by</option><option>Rahul</option><option>Devesh</option><option>Nitin</option></select>
+          <select className="ad-input" value={sale.paymentMode} onChange={e=>setSale({...sale,paymentMode:e.target.value})}><option>Cash</option><option>UPI</option><option>Bank Transfer</option><option>Cheque</option></select>
+          <input className="ad-input md:col-span-2" placeholder="Notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
+          <button className="ad-btn ad-btn-primary" onClick={addSale}>Save Sale</button>
+        </div>
+        <p className="mt-2 text-xs ad-muted">GST is intentionally not included for now.</p>
+      </div>
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Buyer</th><th>Contact</th><th>Material</th><th>Qty</th><th>Rate</th><th>Total</th><th>Received</th><th>Pending</th><th>Received by</th><th>Action</th></tr></thead><tbody>
+        {(data.sales||[]).filter((s:any)=>s.mode===mode).map((s:any)=><tr key={s.id}><td>{s.sale_date}</td><td>{s.customer_name}</td><td>{s.phone||"—"}</td><td>{s.material_category}{s.material_variant?" - "+s.material_variant:""}</td><td>{s.quantity_kg} kg</td><td>₹{s.rate_per_kg}</td><td>₹{s.total_amount}</td><td>₹{s.received_amount}</td><td>₹{s.credit_amount}</td><td>{s.received_amount>0?((data.salePayments||[]).find((p:any)=>p.sale_id===s.id)?.received_by||"—"):"—"}</td><td>{s.credit_amount>0?<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={()=>receiveSalePayment(s)}>Receive</button>:"PAID"}</td></tr>)}
+      </tbody></table></div>
+    </div>
     {tab==="inventory" && <div className="space-y-5">
       <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Inventory adjustment</h2><div className="grid gap-2 md:grid-cols-5">
         <select className="ad-input" value={adjust.materialId} onChange={e=>setAdjust({...adjust,materialId:e.target.value,materialName:""})}><option value="">Material</option>{materials.map((m:Material)=><option key={m.id} value={m.id}>{m.name_en}</option>)}</select>

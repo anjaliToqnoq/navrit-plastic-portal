@@ -14,7 +14,7 @@ type Purchase = {
   id:number; mode:Mode; material_name:string; purchase_type:string; quantity_kg:number;
   rate_per_kg:number; total_amount:number; paid_amount:number; credit_amount:number;
   transport_charges:number; weight_charges:number; labour_charges:number; effective_cost:number;
-  supplierName?:string; lenderName?:string; purchase_date:string; paid_by?:string; material_variant?:string;
+  supplierName?:string; lenderName?:string; purchase_date:string; paid_by?:string;
 };
 type Borrowing = { id:number; mode:Mode; lenderName:string; amount:number; outstanding_amount:number; borrowing_date:string; purpose:string };
 
@@ -27,7 +27,7 @@ export default function InventoryPage() {
 
   const [openingBalance,setOpeningBalance] = useState("");
   const [message,setMessage] = useState("");
-  const emptyPurchase = { materialId:"", materialName:"", materialVariant:"", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), notes:"",  };
+  const emptyPurchase = { materialId:"", materialName:"", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), notes:"",  };
   const [purchase,setPurchase] = useState(emptyPurchase);
   const [editingPurchase,setEditingPurchase] = useState<number|null>(null);
   const [expense,setExpense] = useState({purchaseId:"",expenseType:"Weighing",description:"",amount:""});
@@ -85,7 +85,7 @@ export default function InventoryPage() {
       purchaseType:purchase.purchaseType, quantityKg:Number(purchase.quantityKg),
       ratePerKg:Number(purchase.ratePerKg), paidAmount:purchase.paidAmount===""?undefined:Number(purchase.paidAmount), paidBy:purchase.paidBy||undefined,
       borrowingId:purchase.borrowingId?Number(purchase.borrowingId):undefined,
-      lenderId:purchase.lenderId?Number(purchase.lenderId):undefined, purchaseDate:purchase.purchaseDate, notes:purchase.notes, materialVariant:purchase.materialName==="Natural Bottles"?purchase.materialVariant||undefined:undefined
+      lenderId:purchase.lenderId?Number(purchase.lenderId):undefined, purchaseDate:purchase.purchaseDate, notes:purchase.notes
     });
     if(ok)setPurchase({...emptyPurchase});
   }
@@ -95,7 +95,7 @@ export default function InventoryPage() {
     const m=materials.find((x:Material)=>String(x.id)===purchase.materialId);
     const ok=await post("updatePurchase",{
       purchaseId:editingPurchase, mode, materialId:m?.id, materialName:purchase.materialName||m?.name_en,
-      supplierId:purchase.supplierId?Number(purchase.supplierId):undefined, purchaseType:purchase.purchaseType, materialVariant:purchase.materialName==="Natural Bottles"?purchase.materialVariant||undefined:undefined,
+      supplierId:purchase.supplierId?Number(purchase.supplierId):undefined, purchaseType:purchase.purchaseType,
       quantityKg:Number(purchase.quantityKg), ratePerKg:Number(purchase.ratePerKg), paidBy:purchase.paidBy||undefined, purchaseDate:purchase.purchaseDate, notes:purchase.notes
     });
     if(ok){setEditingPurchase(null);setPurchase({...emptyPurchase});}
@@ -103,7 +103,7 @@ export default function InventoryPage() {
 
   function startEditPurchase(p:Purchase) {
     setEditingPurchase(p.id);
-    setPurchase({materialId:"",materialName:p.material_name,materialVariant:p.material_variant||"",supplierId:p.supplierName ? String((data?.suppliers||[]).find((s:Supplier)=>s.name===p.supplierName)?.id||"") : "",purchaseType:p.purchase_type,quantityKg:String(p.quantity_kg),ratePerKg:String(p.rate_per_kg),paidAmount:String(p.paid_amount),paidBy:p.paid_by||"",borrowingId:"",lenderId:"",purchaseDate:p.purchase_date,notes:""});
+    setPurchase({materialId:"",materialName:p.material_name,supplierId:p.supplierName ? String((data?.suppliers||[]).find((s:Supplier)=>s.name===p.supplierName)?.id||"") : "",purchaseType:p.purchase_type,quantityKg:String(p.quantity_kg),ratePerKg:String(p.rate_per_kg),paidAmount:String(p.paid_amount),paidBy:p.paid_by||"",borrowingId:"",lenderId:"",purchaseDate:p.purchase_date,notes:""});
     window.scrollTo({top:0,behavior:"smooth"});
   }
 
@@ -148,8 +148,6 @@ export default function InventoryPage() {
             <option value="Natural Bottles">Natural Bottles</option>
             <option value="Red Bottles">Red Bottles</option>
           </select>
-          {purchase.materialName==="Natural Bottles" && <select className="ad-input" value={purchase.materialVariant} onChange={e=>setPurchase({...purchase,materialVariant:e.target.value})}><option value="">Natural type</option><option value="Green">Green</option><option value="White">White</option><option value="White Milk">White Milk</option></select>}
-          
           <input className="ad-input" type="date" value={purchase.purchaseDate} onChange={e=>setPurchase({...purchase,purchaseDate:e.target.value})}/>
           <input className="ad-input" type="number" placeholder="Quantity (kg)" value={purchase.quantityKg} onChange={e=>setPurchase({...purchase,quantityKg:e.target.value})}/>
           <input className="ad-input" type="number" placeholder="Rate / kg" value={purchase.ratePerKg} onChange={e=>setPurchase({...purchase,ratePerKg:e.target.value})}/>
@@ -165,7 +163,7 @@ export default function InventoryPage() {
       </div>
 
       <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Vendor</th><th>Material</th><th>Qty</th><th>Rate</th><th>Vendor Total</th><th>Paid</th><th>Unpaid</th><th>Payment done by</th><th>Status</th><th>Action</th></tr></thead><tbody>
-        {filteredPurchases.map((p:Purchase)=><tr key={p.id}><td>{p.purchase_date}</td><td>{p.supplierName||"—"}</td><td>{p.material_name}{p.material_variant?" - "+p.material_variant:""}</td><td>{p.quantity_kg} kg</td><td>₹{p.rate_per_kg}</td><td>₹{p.total_amount}</td><td>₹{p.paid_amount}</td><td>₹{p.credit_amount}</td><td>{Number(p.paid_amount)>0?p.paid_by||"—":"—"}</td><td>{Number(p.paid_amount)>0?"PAID":"UNPAID"}</td><td><button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>startEditPurchase(p)}>Edit</button>{p.credit_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={async()=>{const v=prompt("Payment amount",String(p.credit_amount));if(v)await post("paySupplierCredit",{purchaseId:p.id,amount:Number(v)})}}>Pay credit</button>}</td></tr>)}
+        {filteredPurchases.map((p:Purchase)=><tr key={p.id}><td>{p.purchase_date}</td><td>{p.supplierName||"—"}</td><td>{p.material_name}</td><td>{p.quantity_kg} kg</td><td>₹{p.rate_per_kg}</td><td>₹{p.total_amount}</td><td>₹{p.paid_amount}</td><td>₹{p.credit_amount}</td><td>{Number(p.paid_amount)>0?p.paid_by||"—":"—"}</td><td>{Number(p.paid_amount)>0?"PAID":"UNPAID"}</td><td><button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>startEditPurchase(p)}>Edit</button>{p.credit_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={async()=>{const v=prompt("Payment amount",String(p.credit_amount));if(v)await post("paySupplierCredit",{purchaseId:p.id,amount:Number(v)})}}>Pay credit</button>}</td></tr>)}
       </tbody></table></div>
     </div>}
 

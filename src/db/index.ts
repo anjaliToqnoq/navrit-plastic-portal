@@ -217,6 +217,23 @@ function createDb() {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS sales_mode_date_idx ON sales(mode, sale_date);
+    CREATE TABLE IF NOT EXISTS sale_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+      material_category TEXT NOT NULL,
+      material_variant TEXT NOT NULL DEFAULT '',
+      quantity_kg REAL NOT NULL CHECK(quantity_kg > 0),
+      rate_per_kg REAL NOT NULL CHECK(rate_per_kg >= 0),
+      amount REAL NOT NULL CHECK(amount >= 0)
+    );
+    CREATE INDEX IF NOT EXISTS sale_items_sale_idx ON sale_items(sale_id);
+
+    CREATE TABLE IF NOT EXISTS company_balances (
+      mode TEXT PRIMARY KEY CHECK(mode IN ('PET','PLASTIC')),
+      opening_balance REAL NOT NULL DEFAULT 0 CHECK(opening_balance >= 0),
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS sale_payments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
@@ -262,6 +279,7 @@ function createDb() {
   `);
   for (const migration of [
     "ALTER TABLE purchases ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE purchases ADD COLUMN material_variant TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE purchases ADD COLUMN transport_charges REAL NOT NULL DEFAULT 0",
     "ALTER TABLE purchases ADD COLUMN weight_charges REAL NOT NULL DEFAULT 0",
     "ALTER TABLE purchases ADD COLUMN labour_charges REAL NOT NULL DEFAULT 0",

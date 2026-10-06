@@ -23,6 +23,7 @@ export default function InventoryPage() {
   const [data,setData] = useState<any>(null);
   const [tab,setTab] = useState("purchases");
   const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",saleDate:new Date().toISOString().slice(0,10),notes:""});
+  const [editingSale,setEditingSale] = useState<number|null>(null);
   const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
 
   const [openingBalance,setOpeningBalance] = useState("");
@@ -63,9 +64,41 @@ export default function InventoryPage() {
     return true;
   }
 
+  function resetSaleForm() {
+    setEditingSale(null);
+    setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",saleDate:new Date().toISOString().slice(0,10),notes:""});
+    setSaleItems([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
+  }
+
   async function addSale() {
     const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),saleDate:sale.saleDate,notes:sale.notes});
-    if(ok){setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",saleDate:new Date().toISOString().slice(0,10),notes:""});setSaleItems([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);}
+    if(ok) resetSaleForm();
+  }
+
+  async function editSale() {
+    if(editingSale===null) return;
+    const ok=await post("updateSale",{saleId:editingSale,mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),loadingCharges:Number(sale.loadingCharges||0),saleDate:sale.saleDate,notes:sale.notes});
+    if(ok) resetSaleForm();
+  }
+
+  function startEditSale(s:any) {
+    const items=(data.saleItems||[]).filter((x:any)=>x.sale_id===s.id);
+    const payments=(data.salePayments||[]).filter((x:any)=>x.sale_id===s.id);
+    const latestPayment=payments[payments.length-1];
+    setEditingSale(s.id);
+    setSale({
+      customerName:s.customer_name||"",
+      phone:s.phone||"",
+      location:s.location||"",
+      receivedAmount:String(s.received_amount??""),
+      receivedBy:latestPayment?.received_by||"",
+      paymentMode:latestPayment?.payment_mode||"Cash",
+      loadingCharges:String(s.loading_charges??""),
+      saleDate:s.sale_date,
+      notes:s.notes||""
+    });
+    setSaleItems(items.length ? items.map((x:any)=>({materialCategory:x.material_category,materialVariant:x.material_variant,quantityKg:String(x.quantity_kg),ratePerKg:String(x.rate_per_kg)})) : [{materialCategory:s.material_category,materialVariant:s.material_variant==="MIXED"?"Green":s.material_variant,quantityKg:String(s.quantity_kg),ratePerKg:String(s.rate_per_kg||0)}]);
+    window.scrollTo({top:0,behavior:"smooth"});
   }
   async function saveOpeningBalance() {
     if(openingBalance==="") return;
@@ -180,7 +213,7 @@ export default function InventoryPage() {
         <div className="flex gap-2 max-w-xl"><input className="ad-input" type="number" min="0" placeholder="Opening company balance" value={openingBalance} onChange={e=>setOpeningBalance(e.target.value)}/><button className="ad-btn ad-btn-ghost" onClick={saveOpeningBalance}>Save Balance</button></div>
       </div>
       <div className="ad-card p-4">
-        <h2 className="mb-3 font-semibold">Add Sale — One Go / Full Truck</h2>
+        <h2 className="mb-3 font-semibold">{editingSale ? `Edit Sale #${editingSale}` : "Add Sale — One Go / Full Truck"}</h2>
         <div className="grid gap-2 md:grid-cols-4">
           <input className="ad-input" placeholder="Customer / Buyer name" value={sale.customerName} onChange={e=>setSale({...sale,customerName:e.target.value})}/>
           <input className="ad-input" placeholder="Contact number" value={sale.phone} onChange={e=>setSale({...sale,phone:e.target.value})}/>
@@ -211,12 +244,12 @@ export default function InventoryPage() {
           <select className="ad-input" value={sale.receivedBy} onChange={e=>setSale({...sale,receivedBy:e.target.value})}><option value="">Received by</option><option>Rahul</option><option>Devesh</option><option>Nitin</option></select>
           <select className="ad-input" value={sale.paymentMode} onChange={e=>setSale({...sale,paymentMode:e.target.value})}><option>Cash</option><option>UPI</option><option>Bank Transfer</option><option>Cheque</option></select>
           <input className="ad-input md:col-span-2" placeholder="Notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
-          <button className="ad-btn ad-btn-primary" onClick={addSale}>Save Full Truck Sale</button>
+          <button className="ad-btn ad-btn-primary" onClick={editingSale ? editSale : addSale}>{editingSale ? "Update Sale" : "Save Full Truck Sale"}</button>{editingSale&&<button className="ad-btn ad-btn-ghost" onClick={resetSaleForm}>Cancel</button>}
         </div>
         <p className="mt-2 text-xs ad-muted">Processing labour is automatically ₹2/kg for every sale. Loading charges are sale-specific and paid after the sale. GST is intentionally not included for now.</p>
       </div>
       <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Buyer</th><th>Contact</th><th>Materials</th><th>Total</th><th>Received</th><th>Pending</th><th>Action</th></tr></thead><tbody>
-        {(data.sales||[]).filter((s:any)=>s.mode===mode).map((s:any)=><tr key={s.id}><td>{s.sale_date}</td><td>{s.customer_name}</td><td>{s.phone||"—"}</td><td>{(data.saleItems||[]).filter((x:any)=>x.sale_id===s.id).map((x:any)=>x.material_variant+" "+x.quantity_kg+"kg @ ₹"+x.rate_per_kg).join(" | ")||s.material_variant}</td><td>₹{s.total_amount}</td><td>₹{s.received_amount}</td><td>₹{s.credit_amount}</td><td>{s.credit_amount>0?<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={()=>receiveSalePayment(s)}>Receive</button>:"PAID"}</td></tr>)}
+        {(data.sales||[]).filter((s:any)=>s.mode===mode).map((s:any)=><tr key={s.id}><td>{s.sale_date}</td><td>{s.customer_name}</td><td>{s.phone||"—"}</td><td>{(data.saleItems||[]).filter((x:any)=>x.sale_id===s.id).map((x:any)=>x.material_variant+" "+x.quantity_kg+"kg @ ₹"+x.rate_per_kg).join(" | ")||s.material_variant}</td><td>₹{s.total_amount}</td><td>₹{s.received_amount}</td><td>₹{s.credit_amount}</td><td>{s.credit_amount>0?<button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>receiveSalePayment(s)}>Receive</button>:<span className="mr-3">PAID</span>}<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={()=>startEditSale(s)}>Edit</button></td></tr>)}
       </tbody></table></div>
     </div>}
     {tab==="inventory" && <div className="space-y-5">

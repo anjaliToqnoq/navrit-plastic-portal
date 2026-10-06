@@ -49,6 +49,7 @@ export default function InventoryPage() {
   const filteredBorrowings=(data?.borrowings||[]).filter((x:Borrowing)=>x.mode===mode);
   const openBorrowings=filteredBorrowings.filter((x:Borrowing)=>x.outstanding_amount>0);
   const currentKg=filteredInventory.reduce((n:any,x:any)=>n+Number(x.quantityKg||0),0);
+  const openingStockInitialized=Boolean(data?.openingStockInitialized?.[mode]);
   const saleGrossAmount=saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0)*(Number(x.ratePerKg)||0),0);
   const saleTotalWeight=saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0),0);
   const saleLabourCharges=saleTotalWeight*2;
@@ -119,6 +120,10 @@ export default function InventoryPage() {
   }
 
   async function addOpeningStock() {
+    if(openingStockInitialized) {
+      setMessage("Opening stock is already initialized for this mode");
+      return;
+    }
     const quantityKg=Number(openingStock.quantityKg);
     const ratePerKg=Number(openingStock.ratePerKg);
     if(!quantityKg || quantityKg<=0) { setMessage("Enter opening stock quantity"); return; }
@@ -126,7 +131,7 @@ export default function InventoryPage() {
     const materialName=openingStock.materialVariant==="Red"
       ? "Red Bottles"
       : "Natural Bottles - "+openingStock.materialVariant;
-    const ok=await post("adjustInventory",{
+    const ok=await post("addOpeningStock",{
       mode,
       materialName,
       quantityKg,
@@ -153,7 +158,7 @@ export default function InventoryPage() {
     </div>
 
     <div className="mb-4 flex flex-wrap gap-2">
-      {[["purchases","Purchases"],["sales","Sales"],["inventory","Inventory"],["opening","Opening Stock"],["borrowings","Borrowings"]].map(([value,label])=><button key={value} onClick={()=>setTab(value)} className={tab===value?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{label}</button>)}
+      {[["purchases","Purchases"],["sales","Sales"],["inventory","Inventory"],["opening","Inventory Setup"],["borrowings","Borrowings"]].map(([value,label])=><button key={value} onClick={()=>setTab(value)} className={tab===value?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{label}</button>)}
     </div>
 
     {tab==="purchases" && <div className="space-y-5">
@@ -254,28 +259,37 @@ export default function InventoryPage() {
 
     {tab==="opening" && <div className="space-y-5">
       <div className="ad-card p-4">
-        <h2 className="mb-1 font-semibold">Add Opening Stock</h2>
-        <p className="mb-3 text-xs ad-muted">Use this for material already available before tracking started on 1-Oct-2026. It will increase stock but will not create a purchase/vendor payment.</p>
-        <div className="grid gap-2 md:grid-cols-4">
-          <select className="ad-input" value={openingStock.materialCategory} onChange={e=>setOpeningStock({...openingStock,materialCategory:e.target.value,materialVariant:e.target.value==="Red Bottles"?"Red":"Green"})}>
-            <option>Natural Bottles</option><option>Red Bottles</option>
-          </select>
-          <select className="ad-input" value={openingStock.materialVariant} onChange={e=>setOpeningStock({...openingStock,materialVariant:e.target.value})}>
-            {openingStock.materialCategory==="Red Bottles"
-              ? <option value="Red">Red</option>
-              : <><option value="Green">Green</option><option value="White">White</option><option value="White Milk">White Milk</option></>}
-          </select>
-          <input className="ad-input" type="number" min="0" placeholder="Opening quantity (kg)" value={openingStock.quantityKg} onChange={e=>setOpeningStock({...openingStock,quantityKg:e.target.value})}/>
-          <input className="ad-input" type="number" min="0" placeholder="Opening rate / kg" value={openingStock.ratePerKg} onChange={e=>setOpeningStock({...openingStock,ratePerKg:e.target.value})}/>
-          <input className="ad-input" type="date" value={openingStock.stockDate} onChange={e=>setOpeningStock({...openingStock,stockDate:e.target.value})}/>
-          <span className="ad-input flex items-center">Opening Value: ₹{((Number(openingStock.quantityKg)||0)*(Number(openingStock.ratePerKg)||0)).toFixed(2)}</span>
-          <input className="ad-input md:col-span-2" placeholder="Notes (optional)" value={openingStock.notes} onChange={e=>setOpeningStock({...openingStock,notes:e.target.value})}/>
-          <button className="ad-btn ad-btn-primary" onClick={addOpeningStock}>Add Opening Stock</button>
-        </div>
-      </div>
-      <div className="ad-card p-4">
-        <p className="text-sm font-semibold">Recommended date: <span className="ad-muted">30-Sep-2026</span></p>
-        <p className="mt-1 text-xs ad-muted">For your 1-Oct-2026 tracking start, enter the stock physically available at the end of 30-Sep. New purchases from 1-Oct onward can then be tracked normally.</p>
+        <h2 className="mb-1 font-semibold">Inventory Initialization</h2>
+        {openingStockInitialized ? (
+          <div className="rounded-lg border border-[var(--ad-border)] p-4">
+            <p className="font-semibold">Opening stock is already initialized for {mode}.</p>
+            <p className="mt-1 text-xs ad-muted">This is a one-time setup. Continue using Purchases, Sales and Inventory from 1-Oct-2026 onward. Opening stock cannot be added again for this mode.</p>
+          </div>
+        ) : (
+          <>
+            <p className="mb-3 text-xs ad-muted">One-time setup for material already available before tracking started on 1-Oct-2026. This adds stock only; it does not create a purchase or vendor payment.</p>
+            <div className="grid gap-2 md:grid-cols-4">
+              <select className="ad-input" value={openingStock.materialCategory} onChange={e=>setOpeningStock({...openingStock,materialCategory:e.target.value,materialVariant:e.target.value==="Red Bottles"?"Red":"Green"})}>
+                <option>Natural Bottles</option><option>Red Bottles</option>
+              </select>
+              <select className="ad-input" value={openingStock.materialVariant} onChange={e=>setOpeningStock({...openingStock,materialVariant:e.target.value})}>
+                {openingStock.materialCategory==="Red Bottles"
+                  ? <option value="Red">Red</option>
+                  : <><option value="Green">Green</option><option value="White">White</option><option value="White Milk">White Milk</option></>}
+              </select>
+              <input className="ad-input" type="number" min="0" placeholder="Opening quantity (kg)" value={openingStock.quantityKg} onChange={e=>setOpeningStock({...openingStock,quantityKg:e.target.value})}/>
+              <input className="ad-input" type="number" min="0" placeholder="Opening rate / kg" value={openingStock.ratePerKg} onChange={e=>setOpeningStock({...openingStock,ratePerKg:e.target.value})}/>
+              <input className="ad-input" type="date" value={openingStock.stockDate} onChange={e=>setOpeningStock({...openingStock,stockDate:e.target.value})}/>
+              <span className="ad-input flex items-center">Opening Value: ₹{((Number(openingStock.quantityKg)||0)*(Number(openingStock.ratePerKg)||0)).toFixed(2)}</span>
+              <input className="ad-input md:col-span-2" placeholder="Notes (optional)" value={openingStock.notes} onChange={e=>setOpeningStock({...openingStock,notes:e.target.value})}/>
+              <button className="ad-btn ad-btn-primary" onClick={addOpeningStock}>Initialize Opening Stock</button>
+            </div>
+            <div className="mt-3 rounded-lg border border-[var(--ad-border)] p-3">
+              <p className="text-sm font-semibold">Recommended date: <span className="ad-muted">30-Sep-2026</span></p>
+              <p className="mt-1 text-xs ad-muted">Enter the stock physically available at the end of 30-Sep. From 1-Oct onward, use normal Purchases and Sales only.</p>
+            </div>
+          </>
+        )}
       </div>
     </div>}
 

@@ -95,15 +95,14 @@ export default function InventoryPage() {
     const ok=await post("updatePurchase",{
       purchaseId:editingPurchase, mode, materialId:m?.id, materialName:purchase.materialName||m?.name_en,
       supplierId:purchase.supplierId?Number(purchase.supplierId):undefined, purchaseType:purchase.purchaseType, materialVariant:purchase.materialName==="Natural Bottles"?purchase.materialVariant||undefined:undefined,
-      quantityKg:Number(purchase.quantityKg), ratePerKg:Number(purchase.ratePerKg), paidBy:purchase.paidBy||undefined, purchaseDate:purchase.purchaseDate, notes:purchase.notes,
-      transportCharges:Number(purchase.transportCharges||0), weightCharges:Number(purchase.weightCharges||0), labourCharges:Number(purchase.labourCharges||0)
+      quantityKg:Number(purchase.quantityKg), ratePerKg:Number(purchase.ratePerKg), paidBy:purchase.paidBy||undefined, purchaseDate:purchase.purchaseDate, notes:purchase.notes
     });
     if(ok){setEditingPurchase(null);setPurchase({...emptyPurchase});}
   }
 
   function startEditPurchase(p:Purchase) {
     setEditingPurchase(p.id);
-    setPurchase({materialId:"",materialName:p.material_name,materialVariant:p.material_variant||"",supplierId:p.supplierName ? String((data?.suppliers||[]).find((s:Supplier)=>s.name===p.supplierName)?.id||"") : "",purchaseType:p.purchase_type,quantityKg:String(p.quantity_kg),ratePerKg:String(p.rate_per_kg),paidAmount:String(p.paid_amount),paidBy:p.paid_by||"",borrowingId:"",lenderId:"",purchaseDate:p.purchase_date,notes:"",transportCharges:String(p.transport_charges||""),weightCharges:String(p.weight_charges||""),labourCharges:String(p.labour_charges||"")});
+    setPurchase({materialId:"",materialName:p.material_name,materialVariant:p.material_variant||"",supplierId:p.supplierName ? String((data?.suppliers||[]).find((s:Supplier)=>s.name===p.supplierName)?.id||"") : "",purchaseType:p.purchase_type,quantityKg:String(p.quantity_kg),ratePerKg:String(p.rate_per_kg),paidAmount:String(p.paid_amount),paidBy:p.paid_by||"",borrowingId:"",lenderId:"",purchaseDate:p.purchase_date,notes:""});
     window.scrollTo({top:0,behavior:"smooth"});
   }
 

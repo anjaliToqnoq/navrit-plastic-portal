@@ -35,8 +35,36 @@ export default function VendorManagement({data,mode,post}:{data:any;mode:Mode;po
         <div className="ad-card p-3"><h2 className="mb-2 font-semibold">Vendors</h2>{vendors.map(v=><button key={v.id} onClick={()=>setSelected(v.id)} className={"mb-1 w-full rounded-lg p-3 text-left "+(selected===v.id?"bg-[var(--ad-accent)]/10":"hover:bg-black/5")}><b>{v.name}</b><span className="block text-xs ad-muted">{v.location||"Location not added"} · {v.phone||"No phone"}</span></button>)}</div>
       </div>
       {vendor?<div className="space-y-4">
-        <div className="ad-card p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-bold">{vendor.name}</h2><p className="ad-muted text-sm">{vendor.location||"Location not added"} · {vendor.phone||"No contact number"}</p></div><div className="flex items-center gap-2"><button className="ad-btn ad-btn-ghost" onClick={()=>{setForm({name:vendor.name,location:vendor.location||"",phone:vendor.phone||"",notes:vendor.notes||""});setEditing(true)}}>Edit</button><span className="rounded-full px-3 py-1 text-xs font-semibold">{mode}</span></div></div>{editing&&<div className="mt-4 grid gap-2 md:grid-cols-4"><input className="ad-input" placeholder="Vendor name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/><input className="ad-input" placeholder="Location" value={form.location} onChange={e=>setForm({...form,location:e.target.value})}/><input className="ad-input" placeholder="Contact number" value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/><input className="ad-input" placeholder="Notes" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/><div className="md:col-span-4 flex gap-2"><button className="ad-btn ad-btn-primary" onClick={editVendor}>Save Changes</button><button className="ad-btn ad-btn-ghost" onClick={()=>setEditing(false)}>Cancel</button></div></div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><div><span className="ad-muted text-xs">Material supplied</span><b className="block">{vp.length} purchases</b></div><div><span className="ad-muted text-xs">Total weight</span><b className="block">{totals.kg.toFixed(2)} kg</b></div><div><span className="ad-muted text-xs">Purchase value</span><b className="block">₹{totals.value.toFixed(2)}</b></div><div><span className="ad-muted text-xs">Outstanding</span><b className="block">₹{totals.out.toFixed(2)}</b></div><div><span className="ad-muted text-xs">Advance balance</span><b className="block">₹{totals.advance.toFixed(2)}</b></div></div>
+        <div className="ad-card p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-bold">{vendor.name}</h2>
+              <p className="ad-muted text-sm">{vendor.location||"Location not added"} · {vendor.phone||"No contact number"}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button className="ad-btn ad-btn-ghost" onClick={()=>{setForm({name:vendor.name,location:vendor.location||"",phone:vendor.phone||"",notes:vendor.notes||""});setEditing(true)}}>Edit</button>
+              <span className="rounded-full px-3 py-1 text-xs font-semibold">{mode}</span>
+            </div>
+          </div>
+          {editing&&(
+            <div className="mt-4 grid gap-2 md:grid-cols-4">
+              <input className="ad-input" placeholder="Vendor name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/>
+              <input className="ad-input" placeholder="Location" value={form.location} onChange={e=>setForm({...form,location:e.target.value})}/>
+              <input className="ad-input" placeholder="Contact number" value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/>
+              <input className="ad-input" placeholder="Notes" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
+              <div className="md:col-span-4 flex gap-2">
+                <button className="ad-btn ad-btn-primary" onClick={editVendor}>Save Changes</button>
+                <button className="ad-btn ad-btn-ghost" onClick={()=>setEditing(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div><span className="ad-muted text-xs">Material supplied</span><b className="block">{vp.length} purchases</b></div>
+            <div><span className="ad-muted text-xs">Total weight</span><b className="block">{totals.kg.toFixed(2)} kg</b></div>
+            <div><span className="ad-muted text-xs">Purchase value</span><b className="block">₹{totals.value.toFixed(2)}</b></div>
+            <div><span className="ad-muted text-xs">Outstanding</span><b className="block">₹{totals.out.toFixed(2)}</b></div>
+            <div><span className="ad-muted text-xs">Advance balance</span><b className="block">₹{totals.advance.toFixed(2)}</b></div>
+          </div>
         </div>
         <div className="grid gap-4 md:grid-cols-2">
           <div className="ad-card p-4"><h3 className="mb-3 font-semibold">Give Vendor Advance</h3><input className="ad-input mb-2 w-full" type="number" placeholder="Advance amount" value={advance.amount} onChange={e=>setAdvance({...advance,amount:e.target.value})}/><input className="ad-input mb-2 w-full" placeholder="Notes" value={advance.notes} onChange={e=>setAdvance({...advance,notes:e.target.value})}/><button className="ad-btn ad-btn-primary" onClick={addAdvance}>Save Advance</button></div>

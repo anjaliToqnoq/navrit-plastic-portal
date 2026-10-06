@@ -18,6 +18,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
   }
 
+  // Railway production credentials are supplied through environment variables.
+  // Keep the database-backed admin as a fallback for local/development setups.
+  const envUsername = process.env.ADMIN_USERNAME;
+  const envPassword = process.env.ADMIN_PASSWORD;
+
+  if (envUsername && envPassword) {
+    if (
+      parsed.data.username !== envUsername ||
+      parsed.data.password !== envPassword
+    ) {
+      return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
+    }
+
+    await createSession(envUsername);
+    return NextResponse.json({ ok: true });
+  }
+
   const admin = sqlite
     .prepare(`SELECT username, password_hash FROM admins WHERE username = ?`)
     .get(parsed.data.username) as { username: string; password_hash: string } | undefined;

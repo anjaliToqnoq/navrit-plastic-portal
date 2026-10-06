@@ -209,6 +209,9 @@ function createDb() {
       quantity_kg REAL NOT NULL CHECK(quantity_kg > 0),
       rate_per_kg REAL NOT NULL CHECK(rate_per_kg >= 0),
       total_amount REAL NOT NULL CHECK(total_amount >= 0),
+      gross_amount REAL NOT NULL DEFAULT 0,
+      labour_charges REAL NOT NULL DEFAULT 0,
+      loading_charges REAL NOT NULL DEFAULT 0,
       received_amount REAL NOT NULL DEFAULT 0 CHECK(received_amount >= 0),
       credit_amount REAL NOT NULL DEFAULT 0 CHECK(credit_amount >= 0),
       sale_date TEXT NOT NULL,
@@ -318,6 +321,9 @@ function createDb() {
     );
   `);
   for (const migration of [
+    "ALTER TABLE sales ADD COLUMN gross_amount REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE sales ADD COLUMN labour_charges REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE sales ADD COLUMN loading_charges REAL NOT NULL DEFAULT 0",
     "ALTER TABLE purchases ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE purchases ADD COLUMN material_variant TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE purchases ADD COLUMN transport_charges REAL NOT NULL DEFAULT 0",

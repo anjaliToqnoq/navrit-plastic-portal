@@ -19,7 +19,6 @@ import {
   Menu,
   X,
   Command,
-  Plus,
   HardDrive,
   LineChart,
   Users,
@@ -79,7 +78,6 @@ export function AdminShell({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [cmdQ, setCmdQ] = useState("");
-  const [fabOpen, setFabOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const owner = process.env.NEXT_PUBLIC_OWNER_NAME || username || "Admin";
   const nav = navByMode[mode];
@@ -298,30 +296,6 @@ export function AdminShell({
             {children}
           </main>
         </div>
-      </div>
-
-      {/* Quick actions */}
-      <div className="ad-fab">
-        {fabOpen && (
-          <div className="ad-fab-menu">
-            {[
-              { href: "/admin/inventory", label: mode === "PET" ? "Open PET Inventory" : "Open Plastic Inventory" },
-              { href: "/admin/reports", label: mode === "PET" ? "Open PET Reports" : "Open Plastic Reports" },
-              { href: "/admin/backup", label: "Create Backup" },
-            ].map((a) => (
-              <Link key={a.href} href={a.href} className="ad-btn ad-btn-ghost bg-[var(--ad-card)] shadow-lg" onClick={() => setFabOpen(false)}>
-                {a.label}
-              </Link>
-            ))}
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={() => setFabOpen((v) => !v)}
-          className="flex size-12 items-center justify-center rounded-full bg-[var(--ad-accent)] text-[#052e16] shadow-lg shadow-green-500/30"
-        >
-          {fabOpen ? <X size={20} /> : <Plus size={22} />}
-        </button>
       </div>
 
       {/* Command palette */}

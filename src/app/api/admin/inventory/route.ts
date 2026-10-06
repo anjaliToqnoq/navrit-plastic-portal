@@ -26,6 +26,7 @@ export async function GET() {
   const vendorPayments = sqlite.prepare(`SELECT vp.*, s.name as supplierName, s.phone as supplierPhone, s.location as supplierLocation, p.material_name as materialName FROM vendor_payments vp JOIN suppliers s ON s.id=vp.supplier_id LEFT JOIN purchases p ON p.id=vp.purchase_id ORDER BY vp.payment_date DESC, vp.id DESC LIMIT 500`).all();
   const lenders = sqlite.prepare("SELECT * FROM lenders ORDER BY name").all();
   const sales = sqlite.prepare("SELECT * FROM sales ORDER BY sale_date DESC, id DESC LIMIT 200").all();
+  const saleItems = sqlite.prepare("SELECT * FROM sale_items ORDER BY sale_id, id").all();
   const salePayments = sqlite.prepare("SELECT sp.*, s.customer_name as customerName, s.material_category as materialCategory, s.material_variant as materialVariant FROM sale_payments sp JOIN sales s ON s.id=sp.sale_id ORDER BY sp.payment_date DESC, sp.id DESC LIMIT 500").all();
 
   const inventory = sqlite.prepare(`
@@ -101,13 +102,15 @@ export async function GET() {
   `).get();
 
   const modeCashflow = (m: string) => {
+    const opening = Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode=?").get(m) as any)?.n || 0);
     const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=?").get(m) as any)?.n || 0);
     const paidVendors = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments WHERE mode=? AND NOT (payment_type='CREDIT_SETTLEMENT' AND payment_mode='Advance')").get(m) as any)?.n || 0);
     const borrowed = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM borrowings WHERE mode=?").get(m) as any)?.n || 0);
     const repaid = Number((sqlite.prepare("SELECT COALESCE(SUM(br.amount),0) as n FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id WHERE b.mode=?").get(m) as any)?.n || 0);
-    return Math.round((received - paidVendors + borrowed - repaid) * 100) / 100;
+    return Math.round((opening + received - paidVendors + borrowed - repaid) * 100) / 100;
   };
-  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, salePayments, totals, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });
+  const openingBalance = { PET: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PET'").get() as any)?.n || 0), PLASTIC: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PLASTIC'").get() as any)?.n || 0) };
+  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, saleItems, salePayments, totals, openingBalance, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });
 }
 
 export async function POST(req: NextRequest) {
@@ -116,6 +119,12 @@ export async function POST(req: NextRequest) {
   if (!body?.action) return NextResponse.json({ error: "Missing action" }, { status: 400 });
 
   try {
+    if (body.action === "setOpeningBalance") {
+      const x = z.object({ mode: modeSchema, amount: z.number().nonnegative() }).parse(body);
+      sqlite.prepare("INSERT INTO company_balances(mode,opening_balance,updated_at) VALUES(?,?,?) ON CONFLICT(mode) DO UPDATE SET opening_balance=excluded.opening_balance,updated_at=excluded.updated_at").run(x.mode,x.amount,nowIso());
+      return json({ok:true, amount:x.amount});
+    }
+
     if (body.action === "addSupplier" || body.action === "addLender") {
       const s = z.object({
         name: z.string().trim().min(1),
@@ -318,23 +327,54 @@ export async function POST(req: NextRequest) {
     if (body.action === "addSale") {
       const s = z.object({
         mode: modeSchema, customerName: z.string().trim().min(1), phone: z.string().trim().optional().default(""),
-        location: z.string().trim().optional().default(""), materialCategory: z.enum(["Natural Bottles","Red Bottles"]),
-        materialVariant: z.enum(["","Green","White","Red"]).optional().default(""), quantityKg: z.number().positive(),
-        ratePerKg: z.number().nonnegative(), receivedAmount: z.number().nonnegative().optional(),
+        location: z.string().trim().optional().default(""),
+        items: z.array(z.object({
+          materialCategory: z.enum(["Natural Bottles","Red Bottles"]),
+          materialVariant: z.enum(["Green","White","Red","White Milk"]),
+          quantityKg: z.number().positive(),
+          ratePerKg: z.number().nonnegative()
+        })).min(1),
+        receivedAmount: z.number().nonnegative().optional(),
         saleDate: dateSchema.optional().default(todayStr()), receivedBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
         paymentMode: z.string().trim().min(1).optional().default("Cash"), notes: z.string().trim().optional().default("")
       }).parse(body);
-      if (s.materialCategory === "Natural Bottles" && !["Green","White"].includes(s.materialVariant)) return NextResponse.json({ error: "Select Green or White for Natural Bottles" }, { status: 400 });
-      const materialName = s.materialCategory === "Red Bottles" ? "Red Bottles" : "Natural Bottles - " + s.materialVariant;
-      const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
-      const available = Number((sqlite.prepare("SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions WHERE mode=? AND transaction_date<=? AND (material_name=? OR material_name LIKE 'Natural Bottles - %' OR material_name='Natural Bottles')").get(s.mode,s.saleDate,materialName) as any)?.kg || 0);
-      if (s.quantityKg > available + 0.005) return NextResponse.json({ error: "Insufficient stock. Available up to " + s.saleDate + ": " + available.toFixed(2) + " kg" }, { status: 400 });
+
+      for (const item of s.items) {
+        if (item.materialCategory === "Natural Bottles" && !["Green","White","White Milk"].includes(item.materialVariant)) {
+          return NextResponse.json({ error: "Natural Bottles can be Green, White or White Milk" }, { status: 400 });
+        }
+        if (item.materialCategory === "Red Bottles" && item.materialVariant !== "Red") {
+          return NextResponse.json({ error: "Red Bottles must use Red type" }, { status: 400 });
+        }
+      }
+
+      const lineTotals = s.items.map(item => Math.round(item.quantityKg * item.ratePerKg * 100) / 100);
+      const total = Math.round(lineTotals.reduce((n, x) => n + x, 0) * 100) / 100;
+      for (let i = 0; i < s.items.length; i++) {
+        const item = s.items[i];
+        const materialName = item.materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.materialVariant;
+        const available = Number((sqlite.prepare("SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions WHERE mode=? AND transaction_date<=? AND (material_name=? OR material_name LIKE 'Natural Bottles - %' OR material_name='Natural Bottles')").get(s.mode,s.saleDate,materialName) as any)?.kg || 0);
+        if (item.quantityKg > available + 0.005) {
+          return NextResponse.json({ error: "Insufficient stock for " + item.materialVariant + ". Available up to " + s.saleDate + ": " + available.toFixed(2) + " kg" }, { status: 400 });
+        }
+      }
+
       const received = Math.min(s.receivedAmount ?? 0, total);
       const credit = Math.round((total - received) * 100) / 100;
-      const r = sqlite.prepare("INSERT INTO sales (mode,customer_name,phone,location,material_category,material_variant,quantity_kg,rate_per_kg,total_amount,received_amount,credit_amount,sale_date,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(s.mode,s.customerName,s.phone,s.location,s.materialCategory,s.materialVariant,s.quantityKg,s.ratePerKg,total,received,credit,s.saleDate,s.notes,nowIso(),nowIso());
+      const primary = s.items[0];
+      const r = sqlite.prepare("INSERT INTO sales (mode,customer_name,phone,location,material_category,material_variant,quantity_kg,rate_per_kg,total_amount,received_amount,credit_amount,sale_date,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(s.mode,s.customerName,s.phone,s.location,primary.materialCategory,s.items.length===1?primary.materialVariant:"MIXED",s.items.reduce((n,x)=>n+x.quantityKg,0),0,total,received,credit,s.saleDate,s.notes,nowIso(),nowIso());
       const saleId = Number(r.lastInsertRowid);
+
+      for (let i = 0; i < s.items.length; i++) {
+        const item = s.items[i];
+        sqlite.prepare("INSERT INTO sale_items (sale_id,material_category,material_variant,quantity_kg,rate_per_kg,amount) VALUES (?,?,?,?,?,?)")
+          .run(saleId,item.materialCategory,item.materialVariant,item.quantityKg,item.ratePerKg,lineTotals[i]);
+        const materialName = item.materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.materialVariant;
+        sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+          .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],s.saleDate,"SALE #"+saleId+(s.notes ? " - "+s.notes : ""),nowIso());
+      }
       if (received > 0) sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,saleId,received,s.saleDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
-      sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(s.mode,null,materialName,"ADJUSTMENT",-s.quantityKg,-total,s.saleDate,"SALE #"+saleId+(s.notes ? " - "+s.notes : ""),nowIso());
       return json({ok:true,id:saleId,total,received,credit});
     }
 

@@ -9,7 +9,7 @@ export default function VendorManagement({data,mode,post}:{data:any;mode:Mode;po
   const payments=(data?.vendorPayments||[]).filter((p:any)=>p.mode===mode);
   const summary=(data?.vendorSummary||[]).filter((v:any)=>v.mode===mode);
   const [selected,setSelected]=useState<number|null>(null);
-  const [form,setForm]=useState({name:"",location:"",phone:"",notes:""});
+  const [form,setForm]=useState({name:"",location:"",phone:"",notes:""});\n  const [editing,setEditing]=useState(false);
   const [advance,setAdvance]=useState({amount:"",notes:""});
   const [payment,setPayment]=useState({amount:"",paymentMode:"Cash",notes:""});
   const vendor=vendors.find(v=>v.id===selected);
@@ -18,7 +18,7 @@ export default function VendorManagement({data,mode,post}:{data:any;mode:Mode;po
   const ledger=payments.filter((p:any)=>p.supplier_id===selected);
   const totals=useMemo(()=>({kg:vp.reduce((n:any,p:any)=>n+Number(p.quantity_kg||0),0),value:vp.reduce((n:any,p:any)=>n+Number(p.total_amount||0),0),paid:vp.reduce((n:any,p:any)=>n+Number(p.paid_amount||0),0),out:vp.reduce((n:any,p:any)=>n+Number(p.credit_amount||0),0),advance:vs.reduce((n:any,v:any)=>n+Number(v.advance||0),0)}),[vp,vs]);
   async function addVendor(){if(await post("addSupplier",form))setForm({name:"",location:"",phone:"",notes:""});}
-  async function addAdvance(){if(vendor&&await post("addVendorAdvance",{mode,supplierId:vendor.id,amount:Number(advance.amount),notes:advance.notes}))setAdvance({amount:"",notes:""});}
+  async function editVendor(){if(vendor&&await post("updateSupplier",{supplierId:vendor.id,...form}))setEditing(false);}\n  async function addAdvance(){if(vendor&&await post("addVendorAdvance",{mode,supplierId:vendor.id,amount:Number(advance.amount),notes:advance.notes}))setAdvance({amount:"",notes:""});}
   async function makePayment(){if(vendor&&await post("payVendor",{mode,supplierId:vendor.id,amount:Number(payment.amount),paymentMode:payment.paymentMode,notes:payment.notes}))setPayment({amount:"",paymentMode:"Cash",notes:""});}
   return <div className="space-y-5">
     <div className="grid gap-5 md:grid-cols-[320px_1fr]">
@@ -33,7 +33,7 @@ export default function VendorManagement({data,mode,post}:{data:any;mode:Mode;po
         <div className="ad-card p-3"><h2 className="mb-2 font-semibold">Vendors</h2>{vendors.map(v=><button key={v.id} onClick={()=>setSelected(v.id)} className={"mb-1 w-full rounded-lg p-3 text-left "+(selected===v.id?"bg-[var(--ad-accent)]/10":"hover:bg-black/5")}><b>{v.name}</b><span className="block text-xs ad-muted">{v.location||"Location not added"} · {v.phone||"No phone"}</span></button>)}</div>
       </div>
       {vendor?<div className="space-y-4">
-        <div className="ad-card p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-bold">{vendor.name}</h2><p className="ad-muted text-sm">{vendor.location||"Location not added"} · {vendor.phone||"No contact number"}</p></div><span className="rounded-full px-3 py-1 text-xs font-semibold">{mode}</span></div>
+        <div className="ad-card p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-bold">{vendor.name}</h2><p className="ad-muted text-sm">{vendor.location||"Location not added"} · {vendor.phone||"No contact number"}</p></div><div className="flex items-center gap-2"><button className="ad-btn ad-btn-ghost" onClick={()=>{setForm({name:vendor.name,location:vendor.location||"",phone:vendor.phone||"",notes:vendor.notes||""});setEditing(true)}}>Edit</button><span className="rounded-full px-3 py-1 text-xs font-semibold">{mode}</span></div></div>{editing&&<div className="mt-4 grid gap-2 md:grid-cols-4"><input className="ad-input" placeholder="Vendor name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/><input className="ad-input" placeholder="Location" value={form.location} onChange={e=>setForm({...form,location:e.target.value})}/><input className="ad-input" placeholder="Contact number" value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/><input className="ad-input" placeholder="Notes" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/><div className="md:col-span-4 flex gap-2"><button className="ad-btn ad-btn-primary" onClick={editVendor}>Save Changes</button><button className="ad-btn ad-btn-ghost" onClick={()=>setEditing(false)}>Cancel</button></div></div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><div><span className="ad-muted text-xs">Material supplied</span><b className="block">{vp.length} purchases</b></div><div><span className="ad-muted text-xs">Total weight</span><b className="block">{totals.kg.toFixed(2)} kg</b></div><div><span className="ad-muted text-xs">Purchase value</span><b className="block">₹{totals.value.toFixed(2)}</b></div><div><span className="ad-muted text-xs">Outstanding</span><b className="block">₹{totals.out.toFixed(2)}</b></div><div><span className="ad-muted text-xs">Advance balance</span><b className="block">₹{totals.advance.toFixed(2)}</b></div></div>
         </div>
         <div className="grid gap-4 md:grid-cols-2">

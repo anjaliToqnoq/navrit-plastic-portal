@@ -22,8 +22,13 @@ export default function InventoryPage() {
   const { mode } = useBusinessMode();
   const [data,setData] = useState<any>(null);
   const [tab,setTab] = useState("purchases");
-  const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",saleDate:new Date().toISOString().slice(0,10),notes:""});
+  const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",processingBatchId:"",saleDate:new Date().toISOString().slice(0,10),notes:""});
   const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
+  const [processingItems,setProcessingItems] = useState([{materialVariant:"Green",quantityKg:"",baleCount:""}]);
+  const [processingExpense,setProcessingExpense] = useState({expenseType:"Electricity",description:"",amount:"",paidBy:""});
+  const [processingDate,setProcessingDate] = useState(new Date().toISOString().slice(0,10));
+  const [processingNotes,setProcessingNotes] = useState("");
+
   const [openingBalance,setOpeningBalance] = useState("");
   const [message,setMessage] = useState("");
   const emptyPurchase = { materialId:"", materialName:"", materialVariant:"", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), notes:"", transportCharges:"", weightCharges:"", labourCharges:"" };
@@ -58,8 +63,8 @@ export default function InventoryPage() {
   }
 
   async function addSale() {
-    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
-    if(ok){setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",saleDate:new Date().toISOString().slice(0,10),notes:""});setSaleItems([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);}
+    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),processingBatchId:sale.processingBatchId?Number(sale.processingBatchId):undefined,saleDate:sale.saleDate,notes:sale.notes});
+    if(ok){setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",processingBatchId:"",saleDate:new Date().toISOString().slice(0,10),notes:""});setSaleItems([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);}
   }
   async function saveOpeningBalance() {
     if(openingBalance==="") return;

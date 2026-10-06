@@ -71,7 +71,7 @@ export default function InventoryPage() {
   }
 
   async function addSale() {
-    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),saleDate:sale.saleDate,notes:sale.notes});
+    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),saleDate:sale.saleDate,notes:sale.notes,receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode});
     if(ok) resetSaleForm();
   }
 
@@ -240,7 +240,7 @@ export default function InventoryPage() {
           <span className="ad-input flex items-center">Labour Charges (₹2/kg): -₹{saleLabourCharges.toFixed(2)}</span>
           <input className="ad-input" type="number" min="0" placeholder="Loading Charges" value={sale.loadingCharges||""} onChange={e=>setSale({...sale,loadingCharges:e.target.value})}/>
           <span className="ad-input flex items-center font-semibold">Final Amount: ₹{saleFinalAmount.toFixed(2)}</span>
-          <input className="ad-input" type="number" min="0" max={saleFinalAmount} placeholder="Total received payment" value={sale.receivedAmount} onChange={e=>setSale({...sale,receivedAmount:e.target.value})}/>
+          <input className="ad-input" type="number" min="0" max={saleFinalAmount} disabled={editingSale!==null} placeholder={editingSale?"Received payment (history)":"Total received payment"} value={sale.receivedAmount} onChange={e=>setSale({...sale,receivedAmount:e.target.value})}/>
           <select className="ad-input" value={sale.receivedBy} onChange={e=>setSale({...sale,receivedBy:e.target.value})}><option value="">Received by</option><option>Rahul</option><option>Devesh</option><option>Nitin</option></select>
           <select className="ad-input" value={sale.paymentMode} onChange={e=>setSale({...sale,paymentMode:e.target.value})}><option>Cash</option><option>UPI</option><option>Bank Transfer</option><option>Cheque</option></select>
           <input className="ad-input md:col-span-2" placeholder="Notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>

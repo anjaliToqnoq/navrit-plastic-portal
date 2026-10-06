@@ -14,7 +14,7 @@ type Purchase = {
   id:number; mode:Mode; material_name:string; purchase_type:string; quantity_kg:number;
   rate_per_kg:number; total_amount:number; paid_amount:number; credit_amount:number;
   transport_charges:number; weight_charges:number; labour_charges:number; effective_cost:number;
-  supplierName?:string; lenderName?:string; purchase_date:string; paid_by?:string;
+  supplierName?:string; lenderName?:string; purchase_date:string; paid_by?:string; material_variant?:string;
 };
 type Borrowing = { id:number; mode:Mode; lenderName:string; amount:number; outstanding_amount:number; borrowing_date:string; purpose:string };
 

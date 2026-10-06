@@ -116,7 +116,7 @@ export function AdminShell({
       (n) => n.href === pathname || (n.href !== "/admin" && pathname.startsWith(n.href))
     );
     return item?.label || "Admin";
-  }, [pathname]);
+  }, [pathname, nav]);
 
   const filteredNav = nav.filter((n) =>
     n.label.toLowerCase().includes(cmdQ.trim().toLowerCase())

@@ -22,7 +22,9 @@ export default function InventoryPage() {
   const { mode } = useBusinessMode();
   const [data,setData] = useState<any>(null);
   const [tab,setTab] = useState("purchases");
-  const [sale,setSale] = useState({customerName:"",phone:"",location:"",materialCategory:"",materialVariant:"",quantityKg:"",ratePerKg:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",saleDate:new Date().toISOString().slice(0,10),notes:""});
+  const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",saleDate:new Date().toISOString().slice(0,10),notes:""});
+  const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
+  const [openingBalance,setOpeningBalance] = useState("");
   const [message,setMessage] = useState("");
   const emptyPurchase = { materialId:"", materialName:"", materialVariant:"", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), notes:"", transportCharges:"", weightCharges:"", labourCharges:"" };
   const [purchase,setPurchase] = useState(emptyPurchase);
@@ -56,8 +58,12 @@ export default function InventoryPage() {
   }
 
   async function addSale() {
-    await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,materialCategory:sale.materialCategory,materialVariant:sale.materialVariant,quantityKg:Number(sale.quantityKg),ratePerKg:Number(sale.ratePerKg),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
-    setSale({customerName:"",phone:"",location:"",materialCategory:"",materialVariant:"",quantityKg:"",ratePerKg:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",saleDate:new Date().toISOString().slice(0,10),notes:""});
+    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
+    if(ok){setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",saleDate:new Date().toISOString().slice(0,10),notes:""});setSaleItems([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);}
+  }
+  async function saveOpeningBalance() {
+    if(openingBalance==="") return;
+    await post("setOpeningBalance",{mode,amount:Number(openingBalance)});
   }
 
   async function receiveSalePayment(s:any) {
@@ -169,34 +175,52 @@ export default function InventoryPage() {
     </div>}
 
     {tab==="sales" && <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="ad-card p-4"><p className="ad-muted text-xs">Company Balance</p><p className="mt-1 text-2xl font-bold">₹{Number(data.cashBalance?.[mode]||0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Opening Balance</p><p className="mt-1 text-2xl font-bold">₹{Number(data.openingBalance?.[mode]||0).toFixed(2)}</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Total Sales</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.total_amount||0),0).toFixed(2)}</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Received</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.received_amount||0),0).toFixed(2)}</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Pending</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.credit_amount||0),0).toFixed(2)}</p></div>
       </div>
       <div className="ad-card p-4">
-        <h2 className="mb-3 font-semibold">Add Sale</h2>
+        <h2 className="mb-3 font-semibold">Company Opening Balance</h2>
+        <div className="flex gap-2 max-w-xl"><input className="ad-input" type="number" min="0" placeholder="Opening company balance" value={openingBalance} onChange={e=>setOpeningBalance(e.target.value)}/><button className="ad-btn ad-btn-ghost" onClick={saveOpeningBalance}>Save Balance</button></div>
+      </div>
+      <div className="ad-card p-4">
+        <h2 className="mb-3 font-semibold">Add Sale — One Go / Full Truck</h2>
         <div className="grid gap-2 md:grid-cols-4">
           <input className="ad-input" placeholder="Customer / Buyer name" value={sale.customerName} onChange={e=>setSale({...sale,customerName:e.target.value})}/>
           <input className="ad-input" placeholder="Contact number" value={sale.phone} onChange={e=>setSale({...sale,phone:e.target.value})}/>
           <input className="ad-input" placeholder="Location" value={sale.location} onChange={e=>setSale({...sale,location:e.target.value})}/>
           <input className="ad-input" type="date" value={sale.saleDate} onChange={e=>setSale({...sale,saleDate:e.target.value})}/>
-          <select className="ad-input" value={sale.materialCategory} onChange={e=>setSale({...sale,materialCategory:e.target.value,materialVariant:e.target.value==="Red Bottles"?"Red":""})}><option value="">Material</option><option value="Natural Bottles">Natural Bottles</option><option value="Red Bottles">Red Bottles</option></select>
-          {sale.materialCategory==="Natural Bottles" && <select className="ad-input" value={sale.materialVariant} onChange={e=>setSale({...sale,materialVariant:e.target.value})}><option value="">Select type</option><option value="Green">Green</option><option value="White">White</option></select>}
-          <input className="ad-input" type="number" placeholder="Quantity (kg)" value={sale.quantityKg} onChange={e=>setSale({...sale,quantityKg:e.target.value})}/>
-          <input className="ad-input" type="number" placeholder="Selling rate / kg" value={sale.ratePerKg} onChange={e=>setSale({...sale,ratePerKg:e.target.value})}/>
-          <span className="ad-input flex items-center text-sm">Total: ₹{((Number(sale.quantityKg)||0)*(Number(sale.ratePerKg)||0)).toFixed(2)}</span>
-          <input className="ad-input" type="number" min="0" placeholder="Received amount" value={sale.receivedAmount} onChange={e=>setSale({...sale,receivedAmount:e.target.value})}/>
+        </div>
+        <div className="mt-3 space-y-2">
+          {saleItems.map((item:any,i:number)=><div key={i} className="grid gap-2 md:grid-cols-6">
+            <select className="ad-input" value={item.materialCategory} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialCategory:e.target.value,materialVariant:e.target.value==="Red Bottles"?"Red":"Green"}:x))}>
+              <option>Natural Bottles</option><option>Red Bottles</option>
+            </select>
+            <select className="ad-input" value={item.materialVariant} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialVariant:e.target.value}:x))}>
+              {item.materialCategory==="Red Bottles" ? <option value="Red">Red</option> : <><option value="Green">Green</option><option value="White">White</option><option value="White Milk">White Milk</option></>}
+            </select>
+            <input className="ad-input" type="number" placeholder="Quantity (kg)" value={item.quantityKg} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,quantityKg:e.target.value}:x))}/>
+            <input className="ad-input" type="number" placeholder="Rate / kg" value={item.ratePerKg} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,ratePerKg:e.target.value}:x))}/>
+            <span className="ad-input flex items-center text-sm">₹{((Number(item.quantityKg)||0)*(Number(item.ratePerKg)||0)).toFixed(2)}</span>
+            {saleItems.length>1?<button className="ad-btn ad-btn-ghost" onClick={()=>setSaleItems(saleItems.filter((_:any,j:number)=>j!==i))}>Remove</button>:<span/>}
+          </div>)}
+          <button className="ad-btn ad-btn-ghost" onClick={()=>setSaleItems([...saleItems,{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}])}>+ Add Material</button>
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-4">
+          <span className="ad-input flex items-center font-semibold">Grand Total: ₹{saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0)*(Number(x.ratePerKg)||0),0).toFixed(2)}</span>
+          <input className="ad-input" type="number" min="0" placeholder="Total received payment" value={sale.receivedAmount} onChange={e=>setSale({...sale,receivedAmount:e.target.value})}/>
           <select className="ad-input" value={sale.receivedBy} onChange={e=>setSale({...sale,receivedBy:e.target.value})}><option value="">Received by</option><option>Rahul</option><option>Devesh</option><option>Nitin</option></select>
           <select className="ad-input" value={sale.paymentMode} onChange={e=>setSale({...sale,paymentMode:e.target.value})}><option>Cash</option><option>UPI</option><option>Bank Transfer</option><option>Cheque</option></select>
-          <input className="ad-input md:col-span-2" placeholder="Notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
-          <button className="ad-btn ad-btn-primary" onClick={addSale}>Save Sale</button>
+          <input className="ad-input md:col-span-3" placeholder="Notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
+          <button className="ad-btn ad-btn-primary" onClick={addSale}>Save Full Truck Sale</button>
         </div>
         <p className="mt-2 text-xs ad-muted">GST is intentionally not included for now.</p>
       </div>
-      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Buyer</th><th>Contact</th><th>Material</th><th>Qty</th><th>Rate</th><th>Total</th><th>Received</th><th>Pending</th><th>Received by</th><th>Action</th></tr></thead><tbody>
-        {(data.sales||[]).filter((s:any)=>s.mode===mode).map((s:any)=><tr key={s.id}><td>{s.sale_date}</td><td>{s.customer_name}</td><td>{s.phone||"—"}</td><td>{s.material_category}{s.material_variant?" - "+s.material_variant:""}</td><td>{s.quantity_kg} kg</td><td>₹{s.rate_per_kg}</td><td>₹{s.total_amount}</td><td>₹{s.received_amount}</td><td>₹{s.credit_amount}</td><td>{s.received_amount>0?((data.salePayments||[]).find((p:any)=>p.sale_id===s.id)?.received_by||"—"):"—"}</td><td>{s.credit_amount>0?<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={()=>receiveSalePayment(s)}>Receive</button>:"PAID"}</td></tr>)}
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Buyer</th><th>Contact</th><th>Materials</th><th>Total</th><th>Received</th><th>Pending</th><th>Action</th></tr></thead><tbody>
+        {(data.sales||[]).filter((s:any)=>s.mode===mode).map((s:any)=><tr key={s.id}><td>{s.sale_date}</td><td>{s.customer_name}</td><td>{s.phone||"—"}</td><td>{(data.saleItems||[]).filter((x:any)=>x.sale_id===s.id).map((x:any)=>x.material_variant+" "+x.quantity_kg+"kg @ ₹"+x.rate_per_kg).join(" | ")||s.material_variant}</td><td>₹{s.total_amount}</td><td>₹{s.received_amount}</td><td>₹{s.credit_amount}</td><td>{s.credit_amount>0?<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={()=>receiveSalePayment(s)}>Receive</button>:"PAID"}</td></tr>)}
       </tbody></table></div>
     </div>}
     {tab==="inventory" && <div className="space-y-5">

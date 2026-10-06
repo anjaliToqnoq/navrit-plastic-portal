@@ -24,7 +24,7 @@ export default function InventoryPage() {
   const [message,setMessage] = useState("");
   const [purchase,setPurchase] = useState({
     materialId:"", materialName:"", supplierId:"", purchaseType:"NORMAL",
-    quantityKg:"", ratePerKg:"", paidAmount:"", borrowingId:"", lenderId:"", notes:""
+    quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", borrowingId:"", lenderId:"", notes:""
   });
   const [expense,setExpense] = useState({purchaseId:"",expenseType:"Weighing",description:"",amount:""});
   const [borrowing,setBorrowing] = useState({lenderId:"",amount:"",purpose:"",notes:""});
@@ -60,11 +60,11 @@ export default function InventoryPage() {
       mode, materialId:m?.id, materialName:purchase.materialName||m?.name_en,
       supplierId:purchase.supplierId?Number(purchase.supplierId):undefined,
       purchaseType:purchase.purchaseType, quantityKg:Number(purchase.quantityKg),
-      ratePerKg:Number(purchase.ratePerKg), paidAmount:purchase.paidAmount===""?undefined:Number(purchase.paidAmount),
+      ratePerKg:Number(purchase.ratePerKg), paidAmount:purchase.paidAmount===""?undefined:Number(purchase.paidAmount), paidBy:purchase.paidBy||undefined,
       borrowingId:purchase.borrowingId?Number(purchase.borrowingId):undefined,
       lenderId:purchase.lenderId?Number(purchase.lenderId):undefined, notes:purchase.notes
     });
-    if(ok)setPurchase({materialId:"",materialName:"",supplierId:"",purchaseType:"NORMAL",quantityKg:"",ratePerKg:"",paidAmount:"",borrowingId:"",lenderId:"",notes:""});
+    if(ok)setPurchase({materialId:"",materialName:"",supplierId:"",purchaseType:"NORMAL",quantityKg:"",ratePerKg:"",paidAmount:"",paidBy:"",borrowingId:"",lenderId:"",notes:""});
   }
 
   async function addExpense() {
@@ -119,7 +119,7 @@ export default function InventoryPage() {
           
           <input className="ad-input" type="number" placeholder="Quantity (kg)" value={purchase.quantityKg} onChange={e=>setPurchase({...purchase,quantityKg:e.target.value})}/>
           <input className="ad-input" type="number" placeholder="Rate / kg" value={purchase.ratePerKg} onChange={e=>setPurchase({...purchase,ratePerKg:e.target.value})}/>
-          <span className="ad-input flex items-center text-sm">Total: ₹{((Number(purchase.quantityKg)||0)*(Number(purchase.ratePerKg)||0)).toFixed(2)}</span><input className="ad-input" type="number" min="0" placeholder="Paid to vendor" value={purchase.paidAmount} onChange={e=>setPurchase({...purchase,paidAmount:e.target.value})}/>
+          <span className="ad-input flex items-center text-sm">Total: ₹{((Number(purchase.quantityKg)||0)*(Number(purchase.ratePerKg)||0)).toFixed(2)}</span><input className="ad-input" type="number" min="0" placeholder="Paid to vendor" value={purchase.paidAmount} onChange={e=>setPurchase({...purchase,paidAmount:e.target.value})}/><select className="ad-input" value={purchase.paidBy} onChange={e=>setPurchase({...purchase,paidBy:e.target.value})}><option value="">Payment done by</option><option>Rahul</option><option>Devesh</option><option>Nitin</option></select>
           {purchase.purchaseType==="BORROWED_FUND" && <select className="ad-input" value={purchase.borrowingId} onChange={e=>setPurchase({...purchase,borrowingId:e.target.value})}><option value="">Select borrowing</option>{openBorrowings.map((b:Borrowing)=><option key={b.id} value={b.id}>#{b.id} {b.lenderName} — ₹{b.outstanding_amount}</option>)}</select>}
           <input className="ad-input md:col-span-2" placeholder="Notes" value={purchase.notes} onChange={e=>setPurchase({...purchase,notes:e.target.value})}/>
           <button className="ad-btn ad-btn-primary" onClick={addPurchase}>Save purchase</button>

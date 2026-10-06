@@ -24,7 +24,7 @@ export default function InventoryPage() {
   const [tab,setTab] = useState("purchases");
   const [sale,setSale] = useState({customerName:"",phone:"",location:"",materialCategory:"",materialVariant:"",quantityKg:"",ratePerKg:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",saleDate:new Date().toISOString().slice(0,10),notes:""});
   const [message,setMessage] = useState("");
-  const emptyPurchase = { materialId:"", materialName:"", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), notes:"", transportCharges:"", weightCharges:"", labourCharges:"" };
+  const emptyPurchase = { materialId:"", materialName:"", materialVariant:"", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), notes:"", transportCharges:"", weightCharges:"", labourCharges:"" };
   const [purchase,setPurchase] = useState(emptyPurchase);
   const [editingPurchase,setEditingPurchase] = useState<number|null>(null);
   const [expense,setExpense] = useState({purchaseId:"",expenseType:"Weighing",description:"",amount:""});

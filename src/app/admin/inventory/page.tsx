@@ -48,6 +48,11 @@ export default function InventoryPage() {
   const filteredBorrowings=(data?.borrowings||[]).filter((x:Borrowing)=>x.mode===mode);
   const openBorrowings=filteredBorrowings.filter((x:Borrowing)=>x.outstanding_amount>0);
   const currentKg=filteredInventory.reduce((n:any,x:any)=>n+Number(x.quantityKg||0),0);
+  const saleGrossAmount=saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0)*(Number(x.ratePerKg)||0),0);
+  const saleTotalWeight=saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0),0);
+  const saleLabourCharges=saleTotalWeight*2;
+  const saleLoadingCharges=Number(sale.loadingCharges||0);
+  const saleFinalAmount=Math.max(0,saleGrossAmount-saleLabourCharges-saleLoadingCharges);
 
   async function post(action:string, body:any) {
     const r=await fetch("/api/admin/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...body})});
@@ -200,12 +205,14 @@ export default function InventoryPage() {
           <button className="ad-btn ad-btn-ghost" onClick={()=>setSaleItems([...saleItems,{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}])}>+ Add Material</button>
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-4">
-          <span className="ad-input flex items-center font-semibold">Grand Total: ₹{saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0)*(Number(x.ratePerKg)||0),0).toFixed(2)}</span>
+          <span className="ad-input flex items-center font-semibold">Gross Sale: ₹{saleGrossAmount.toFixed(2)}</span>
+          <span className="ad-input flex items-center">Labour Charges (₹2/kg): -₹{saleLabourCharges.toFixed(2)}</span>
           <input className="ad-input" type="number" min="0" placeholder="Loading Charges" value={sale.loadingCharges||""} onChange={e=>setSale({...sale,loadingCharges:e.target.value})}/>
-          <input className="ad-input" type="number" min="0" placeholder="Total received payment" value={sale.receivedAmount} onChange={e=>setSale({...sale,receivedAmount:e.target.value})}/>
+          <span className="ad-input flex items-center font-semibold">Final Amount: ₹{saleFinalAmount.toFixed(2)}</span>
+          <input className="ad-input" type="number" min="0" max={saleFinalAmount} placeholder="Total received payment" value={sale.receivedAmount} onChange={e=>setSale({...sale,receivedAmount:e.target.value})}/>
           <select className="ad-input" value={sale.receivedBy} onChange={e=>setSale({...sale,receivedBy:e.target.value})}><option value="">Received by</option><option>Rahul</option><option>Devesh</option><option>Nitin</option></select>
           <select className="ad-input" value={sale.paymentMode} onChange={e=>setSale({...sale,paymentMode:e.target.value})}><option>Cash</option><option>UPI</option><option>Bank Transfer</option><option>Cheque</option></select>
-          <input className="ad-input md:col-span-3" placeholder="Notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
+          <input className="ad-input md:col-span-2" placeholder="Notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
           <button className="ad-btn ad-btn-primary" onClick={addSale}>Save Full Truck Sale</button>
         </div>
         <p className="mt-2 text-xs ad-muted">Processing labour is automatically ₹2/kg for every sale. Loading charges are sale-specific and paid after the sale. GST is intentionally not included for now.</p>

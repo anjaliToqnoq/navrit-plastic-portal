@@ -319,7 +319,7 @@ export async function POST(req: NextRequest) {
       const s = z.object({
         mode: modeSchema, customerName: z.string().trim().min(1), phone: z.string().trim().optional().default(""),
         location: z.string().trim().optional().default(""), materialCategory: z.enum(["Natural Bottles","Red Bottles"]),
-        materialVariant: z.enum(["Green","White","Red"]).optional().default(""), quantityKg: z.number().positive(),
+        materialVariant: z.enum(["","Green","White","Red"]).optional().default(""), quantityKg: z.number().positive(),
         ratePerKg: z.number().nonnegative(), receivedAmount: z.number().nonnegative().optional(),
         saleDate: dateSchema.optional().default(todayStr()), receivedBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
         paymentMode: z.string().trim().min(1).optional().default("Cash"), notes: z.string().trim().optional().default("")

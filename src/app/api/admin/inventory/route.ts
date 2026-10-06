@@ -223,9 +223,6 @@ export async function POST(req: NextRequest) {
         borrowingId: z.number().int().positive().optional(),
         purchaseDate: dateSchema.optional().default(todayStr()),
         notes: z.string().trim().optional().default(""),
-        transportCharges: z.number().nonnegative().optional().default(0),
-        weightCharges: z.number().nonnegative().optional().default(0),
-        labourCharges: z.number().nonnegative().optional().default(0),
         materialVariant: z.enum(["","Green","White","White Milk"]).optional().default(""),
       }).parse(body);
 
@@ -255,7 +252,7 @@ export async function POST(req: NextRequest) {
       `).run(
         s.mode, s.materialId ?? null, s.materialName, s.supplierId ?? null, s.purchaseType,
         s.quantityKg, s.ratePerKg, total, paid, credit, s.lenderId ?? null, s.borrowingId ?? null,
-        s.purchaseDate, s.notes, s.paidBy ?? "", s.transportCharges, s.weightCharges, s.labourCharges, s.materialVariant, nowIso(), nowIso()
+        s.purchaseDate, s.notes, s.paidBy ?? "", s.materialVariant, nowIso(), nowIso()
       );
       const purchaseId = Number(r.lastInsertRowid);
       if(cashPaid>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"PURCHASE",cashPaid,s.purchaseDate,"Cash",s.notes,nowIso());
@@ -265,7 +262,7 @@ export async function POST(req: NextRequest) {
         INSERT INTO inventory_transactions
         (mode, material_id, material_name, transaction_type, quantity_kg, amount, purchase_id, transaction_date, notes, created_at)
         VALUES (?, ?, ?, 'PURCHASE', ?, ?, ?, ?, ?, ?)
-      `).run(s.mode, s.materialId ?? null, s.materialVariant ? s.materialName + " - " + s.materialVariant : s.materialName, s.quantityKg, total + s.transportCharges + s.weightCharges + s.labourCharges, purchaseId, s.purchaseDate, s.notes, nowIso());
+      `).run(s.mode, s.materialId ?? null, s.materialVariant ? s.materialName + " - " + s.materialVariant : s.materialName, s.quantityKg, total, purchaseId, s.purchaseDate, s.notes, nowIso());
 
       return json({ ok: true, id: purchaseId, total, paid, credit });
     }
@@ -283,9 +280,6 @@ export async function POST(req: NextRequest) {
         purchaseDate: dateSchema,
         paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
         notes: z.string().trim().optional().default(""),
-        transportCharges: z.number().nonnegative().optional().default(0),
-        weightCharges: z.number().nonnegative().optional().default(0),
-        labourCharges: z.number().nonnegative().optional().default(0),
         materialVariant: z.enum(["","Green","White","White Milk"]).optional().default(""),
       }).parse(body);
       const existing = sqlite.prepare("SELECT id, paid_amount FROM purchases WHERE id=? AND mode=?").get(s.purchaseId, s.mode) as {id:number;paid_amount:number} | undefined;
@@ -293,8 +287,8 @@ export async function POST(req: NextRequest) {
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
       if (existing.paid_amount > total + 0.005) return NextResponse.json({ error: "Purchase total cannot be less than amount already paid" }, { status: 400 });
       const credit = Math.round((total - existing.paid_amount) * 100) / 100;
-      sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, material_variant=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, credit_amount=?, purchase_date=?, paid_by=?, notes=?, transport_charges=?, weight_charges=?, labour_charges=?, updated_at=? WHERE id=? AND mode=?`)
-        .run(s.materialId ?? null, s.materialName, s.materialVariant, s.supplierId ?? null, s.purchaseType, s.quantityKg, s.ratePerKg, total, credit, s.purchaseDate, s.paidBy ?? "", s.notes, s.transportCharges, s.weightCharges, s.labourCharges, nowIso(), s.purchaseId, s.mode);
+      sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, material_variant=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, credit_amount=?, purchase_date=?, paid_by=?, notes=?, updated_at=? WHERE id=? AND mode=?`)
+        .run(s.materialId ?? null, s.materialName, s.materialVariant, s.supplierId ?? null, s.purchaseType, s.quantityKg, s.ratePerKg, total, credit, s.purchaseDate, s.paidBy ?? "", s.notes, nowIso(), s.purchaseId, s.mode);
       sqlite.prepare("UPDATE inventory_transactions SET material_id=?, material_name=?, quantity_kg=?, amount=?, transaction_date=?, notes=? WHERE purchase_id=? AND transaction_type='PURCHASE'")
         .run(s.materialId ?? null, s.materialVariant ? s.materialName + " - " + s.materialVariant : s.materialName, s.quantityKg, total + s.transportCharges + s.weightCharges + s.labourCharges, s.purchaseDate, s.notes, s.purchaseId);
       sqlite.prepare("UPDATE vendor_payments SET payment_date=? WHERE purchase_id=?").run(s.purchaseDate, s.purchaseId);

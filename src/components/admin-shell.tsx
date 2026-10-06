@@ -32,6 +32,7 @@ import "@/app/admin-theme.css";
 const nav = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/rates", label: "Rates", icon: IndianRupee },
+  { href: "/admin/inventory", label: "Inventory & Finance", icon: Package },
   { href: "/admin/materials", label: "Materials", icon: Package },
   { href: "/admin/categories", label: "Categories", icon: Layers },
   { href: "/admin/articles", label: "Articles", icon: FileText },

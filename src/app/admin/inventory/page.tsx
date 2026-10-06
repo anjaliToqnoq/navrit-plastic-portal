@@ -138,7 +138,7 @@ export default function InventoryPage() {
     </div>
 
     <div className="mb-4 flex flex-wrap gap-2">
-      {[["purchases","Purchases"],["sales","Sales"],["inventory","Inventory"],["borrowings","Borrowings"]].map(([value,label])=><button key={value} onClick={()=>setTab(value)} className={tab===value?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{label}</button>)}
+      {[["purchases","Purchases"],["processing","Processing"],["sales","Sales"],["inventory","Inventory"],["borrowings","Borrowings"]].map(([value,label])=><button key={value} onClick={()=>setTab(value)} className={tab===value?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{label}</button>)}
     </div>
 
     {tab==="purchases" && <div className="space-y-5">
@@ -174,6 +174,43 @@ export default function InventoryPage() {
       </tbody></table></div>
     </div>}
 
+    {tab==="processing" && <div className="space-y-5">
+      <div className="ad-card p-4">
+        <h2 className="mb-3 font-semibold">Processing & Bale Preparation</h2>
+        <p className="mb-3 text-xs ad-muted">Segregate material into Green, White, White Milk and Red before sale. Labour is fixed at ₹2/kg and is recorded as paid for each sale.</p>
+        <div className="grid gap-2 md:grid-cols-4">
+          <input className="ad-input" type="date" value={processingDate} onChange={e=>setProcessingDate(e.target.value)}/>
+          <span className="ad-input flex items-center">Total: {processingItems.reduce((n:number,x:any)=>n+Number(x.quantityKg||0),0).toFixed(2)} kg</span>
+          <span className="ad-input flex items-center">Labour: ₹{(processingItems.reduce((n:number,x:any)=>n+Number(x.quantityKg||0),0)*2).toFixed(2)}</span>
+          <input className="ad-input" placeholder="Notes" value={processingNotes} onChange={e=>setProcessingNotes(e.target.value)}/>
+        </div>
+        <div className="mt-3 space-y-2">
+          {processingItems.map((item:any,i:number)=><div key={i} className="grid gap-2 md:grid-cols-4">
+            <select className="ad-input" value={item.materialVariant} onChange={e=>setProcessingItems(processingItems.map((x:any,j:number)=>j===i?{...x,materialVariant:e.target.value}:x))}>
+              <option>Green</option><option>White</option><option>White Milk</option>{mode==="PLASTIC"&&<option>Red</option>}
+            </select>
+            <input className="ad-input" type="number" placeholder="Quantity (kg)" value={item.quantityKg} onChange={e=>setProcessingItems(processingItems.map((x:any,j:number)=>j===i?{...x,quantityKg:e.target.value}:x))}/>
+            <input className="ad-input" type="number" min="0" placeholder="Bale count" value={item.baleCount} onChange={e=>setProcessingItems(processingItems.map((x:any,j:number)=>j===i?{...x,baleCount:e.target.value}:x))}/>
+            {processingItems.length>1?<button className="ad-btn ad-btn-ghost" onClick={()=>setProcessingItems(processingItems.filter((_:any,j:number)=>j!==i))}>Remove</button>:<span/>}
+          </div>)}
+          <button className="ad-btn ad-btn-ghost" onClick={()=>setProcessingItems([...processingItems,{materialVariant:"Green",quantityKg:"",baleCount:""}])}>+ Add Material</button>
+        </div>
+        <button className="ad-btn ad-btn-primary mt-3" onClick={async()=>{if(await post("addProcessingBatch",{mode,batchDate:processingDate,items:processingItems.map((x:any)=>({materialVariant:x.materialVariant,quantityKg:Number(x.quantityKg),baleCount:Number(x.baleCount||0)})),notes:processingNotes})){setProcessingItems([{materialVariant:"Green",quantityKg:"",baleCount:""}]);setProcessingNotes("");}}}>Save Processing Batch</button>
+      </div>
+      <div className="ad-card p-4">
+        <h2 className="mb-3 font-semibold">Monthly Processing Expenses</h2>
+        <div className="grid gap-2 md:grid-cols-5">
+          <select className="ad-input" value={processingExpense.expenseType} onChange={e=>setProcessingExpense({...processingExpense,expenseType:e.target.value})}><option>Electricity</option><option>Thread</option><option>Other</option></select>
+          <input className="ad-input" placeholder="Description" value={processingExpense.description} onChange={e=>setProcessingExpense({...processingExpense,description:e.target.value})}/>
+          <input className="ad-input" type="number" min="0" placeholder="Amount" value={processingExpense.amount} onChange={e=>setProcessingExpense({...processingExpense,amount:e.target.value})}/>
+          <select className="ad-input" value={processingExpense.paidBy} onChange={e=>setProcessingExpense({...processingExpense,paidBy:e.target.value})}><option value="">Paid by</option><option>Rahul</option><option>Devesh</option><option>Nitin</option></select>
+          <button className="ad-btn ad-btn-primary" onClick={async()=>{if(await post("addProcessingExpense",{mode,expenseType:processingExpense.expenseType,description:processingExpense.description,amount:Number(processingExpense.amount),paidBy:processingExpense.paidBy||undefined})){setProcessingExpense({expenseType:"Electricity",description:"",amount:"",paidBy:""});}}}>Save Expense</button>
+        </div>
+      </div>
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Materials / Qty</th><th>Total Kg</th><th>Labour @ ₹2/kg</th><th>Status</th></tr></thead><tbody>
+        {(data.processingBatches||[]).filter((b:any)=>b.mode===mode).map((b:any)=><tr key={b.id}><td>{b.batch_date}</td><td>{(data.processingBatchItems||[]).filter((x:any)=>x.batch_id===b.id).map((x:any)=>x.material_variant+" "+x.quantity_kg+"kg ("+x.bale_count+" bales)").join(" | ")}</td><td>{b.total_input_kg} kg</td><td>₹{b.labour_cost}</td><td>{b.status}</td></tr>)}
+      </tbody></table></div>
+    </div>}
     {tab==="sales" && <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="ad-card p-4"><p className="ad-muted text-xs">Company Balance</p><p className="mt-1 text-2xl font-bold">₹{Number(data.cashBalance?.[mode]||0).toFixed(2)}</p></div>
@@ -211,13 +248,14 @@ export default function InventoryPage() {
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-4">
           <span className="ad-input flex items-center font-semibold">Grand Total: ₹{saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0)*(Number(x.ratePerKg)||0),0).toFixed(2)}</span>
+          <input className="ad-input" type="number" min="0" placeholder="Loading Charges" value={sale.loadingCharges||""} onChange={e=>setSale({...sale,loadingCharges:e.target.value})}/>
           <input className="ad-input" type="number" min="0" placeholder="Total received payment" value={sale.receivedAmount} onChange={e=>setSale({...sale,receivedAmount:e.target.value})}/>
           <select className="ad-input" value={sale.receivedBy} onChange={e=>setSale({...sale,receivedBy:e.target.value})}><option value="">Received by</option><option>Rahul</option><option>Devesh</option><option>Nitin</option></select>
           <select className="ad-input" value={sale.paymentMode} onChange={e=>setSale({...sale,paymentMode:e.target.value})}><option>Cash</option><option>UPI</option><option>Bank Transfer</option><option>Cheque</option></select>
           <input className="ad-input md:col-span-3" placeholder="Notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
           <button className="ad-btn ad-btn-primary" onClick={addSale}>Save Full Truck Sale</button>
         </div>
-        <p className="mt-2 text-xs ad-muted">GST is intentionally not included for now.</p>
+        <p className="mt-2 text-xs ad-muted">Processing labour is automatically ₹2/kg for every sale. Loading charges are sale-specific and paid after the sale. GST is intentionally not included for now.</p>
       </div>
       <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Buyer</th><th>Contact</th><th>Materials</th><th>Total</th><th>Received</th><th>Pending</th><th>Action</th></tr></thead><tbody>
         {(data.sales||[]).filter((s:any)=>s.mode===mode).map((s:any)=><tr key={s.id}><td>{s.sale_date}</td><td>{s.customer_name}</td><td>{s.phone||"—"}</td><td>{(data.saleItems||[]).filter((x:any)=>x.sale_id===s.id).map((x:any)=>x.material_variant+" "+x.quantity_kg+"kg @ ₹"+x.rate_per_kg).join(" | ")||s.material_variant}</td><td>₹{s.total_amount}</td><td>₹{s.received_amount}</td><td>₹{s.credit_amount}</td><td>{s.credit_amount>0?<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={()=>receiveSalePayment(s)}>Receive</button>:"PAID"}</td></tr>)}

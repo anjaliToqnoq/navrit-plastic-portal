@@ -92,6 +92,27 @@ function createDb() {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS vendor_advances (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+      amount REAL NOT NULL CHECK(amount > 0),
+      used_amount REAL NOT NULL DEFAULT 0 CHECK(used_amount >= 0),
+      advance_date TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS other_expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      purchase_id INTEGER REFERENCES purchases(id) ON DELETE SET NULL,
+      expense_type TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      amount REAL NOT NULL CHECK(amount >= 0),
+      expense_date TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS lenders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,

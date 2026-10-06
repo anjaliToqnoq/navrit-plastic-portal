@@ -153,7 +153,7 @@ export default function InventoryPage() {
             <option value="Natural Bottles">Natural Bottles</option>
             <option value="Red Bottles">Red Bottles</option>
           </select>
-          {purchase.materialName==="Natural Bottles" && <select className="ad-input" value={purchase.materialVariant} onChange={e=>setPurchase({...purchase,materialVariant:e.target.value})}><option value="">Natural type</option><option value="Green">Green</option><option value="White">White</option></select>}
+          {purchase.materialName==="Natural Bottles" && <select className="ad-input" value={purchase.materialVariant} onChange={e=>setPurchase({...purchase,materialVariant:e.target.value})}><option value="">Natural type</option><option value="Green">Green</option><option value="White">White</option><option value="White Milk">White Milk</option></select>}
           
           <input className="ad-input" type="date" value={purchase.purchaseDate} onChange={e=>setPurchase({...purchase,purchaseDate:e.target.value})}/>
           <input className="ad-input" type="number" placeholder="Quantity (kg)" value={purchase.quantityKg} onChange={e=>setPurchase({...purchase,quantityKg:e.target.value})}/>

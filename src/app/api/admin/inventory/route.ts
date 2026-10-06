@@ -60,30 +60,33 @@ export async function GET() {
   `).all();
 
   const vendorSummary = sqlite.prepare(`
-    SELECT s.id, s.name,
-      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.quantity_kg ELSE 0 END),0),2) as totalKg,
-      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.total_amount ELSE 0 END),0),2) as totalPurchase,
-      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.paid_amount ELSE 0 END),0),2) as totalPaid,
-      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.credit_amount ELSE 0 END),0),2) as unpaid,
-      ROUND(COALESCE(SUM(CASE WHEN va.mode=? THEN va.amount-va.used_amount ELSE 0 END),0),2) as advance
+    SELECT
+      s.id,
+      s.name,
+      m.mode,
+      ROUND(COALESCE(p.totalKg, 0), 2) as totalKg,
+      ROUND(COALESCE(p.totalPurchase, 0), 2) as totalPurchase,
+      ROUND(COALESCE(p.totalPaid, 0), 2) as totalPaid,
+      ROUND(COALESCE(p.unpaid, 0), 2) as unpaid,
+      ROUND(COALESCE(a.advance, 0), 2) as advance
     FROM suppliers s
-    LEFT JOIN purchases p ON p.supplier_id=s.id
-    LEFT JOIN vendor_advances va ON va.supplier_id=s.id
-    GROUP BY s.id,s.name ORDER BY s.name
-  `).all("PET","PET","PET","PET","PET");
-
-  const vendorSummary = sqlite.prepare(`
-    SELECT s.id, s.name,
-      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.quantity_kg ELSE 0 END),0),2) as totalKg,
-      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.total_amount ELSE 0 END),0),2) as totalPurchase,
-      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.paid_amount ELSE 0 END),0),2) as totalPaid,
-      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.credit_amount ELSE 0 END),0),2) as unpaid,
-      ROUND(COALESCE(SUM(CASE WHEN va.mode=? THEN va.amount-va.used_amount ELSE 0 END),0),2) as advance
-    FROM suppliers s
-    LEFT JOIN purchases p ON p.supplier_id=s.id
-    LEFT JOIN vendor_advances va ON va.supplier_id=s.id
-    GROUP BY s.id,s.name ORDER BY s.name
-  `).all(mode,mode,mode,mode,mode);
+    CROSS JOIN (SELECT 'PET' AS mode UNION ALL SELECT 'PLASTIC' AS mode) m
+    LEFT JOIN (
+      SELECT supplier_id, mode,
+        SUM(quantity_kg) as totalKg,
+        SUM(total_amount) as totalPurchase,
+        SUM(paid_amount) as totalPaid,
+        SUM(credit_amount) as unpaid
+      FROM purchases
+      GROUP BY supplier_id, mode
+    ) p ON p.supplier_id=s.id AND p.mode=m.mode
+    LEFT JOIN (
+      SELECT supplier_id, mode, SUM(amount-used_amount) as advance
+      FROM vendor_advances
+      GROUP BY supplier_id, mode
+    ) a ON a.supplier_id=s.id AND a.mode=m.mode
+    ORDER BY s.name, m.mode
+  `).all();
 
   const totals = sqlite.prepare(`
     SELECT

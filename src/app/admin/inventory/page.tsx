@@ -164,10 +164,23 @@ export default function InventoryPage() {
       <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Lender</th><th>Amount</th><th>Outstanding</th><th>Action</th></tr></thead><tbody>{filteredBorrowings.map((b:Borrowing)=><tr key={b.id}><td>{b.borrowing_date}</td><td>{b.lenderName}</td><td>₹{b.amount}</td><td>₹{b.outstanding_amount}</td><td>{b.outstanding_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={async()=>{const v=prompt("Repayment amount",String(b.outstanding_amount));if(v)await post("repayBorrowing",{borrowingId:b.id,amount:Number(v)})}}>Repay</button>}</td></tr>)}</tbody></table></div>
     </div>}
 
-    {tab==="parties" && <div className="grid gap-5 md:grid-cols-2">
-      <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Vendor advance</h2><select className="ad-input mb-2" value={advance.supplierId} onChange={e=>setAdvance({...advance,supplierId:e.target.value})}><option value="">Vendor</option>{(data.suppliers||[]).map((s:Supplier)=><option key={s.id} value={s.id}>{s.name}</option>)}</select><input className="ad-input mb-2" type="number" placeholder="Advance amount" value={advance.amount} onChange={e=>setAdvance({...advance,amount:e.target.value})}/><input className="ad-input mb-2" placeholder="Notes" value={advance.notes} onChange={e=>setAdvance({...advance,notes:e.target.value})}/><button className="ad-btn ad-btn-primary" onClick={addAdvance}>Save advance</button></div>
-      <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Add supplier</h2><input className="ad-input mb-2" placeholder="Name" value={newParty.name} onChange={e=>setNewParty({...newParty,name:e.target.value})}/><input className="ad-input mb-2" placeholder="Phone" value={newParty.phone} onChange={e=>setNewParty({...newParty,phone:e.target.value})}/><button className="ad-btn ad-btn-primary" onClick={()=>addParty("addSupplier")}>Save supplier</button></div>
-      <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Add lender</h2><input className="ad-input mb-2" placeholder="Name" value={newParty.name} onChange={e=>setNewParty({...newParty,name:e.target.value})}/><input className="ad-input mb-2" placeholder="Phone" value={newParty.phone} onChange={e=>setNewParty({...newParty,phone:e.target.value})}/><button className="ad-btn ad-btn-primary" onClick={()=>addParty("addLender")}>Save lender</button></div>
-    </div>}
-  </AdminShell>
+    {tab==="parties" && <div className="space-y-5">
+      <div className="grid gap-5 md:grid-cols-2">
+        <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Vendor advance</h2>
+          <select className="ad-input mb-2 w-full" value={advance.supplierId} onChange={e=>setAdvance({...advance,supplierId:e.target.value})}><option value="">Vendor</option>{(data.suppliers||[]).map((s:Supplier)=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
+          <input className="ad-input mb-2 w-full" type="number" placeholder="Advance amount" value={advance.amount} onChange={e=>setAdvance({...advance,amount:e.target.value})}/>
+          <input className="ad-input mb-2 w-full" placeholder="Notes" value={advance.notes} onChange={e=>setAdvance({...advance,notes:e.target.value})}/>
+          <button className="ad-btn ad-btn-primary" onClick={addAdvance}>Save advance</button>
+        </div>
+        <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Add vendor</h2>
+          <input className="ad-input mb-2 w-full" placeholder="Vendor name" value={newParty.name} onChange={e=>setNewParty({...newParty,name:e.target.value})}/>
+          <input className="ad-input mb-2 w-full" placeholder="Phone" value={newParty.phone} onChange={e=>setNewParty({...newParty,phone:e.target.value})}/>
+          <input className="ad-input mb-2 w-full" placeholder="Notes" value={newParty.notes} onChange={e=>setNewParty({...newParty,notes:e.target.value})}/>
+          <button className="ad-btn ad-btn-primary" onClick={()=>addParty("addSupplier")}>Save vendor</button>
+        </div>
+      </div>
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Vendor</th><th>Material</th><th>Total Qty</th><th>Total Purchase</th><th>Paid</th><th>Unpaid</th><th>Advance</th></tr></thead><tbody>
+        {(data.vendorSummary||[]).filter((v:any)=>!v.mode||v.mode===mode).map((v:any)=><tr key={v.id+"-"+(v.mode||mode)}><td>{v.name}</td><td>{v.mode||mode}</td><td>{Number(v.totalKg||0).toFixed(2)} kg</td><td>₹{Number(v.totalPurchase||0).toFixed(2)}</td><td>₹{Number(v.totalPaid||0).toFixed(2)}</td><td>₹{Number(v.unpaid||0).toFixed(2)}</td><td>₹{Number(v.advance||0).toFixed(2)}</td></tr>)}
+      </tbody></table></div>
+    </div>}  </AdminShell>
 }

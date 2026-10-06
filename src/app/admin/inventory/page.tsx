@@ -22,12 +22,8 @@ export default function InventoryPage() {
   const { mode } = useBusinessMode();
   const [data,setData] = useState<any>(null);
   const [tab,setTab] = useState("purchases");
-  const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",processingBatchId:"",saleDate:new Date().toISOString().slice(0,10),notes:""});
+  const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",saleDate:new Date().toISOString().slice(0,10),notes:""});
   const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
-  const [processingItems,setProcessingItems] = useState([{materialVariant:"Green",quantityKg:"",baleCount:""}]);
-  const [processingExpense,setProcessingExpense] = useState({expenseType:"Electricity",description:"",amount:"",paidBy:""});
-  const [processingDate,setProcessingDate] = useState(new Date().toISOString().slice(0,10));
-  const [processingNotes,setProcessingNotes] = useState("");
 
   const [openingBalance,setOpeningBalance] = useState("");
   const [message,setMessage] = useState("");
@@ -63,7 +59,7 @@ export default function InventoryPage() {
   }
 
   async function addSale() {
-    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),processingBatchId:sale.processingBatchId?Number(sale.processingBatchId):undefined,saleDate:sale.saleDate,notes:sale.notes});
+    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),saleDate:sale.saleDate,notes:sale.notes});
     if(ok){setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",processingBatchId:"",saleDate:new Date().toISOString().slice(0,10),notes:""});setSaleItems([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);}
   }
   async function saveOpeningBalance() {
@@ -132,7 +128,7 @@ export default function InventoryPage() {
     </div>
 
     <div className="mb-4 flex flex-wrap gap-2">
-      {[["purchases","Purchases"],["processing","Processing"],["sales","Sales"],["inventory","Inventory"],["borrowings","Borrowings"]].map(([value,label])=><button key={value} onClick={()=>setTab(value)} className={tab===value?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{label}</button>)}
+      {[["purchases","Purchases"],["sales","Sales"],["inventory","Inventory"],["borrowings","Borrowings"]].map(([value,label])=><button key={value} onClick={()=>setTab(value)} className={tab===value?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{label}</button>)}
     </div>
 
     {tab==="purchases" && <div className="space-y-5">
@@ -168,43 +164,6 @@ export default function InventoryPage() {
       </tbody></table></div>
     </div>}
 
-    {tab==="processing" && <div className="space-y-5">
-      <div className="ad-card p-4">
-        <h2 className="mb-3 font-semibold">Processing & Bale Preparation</h2>
-        <p className="mb-3 text-xs ad-muted">Segregate material into Green, White, White Milk and Red before sale. Labour is fixed at ₹2/kg and is recorded as paid for each sale.</p>
-        <div className="grid gap-2 md:grid-cols-4">
-          <input className="ad-input" type="date" value={processingDate} onChange={e=>setProcessingDate(e.target.value)}/>
-          <span className="ad-input flex items-center">Total: {processingItems.reduce((n:number,x:any)=>n+Number(x.quantityKg||0),0).toFixed(2)} kg</span>
-          <span className="ad-input flex items-center">Labour: ₹{(processingItems.reduce((n:number,x:any)=>n+Number(x.quantityKg||0),0)*2).toFixed(2)}</span>
-          <input className="ad-input" placeholder="Notes" value={processingNotes} onChange={e=>setProcessingNotes(e.target.value)}/>
-        </div>
-        <div className="mt-3 space-y-2">
-          {processingItems.map((item:any,i:number)=><div key={i} className="grid gap-2 md:grid-cols-4">
-            <select className="ad-input" value={item.materialVariant} onChange={e=>setProcessingItems(processingItems.map((x:any,j:number)=>j===i?{...x,materialVariant:e.target.value}:x))}>
-              <option>Green</option><option>White</option><option>White Milk</option>{mode==="PLASTIC"&&<option>Red</option>}
-            </select>
-            <input className="ad-input" type="number" placeholder="Quantity (kg)" value={item.quantityKg} onChange={e=>setProcessingItems(processingItems.map((x:any,j:number)=>j===i?{...x,quantityKg:e.target.value}:x))}/>
-            <input className="ad-input" type="number" min="0" placeholder="Bale count" value={item.baleCount} onChange={e=>setProcessingItems(processingItems.map((x:any,j:number)=>j===i?{...x,baleCount:e.target.value}:x))}/>
-            {processingItems.length>1?<button className="ad-btn ad-btn-ghost" onClick={()=>setProcessingItems(processingItems.filter((_:any,j:number)=>j!==i))}>Remove</button>:<span/>}
-          </div>)}
-          <button className="ad-btn ad-btn-ghost" onClick={()=>setProcessingItems([...processingItems,{materialVariant:"Green",quantityKg:"",baleCount:""}])}>+ Add Material</button>
-        </div>
-        <button className="ad-btn ad-btn-primary mt-3" onClick={async()=>{if(await post("addProcessingBatch",{mode,batchDate:processingDate,items:processingItems.map((x:any)=>({materialVariant:x.materialVariant,quantityKg:Number(x.quantityKg),baleCount:Number(x.baleCount||0)})),notes:processingNotes})){setProcessingItems([{materialVariant:"Green",quantityKg:"",baleCount:""}]);setProcessingNotes("");}}}>Save Processing Batch</button>
-      </div>
-      <div className="ad-card p-4">
-        <h2 className="mb-3 font-semibold">Monthly Processing Expenses</h2>
-        <div className="grid gap-2 md:grid-cols-5">
-          <select className="ad-input" value={processingExpense.expenseType} onChange={e=>setProcessingExpense({...processingExpense,expenseType:e.target.value})}><option>Electricity</option><option>Thread</option><option>Other</option></select>
-          <input className="ad-input" placeholder="Description" value={processingExpense.description} onChange={e=>setProcessingExpense({...processingExpense,description:e.target.value})}/>
-          <input className="ad-input" type="number" min="0" placeholder="Amount" value={processingExpense.amount} onChange={e=>setProcessingExpense({...processingExpense,amount:e.target.value})}/>
-          <select className="ad-input" value={processingExpense.paidBy} onChange={e=>setProcessingExpense({...processingExpense,paidBy:e.target.value})}><option value="">Paid by</option><option>Rahul</option><option>Devesh</option><option>Nitin</option></select>
-          <button className="ad-btn ad-btn-primary" onClick={async()=>{if(await post("addProcessingExpense",{mode,expenseType:processingExpense.expenseType,description:processingExpense.description,amount:Number(processingExpense.amount),paidBy:processingExpense.paidBy||undefined})){setProcessingExpense({expenseType:"Electricity",description:"",amount:"",paidBy:""});}}}>Save Expense</button>
-        </div>
-      </div>
-      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Materials / Qty</th><th>Total Kg</th><th>Labour @ ₹2/kg</th><th>Status</th></tr></thead><tbody>
-        {(data.processingBatches||[]).filter((b:any)=>b.mode===mode).map((b:any)=><tr key={b.id}><td>{b.batch_date}</td><td>{(data.processingBatchItems||[]).filter((x:any)=>x.batch_id===b.id).map((x:any)=>x.material_variant+" "+x.quantity_kg+"kg ("+x.bale_count+" bales)").join(" | ")}</td><td>{b.total_input_kg} kg</td><td>₹{b.labour_cost}</td><td>{b.status}</td></tr>)}
-      </tbody></table></div>
-    </div>}
     {tab==="sales" && <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="ad-card p-4"><p className="ad-muted text-xs">Company Balance</p><p className="mt-1 text-2xl font-bold">₹{Number(data.cashBalance?.[mode]||0).toFixed(2)}</p></div>

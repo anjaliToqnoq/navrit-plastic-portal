@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 type Mode="PET"|"PLASTIC";
 type Vendor={id:number;name:string;phone?:string;location?:string;notes?:string};
 export default function VendorManagement({data,mode,post}:{data:any;mode:Mode;post:(action:string,body:any)=>Promise<boolean>}) {
-  const vendors=(data?.suppliers||[]) as Vendor[];
+  const vendors=useMemo(()=>((data?.suppliers||[]) as Vendor[]),[data?.suppliers]);
   const purchases=(data?.purchases||[]).filter((p:any)=>p.mode===mode);
   const payments=(data?.vendorPayments||[]).filter((p:any)=>p.mode===mode);
   const summary=(data?.vendorSummary||[]).filter((v:any)=>v.mode===mode);

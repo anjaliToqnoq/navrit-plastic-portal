@@ -45,7 +45,7 @@ export async function GET() {
 
   const purchases = sqlite.prepare(`
     SELECT p.*, s.name as supplierName, l.name as lenderName,
-           ROUND((p.total_amount + COALESCE(p.transport_charges,0) + COALESCE(p.weight_charges,0) + COALESCE(p.labour_charges,0)) / NULLIF(p.quantity_kg,0), 2) as effective_cost
+           ROUND(p.total_amount / NULLIF(p.quantity_kg,0), 2) as effective_cost
     FROM purchases p
     LEFT JOIN suppliers s ON s.id = p.supplier_id
     LEFT JOIN lenders l ON l.id = p.lender_id
@@ -252,7 +252,7 @@ export async function POST(req: NextRequest) {
       `).run(
         s.mode, s.materialId ?? null, s.materialName, s.supplierId ?? null, s.purchaseType,
         s.quantityKg, s.ratePerKg, total, paid, credit, s.lenderId ?? null, s.borrowingId ?? null,
-        s.purchaseDate, s.notes, s.paidBy ?? "", s.materialVariant, nowIso(), nowIso()
+        s.purchaseDate, s.notes, s.paidBy ?? "", 0, 0, 0, s.materialVariant, nowIso(), nowIso()
       );
       const purchaseId = Number(r.lastInsertRowid);
       if(cashPaid>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"PURCHASE",cashPaid,s.purchaseDate,"Cash",s.notes,nowIso());
@@ -290,7 +290,7 @@ export async function POST(req: NextRequest) {
       sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, material_variant=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, credit_amount=?, purchase_date=?, paid_by=?, notes=?, updated_at=? WHERE id=? AND mode=?`)
         .run(s.materialId ?? null, s.materialName, s.materialVariant, s.supplierId ?? null, s.purchaseType, s.quantityKg, s.ratePerKg, total, credit, s.purchaseDate, s.paidBy ?? "", s.notes, nowIso(), s.purchaseId, s.mode);
       sqlite.prepare("UPDATE inventory_transactions SET material_id=?, material_name=?, quantity_kg=?, amount=?, transaction_date=?, notes=? WHERE purchase_id=? AND transaction_type='PURCHASE'")
-        .run(s.materialId ?? null, s.materialVariant ? s.materialName + " - " + s.materialVariant : s.materialName, s.quantityKg, total + s.transportCharges + s.weightCharges + s.labourCharges, s.purchaseDate, s.notes, s.purchaseId);
+        .run(s.materialId ?? null, s.materialVariant ? s.materialName + " - " + s.materialVariant : s.materialName, s.quantityKg, total, s.purchaseDate, s.notes, s.purchaseId);
       sqlite.prepare("UPDATE vendor_payments SET payment_date=? WHERE purchase_id=?").run(s.purchaseDate, s.purchaseId);
       return json({ ok: true, total, paid: existing.paid_amount, credit });
     }

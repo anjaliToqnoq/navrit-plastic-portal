@@ -123,7 +123,8 @@ export async function POST(req: NextRequest) {
         mode: modeSchema, supplierId: z.number().int().positive(), amount: z.number().positive(),
         advanceDate: dateSchema.optional().default(todayStr()), notes: z.string().trim().optional().default("")
       }).parse(body);
-      const tx=sqlite.transaction(()=>{ sqlite.prepare(`INSERT INTO vendor_advances (mode,supplier_id,amount,used_amount,advance_date,notes,created_at,updated_at) VALUES (?,?,?,0,?,?,?,?)`).run(x.mode,x.supplierId,x.amount,x.advanceDate,x.notes,nowIso(),nowIso()); sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?)`).run(x.mode,x.supplierId,"ADVANCE",x.amount,x.advanceDate,"Cash",x.notes,nowIso()); }); tx();
+      sqlite.prepare(`INSERT INTO vendor_advances (mode,supplier_id,amount,used_amount,advance_date,notes,created_at,updated_at) VALUES (?,?,?,0,?,?,?,?)`).run(x.mode,x.supplierId,x.amount,x.advanceDate,x.notes,nowIso(),nowIso());
+      sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?)`).run(x.mode,x.supplierId,"ADVANCE",x.amount,x.advanceDate,"Cash",x.notes,nowIso());
       return json({ok:true});
     }
 

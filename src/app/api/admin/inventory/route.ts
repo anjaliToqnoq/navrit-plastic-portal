@@ -197,7 +197,6 @@ export async function POST(req: NextRequest) {
         borrowingId: z.number().int().positive().optional(),
         purchaseDate: dateSchema.optional().default(todayStr()),
         notes: z.string().trim().optional().default(""),
-        paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
       }).parse(body);
 
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;

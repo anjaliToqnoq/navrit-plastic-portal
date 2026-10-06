@@ -9,7 +9,8 @@ export default function VendorManagement({data,mode,post}:{data:any;mode:Mode;po
   const payments=(data?.vendorPayments||[]).filter((p:any)=>p.mode===mode);
   const summary=(data?.vendorSummary||[]).filter((v:any)=>v.mode===mode);
   const [selected,setSelected]=useState<number|null>(null);
-  const [form,setForm]=useState({name:"",location:"",phone:"",notes:""});\n  const [editing,setEditing]=useState(false);
+  const [form,setForm]=useState({name:"",location:"",phone:"",notes:""});
+  const [editing,setEditing]=useState(false);
   const [advance,setAdvance]=useState({amount:"",notes:""});
   const [payment,setPayment]=useState({amount:"",paymentMode:"Cash",notes:""});
   const vendor=vendors.find(v=>v.id===selected);
@@ -18,7 +19,8 @@ export default function VendorManagement({data,mode,post}:{data:any;mode:Mode;po
   const ledger=payments.filter((p:any)=>p.supplier_id===selected);
   const totals=useMemo(()=>({kg:vp.reduce((n:any,p:any)=>n+Number(p.quantity_kg||0),0),value:vp.reduce((n:any,p:any)=>n+Number(p.total_amount||0),0),paid:vp.reduce((n:any,p:any)=>n+Number(p.paid_amount||0),0),out:vp.reduce((n:any,p:any)=>n+Number(p.credit_amount||0),0),advance:vs.reduce((n:any,v:any)=>n+Number(v.advance||0),0)}),[vp,vs]);
   async function addVendor(){if(await post("addSupplier",form))setForm({name:"",location:"",phone:"",notes:""});}
-  async function editVendor(){if(vendor&&await post("updateSupplier",{supplierId:vendor.id,...form}))setEditing(false);}\n  async function addAdvance(){if(vendor&&await post("addVendorAdvance",{mode,supplierId:vendor.id,amount:Number(advance.amount),notes:advance.notes}))setAdvance({amount:"",notes:""});}
+  async function editVendor(){if(vendor&&await post("updateSupplier",{supplierId:vendor.id,...form}))setEditing(false);}
+  async function addAdvance(){if(vendor&&await post("addVendorAdvance",{mode,supplierId:vendor.id,amount:Number(advance.amount),notes:advance.notes}))setAdvance({amount:"",notes:""});}
   async function makePayment(){if(vendor&&await post("payVendor",{mode,supplierId:vendor.id,amount:Number(payment.amount),paymentMode:payment.paymentMode,notes:payment.notes}))setPayment({amount:"",paymentMode:"Cash",notes:""});}
   return <div className="space-y-5">
     <div className="grid gap-5 md:grid-cols-[320px_1fr]">

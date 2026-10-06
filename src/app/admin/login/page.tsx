@@ -62,7 +62,7 @@ export default function AdminLoginPage() {
       {/* Form panel */}
       <div className="relative flex flex-col bg-[#f3f8f6]">
         <div className="flex items-center justify-between px-5 py-4 sm:px-10">
-          <div className="ml-auto flex overflow-hidden rounded-full border border-[#042821]/12 bg-white text-xs font-bold"> className="flex overflow-hidden rounded-full border border-[#042821]/12 bg-white text-xs font-bold">
+          <div className="ml-auto flex overflow-hidden rounded-full border border-[#042821]/12 bg-white text-xs font-bold">
             <button
               type="button"
               onClick={() => setLocale("en")}

@@ -13,7 +13,7 @@ type Lender = { id:number; name:string; phone:string; notes:string };
 type Purchase = {
   id:number; mode:Mode; material_name:string; purchase_type:string; quantity_kg:number;
   rate_per_kg:number; total_amount:number; paid_amount:number; credit_amount:number;
-  supplierName?:string; lenderName?:string; purchase_date:string;
+  supplierName?:string; lenderName?:string; purchase_date:string; paid_by?:string;
 };
 type Borrowing = { id:number; mode:Mode; lenderName:string; amount:number; outstanding_amount:number; borrowing_date:string; purpose:string };
 
@@ -72,14 +72,14 @@ export default function InventoryPage() {
     const ok=await post("updatePurchase",{
       purchaseId:editingPurchase, mode, materialId:m?.id, materialName:purchase.materialName||m?.name_en,
       supplierId:purchase.supplierId?Number(purchase.supplierId):undefined, purchaseType:purchase.purchaseType,
-      quantityKg:Number(purchase.quantityKg), ratePerKg:Number(purchase.ratePerKg), purchaseDate:purchase.purchaseDate, notes:purchase.notes
+      quantityKg:Number(purchase.quantityKg), ratePerKg:Number(purchase.ratePerKg), paidBy:purchase.paidBy||undefined, purchaseDate:purchase.purchaseDate, notes:purchase.notes
     });
     if(ok){setEditingPurchase(null);setPurchase({...emptyPurchase});}
   }
 
   function startEditPurchase(p:Purchase) {
     setEditingPurchase(p.id);
-    setPurchase({materialId:"",materialName:p.material_name,supplierId:p.supplierName ? String((data?.suppliers||[]).find((s:Supplier)=>s.name===p.supplierName)?.id||"") : "",purchaseType:p.purchase_type,quantityKg:String(p.quantity_kg),ratePerKg:String(p.rate_per_kg),paidAmount:String(p.paid_amount),paidBy:"",borrowingId:"",lenderId:"",purchaseDate:p.purchase_date,notes:""});
+    setPurchase({materialId:"",materialName:p.material_name,supplierId:p.supplierName ? String((data?.suppliers||[]).find((s:Supplier)=>s.name===p.supplierName)?.id||"") : "",purchaseType:p.purchase_type,quantityKg:String(p.quantity_kg),ratePerKg:String(p.rate_per_kg),paidAmount:String(p.paid_amount),paidBy:p.paid_by||"",borrowingId:"",lenderId:"",purchaseDate:p.purchase_date,notes:""});
     window.scrollTo({top:0,behavior:"smooth"});
   }
 
@@ -143,8 +143,8 @@ export default function InventoryPage() {
         </div>
       </div>
       <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Other expense for this purchase</h2><div className="grid gap-2 md:grid-cols-5"><select className="ad-input" value={expense.purchaseId} onChange={e=>setExpense({...expense,purchaseId:e.target.value})}><option value="">Purchase</option>{filteredPurchases.map((p:Purchase)=><option key={p.id} value={p.id}>#{p.id} {p.material_name} · ₹{p.total_amount}</option>)}</select><input className="ad-input" placeholder="Expense type" value={expense.expenseType} onChange={e=>setExpense({...expense,expenseType:e.target.value})}/><input className="ad-input" placeholder="Description" value={expense.description} onChange={e=>setExpense({...expense,description:e.target.value})}/><input className="ad-input" type="number" placeholder="Expense amount" value={expense.amount} onChange={e=>setExpense({...expense,amount:e.target.value})}/><button className="ad-btn ad-btn-primary" onClick={addExpense}>Add expense</button></div></div>
-      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Vendor</th><th>Material</th><th>Qty</th><th>Rate</th><th>Total</th><th>Paid</th><th>Unpaid</th><th>Status</th><th>Action</th></tr></thead><tbody>
-        {filteredPurchases.map((p:Purchase)=><tr key={p.id}><td>{p.purchase_date}</td><td>{p.supplierName||"—"}</td><td>{p.material_name}</td><td>{p.quantity_kg} kg</td><td>₹{p.rate_per_kg}</td><td>₹{p.total_amount}</td><td>₹{p.paid_amount}</td><td>₹{p.credit_amount}</td><td>{p.credit_amount>0?"UNPAID":"PAID"}</td><td><button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>startEditPurchase(p)}>Edit</button>{p.credit_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={async()=>{const v=prompt("Payment amount",String(p.credit_amount));if(v)await post("paySupplierCredit",{purchaseId:p.id,amount:Number(v)})}}>Pay credit</button>}</td></tr>)}
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Vendor</th><th>Material</th><th>Qty</th><th>Rate</th><th>Total</th><th>Paid</th><th>Unpaid</th><th>Payment done by</th><th>Status</th><th>Action</th></tr></thead><tbody>
+        {filteredPurchases.map((p:Purchase)=><tr key={p.id}><td>{p.purchase_date}</td><td>{p.supplierName||"—"}</td><td>{p.material_name}</td><td>{p.quantity_kg} kg</td><td>₹{p.rate_per_kg}</td><td>₹{p.total_amount}</td><td>₹{p.paid_amount}</td><td>₹{p.credit_amount}</td><td>{Number(p.paid_amount)>0?p.paid_by||"—":"—"}</td><td>{Number(p.paid_amount)>0?"PAID":"UNPAID"}</td><td><button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>startEditPurchase(p)}>Edit</button>{p.credit_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={async()=>{const v=prompt("Payment amount",String(p.credit_amount));if(v)await post("paySupplierCredit",{purchaseId:p.id,amount:Number(v)})}}>Pay credit</button>}</td></tr>)}
       </tbody></table></div>
     </div>}
 

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AdminShell } from "./admin-shell";
 import { useBusinessMode, type BusinessMode } from "./business-mode-provider";
-import { Package, Wallet, Scale, ArrowRight, PlusCircle, BarChart3, FileText } from "lucide-react";
+import { Package, Wallet, Scale, ArrowRight, PlusCircle, BarChart3, FileText, type LucideIcon } from "lucide-react";
 
 type InventoryRow = { mode: BusinessMode; materialName: string; quantityKg: number; value: number };
 type Purchase = { mode: BusinessMode; total_amount: number; credit_amount: number; purchase_date: string };
@@ -43,12 +43,12 @@ export function AdminDashboardClient({ username }: { username: string }) {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
+        {([
           [Package, "Current stock", stockKg.toFixed(2) + " kg", rows.length + " materials"],
           [Wallet, "Stock value", "₹" + stockValue.toFixed(2), "Current inventory value"],
           [Scale, "Purchases", "₹" + purchaseValue.toFixed(2), purchases.length + " purchase records"],
           [Wallet, "Outstanding", "₹" + (supplierCredit + borrowedOutstanding).toFixed(2), "Credit ₹" + supplierCredit.toFixed(2) + " · Borrowed ₹" + borrowedOutstanding.toFixed(2)],
-        ].map(([Icon, label, value, sub]) => (
+        ] as [LucideIcon, string, string, string][]).map(([Icon, label, value, sub]) => (
           <div key={String(label)} className="ad-card p-4">
             <span className="inline-flex size-9 items-center justify-center rounded-lg bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]"><Icon size={16} /></span>
             <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-[var(--ad-muted)]">{label}</p>

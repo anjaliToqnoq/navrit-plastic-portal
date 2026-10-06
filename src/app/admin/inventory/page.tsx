@@ -3,8 +3,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AdminShell, adminToast } from "@/components/admin-shell";
+import { useBusinessMode, type BusinessMode } from "@/components/business-mode-provider";
 
-type Mode = "PET" | "PLASTIC";
+type Mode = BusinessMode;
 type Material = { id:number; name_en:string; name_hi:string; category_en:string };
 type Supplier = { id:number; name:string; phone:string; notes:string };
 type Lender = { id:number; name:string; phone:string; notes:string };
@@ -16,7 +17,7 @@ type Purchase = {
 type Borrowing = { id:number; mode:Mode; lenderName:string; amount:number; outstanding_amount:number; borrowing_date:string; purpose:string };
 
 export default function InventoryPage() {
-  const [mode,setMode] = useState<Mode>("PET");
+  const { mode } = useBusinessMode();
   const [data,setData] = useState<any>(null);
   const [tab,setTab] = useState("purchases");
   const [message,setMessage] = useState("");
@@ -86,10 +87,8 @@ export default function InventoryPage() {
 
   if(!data) return <AdminShell title="Inventory & Finance"><div className="ad-card p-6">Loading…</div></AdminShell>;
 
-  return <AdminShell title="Inventory & Finance" subtitle="Separate PET and Plastic inventory, purchases, supplier credit and borrowed funds">
+  return <AdminShell title={mode + " Inventory & Finance"} subtitle={"Internal " + mode + " inventory, purchases, supplier credit and borrowed funds"}>
     <div className="mb-5 flex flex-wrap items-center gap-2">
-      <button onClick={()=>setMode("PET")} className={mode==="PET"?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>PET</button>
-      <button onClick={()=>setMode("PLASTIC")} className={mode==="PLASTIC"?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>Plastic</button>
       <span className="ml-2 text-xs text-[var(--ad-muted)]">Current stock: <b>{currentKg.toFixed(2)} kg</b></span>
       {message && <span className="text-xs text-[var(--ad-accent)]">{message}</span>}
     </div>

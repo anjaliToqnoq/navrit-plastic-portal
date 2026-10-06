@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AdminShell, adminToast } from "@/components/admin-shell";
-import { todayStr } from "@/lib/rates";
 
 type Mode = "PET" | "PLASTIC";
 type Material = { id:number; name_en:string; name_hi:string; category_en:string };

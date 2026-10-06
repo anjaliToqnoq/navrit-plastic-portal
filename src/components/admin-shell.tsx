@@ -22,6 +22,7 @@ import {
   Plus,
   HardDrive,
   LineChart,
+  Users,
 } from "lucide-react";
 import "@/app/admin-theme.css";
 
@@ -29,6 +30,7 @@ const navByMode = {
   PET: [
     { href: "/admin", label: "PET Dashboard", icon: LayoutDashboard },
     { href: "/admin/inventory", label: "PET Inventory & Finance", icon: Package },
+    { href: "/admin/vendors", label: "Vendors & Management", icon: Users },
     { href: "/admin/analytics", label: "PET Analytics", icon: BarChart3 },
     { href: "/admin/reports", label: "PET Reports", icon: Download },
     { href: "/admin/report-analysis", label: "PET Month Analysis", icon: LineChart },

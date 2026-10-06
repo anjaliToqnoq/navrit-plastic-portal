@@ -106,18 +106,9 @@ export default function InventoryPage() {
     window.scrollTo({top:0,behavior:"smooth"});
   }
 
-  async function addExpense() {
-    if(await post("addOtherExpense",{mode,purchaseId:expense.purchaseId?Number(expense.purchaseId):undefined,expenseType:expense.expenseType,description:expense.description,amount:Number(expense.amount)})) setExpense({purchaseId:"",expenseType:"Weighing",description:"",amount:""});
-  }
-
   async function addBorrowing() {
     if(await post("addBorrowing",{...borrowing,mode,lenderId:Number(borrowing.lenderId),amount:Number(borrowing.amount)}))
       setBorrowing({lenderId:"",amount:"",purpose:"",notes:""});
-  }
-
-  async function repayBorrowing() {
-    if(await post("repayBorrowing",{borrowingId:Number(repay.borrowingId),amount:Number(repay.amount)}))
-      setRepay({borrowingId:"",amount:""});
   }
 
   async function adjustInventory() {

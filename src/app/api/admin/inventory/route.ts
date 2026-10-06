@@ -115,11 +115,8 @@ export async function GET() {
     return Math.round((opening + received - paidVendors + borrowed - repaid - monthlyProcessing) * 100) / 100;
   };
   const openingBalance = { PET: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PET'").get() as any)?.n || 0), PLASTIC: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PLASTIC'").get() as any)?.n || 0) };
-  const openingStockInitialized = {
-    PET: Number((sqlite.prepare("SELECT COUNT(*) as n FROM inventory_transactions WHERE mode='PET' AND (transaction_type='OPENING_STOCK' OR notes LIKE 'Opening stock before tracking start%')").get() as any)?.n || 0) > 0,
-    PLASTIC: Number((sqlite.prepare("SELECT COUNT(*) as n FROM inventory_transactions WHERE mode='PLASTIC' AND (transaction_type='OPENING_STOCK' OR notes LIKE 'Opening stock before tracking start%')").get() as any)?.n || 0) > 0,
-  };
-  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, saleItems, salePayments, processingBatches, processingBatchItems, processingExpenses, saleProcessingCosts, totals, openingBalance, openingStockInitialized, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });
+
+  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, saleItems, salePayments, processingBatches, processingBatchItems, processingExpenses, saleProcessingCosts, totals, openingBalance, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });
 }
 
 export async function POST(req: NextRequest) {
@@ -430,27 +427,6 @@ export async function POST(req: NextRequest) {
       sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,s.saleId,s.amount,s.paymentDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
       return json({ok:true});
     }
-    if (body.action === "addOpeningStock") {
-      const s = z.object({
-        mode: modeSchema,
-        materialName: z.string().trim().min(1),
-        quantityKg: z.number().positive(),
-        amount: z.number().nonnegative(),
-        transactionDate: dateSchema,
-        notes: z.string().trim().optional().default("Opening stock before tracking start"),
-      }).parse(body);
-      const existing = Number((sqlite.prepare("SELECT COUNT(*) as n FROM inventory_transactions WHERE mode=? AND (transaction_type='OPENING_STOCK' OR notes LIKE 'Opening stock before tracking start%')").get(s.mode) as any)?.n || 0);
-      if (existing > 0) {
-        return NextResponse.json({ error: "Opening stock is already initialized for " + s.mode + ". Use Purchases from 1-Oct-2026 onward." }, { status: 400 });
-      }
-      sqlite.prepare(`
-        INSERT INTO inventory_transactions
-        (mode, material_id, material_name, transaction_type, quantity_kg, amount, transaction_date, notes, created_at)
-        VALUES (?, NULL, ?, 'OPENING_STOCK', ?, ?, ?, ?, ?)
-      `).run(s.mode, s.materialName, s.quantityKg, s.amount, s.transactionDate, s.notes, nowIso());
-      return json({ ok: true });
-    }
-
     if (body.action === "adjustInventory") {
       const s = z.object({
         mode: modeSchema,

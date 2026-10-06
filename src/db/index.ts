@@ -87,6 +87,7 @@ function createDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       phone TEXT,
+      location TEXT NOT NULL DEFAULT '',
       notes TEXT,
       active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,

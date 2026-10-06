@@ -193,7 +193,7 @@ export async function POST(req: NextRequest) {
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
       let paid = s.paidAmount ?? (s.purchaseType === "SUPPLIER_CREDIT" ? 0 : total);
       if (paid > total) paid = total;
-      let credit = Math.round((total - paid) * 100) / 100;
+      const credit = Math.round((total - paid) * 100) / 100;
 
       if (!s.supplierId) {
         return NextResponse.json({ error: "Vendor is required for every purchase" }, { status: 400 });

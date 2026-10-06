@@ -240,6 +240,32 @@ export async function POST(req: NextRequest) {
       return json({ ok: true, id: purchaseId, total, paid, credit });
     }
 
+    if (body.action === "updatePurchase") {
+      const s = z.object({
+        purchaseId: z.number().int().positive(),
+        mode: modeSchema,
+        materialId: z.number().int().positive().optional(),
+        materialName: z.string().trim().min(1),
+        supplierId: z.number().int().positive().optional(),
+        purchaseType: z.enum(["NORMAL", "SUPPLIER_CREDIT", "BORROWED_FUND"]),
+        quantityKg: z.number().positive(),
+        ratePerKg: z.number().nonnegative(),
+        purchaseDate: dateSchema,
+        notes: z.string().trim().optional().default(""),
+      }).parse(body);
+      const existing = sqlite.prepare("SELECT id, paid_amount FROM purchases WHERE id=? AND mode=?").get(s.purchaseId, s.mode) as {id:number;paid_amount:number} | undefined;
+      if (!existing) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
+      const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
+      if (existing.paid_amount > total + 0.005) return NextResponse.json({ error: "Purchase total cannot be less than amount already paid" }, { status: 400 });
+      const credit = Math.round((total - existing.paid_amount) * 100) / 100;
+      sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, credit_amount=?, purchase_date=?, notes=?, updated_at=? WHERE id=? AND mode=?`)
+        .run(s.materialId ?? null, s.materialName, s.supplierId ?? null, s.purchaseType, s.quantityKg, s.ratePerKg, total, credit, s.purchaseDate, s.notes, nowIso(), s.purchaseId, s.mode);
+      sqlite.prepare("UPDATE inventory_transactions SET material_id=?, material_name=?, quantity_kg=?, amount=?, transaction_date=?, notes=? WHERE purchase_id=? AND transaction_type='PURCHASE'")
+        .run(s.materialId ?? null, s.materialName, s.quantityKg, total, s.purchaseDate, s.notes, s.purchaseId);
+      sqlite.prepare("UPDATE vendor_payments SET payment_date=? WHERE purchase_id=?").run(s.purchaseDate, s.purchaseId);
+      return json({ ok: true, total, paid: existing.paid_amount, credit });
+    }
+
     if (body.action === "payVendor") {
       const s=z.object({mode:modeSchema,supplierId:z.number().int().positive(),amount:z.number().positive(),paymentDate:dateSchema.optional().default(todayStr()),paymentMode:z.string().trim().min(1).default("Cash"),notes:z.string().trim().optional().default("")}).parse(body);
       const purchases=sqlite.prepare("SELECT id,credit_amount FROM purchases WHERE mode=? AND supplier_id=? AND credit_amount>0 ORDER BY purchase_date ASC,id ASC").all(s.mode,s.supplierId) as Array<{id:number;credit_amount:number}>;

@@ -2,8 +2,19 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "fs";
 import path from "path";
 
-const dataDir = path.join(process.cwd(), "data");
-const dbPath = path.join(dataDir, "plastic-rates.db");
+// Production data MUST live on Railway's persistent Volume.
+// The path can be overridden explicitly, but never falls back to the app's
+// ephemeral filesystem in production.
+const configuredDataDir = process.env.NAVRIT_DATA_DIR?.trim();
+const dataDir =
+  configuredDataDir ||
+  (process.env.NODE_ENV === "production"
+    ? "/app/data"
+    : path.join(process.cwd(), "data"));
+
+const dbPath =
+  process.env.NAVRIT_DB_PATH?.trim() ||
+  path.join(dataDir, "plastic-rates.db");
 
 const globalForDb = globalThis as unknown as { __plasticDb?: DatabaseSync };
 
@@ -24,8 +35,15 @@ function shouldUseMemoryDb() {
 function createDb() {
   const memory = shouldUseMemoryDb();
 
-  if (!memory && !fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+  if (!memory) {
+    if (process.env.NODE_ENV === "production" && !fs.existsSync(dataDir)) {
+      throw new Error(
+        `Persistent data directory is unavailable: ${dataDir}. Refusing to create a new production database on ephemeral storage.`
+      );
+    }
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
   }
 
   const sqlite = new DatabaseSync(memory ? ":memory:" : dbPath);
@@ -36,6 +54,7 @@ function createDb() {
     } catch {
       // Ignore if another process holds the lock briefly
     }
+    sqlite.exec("PRAGMA synchronous = FULL;");
   }
   sqlite.exec("PRAGMA foreign_keys = ON;");
   sqlite.exec(`

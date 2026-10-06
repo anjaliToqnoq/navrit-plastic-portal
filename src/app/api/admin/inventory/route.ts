@@ -101,7 +101,7 @@ export async function GET() {
 
   const modeCashflow = (m: string) => {
     const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=?").get(m) as any)?.n || 0);
-    const paidVendors = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments WHERE mode=?").get(m) as any)?.n || 0);
+    const paidVendors = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments WHERE mode=? AND NOT (payment_type='CREDIT_SETTLEMENT' AND payment_mode='Advance')").get(m) as any)?.n || 0);
     const borrowed = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM borrowings WHERE mode=?").get(m) as any)?.n || 0);
     const repaid = Number((sqlite.prepare("SELECT COALESCE(SUM(br.amount),0) as n FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id WHERE b.mode=?").get(m) as any)?.n || 0);
     return Math.round((received - paidVendors + borrowed - repaid) * 100) / 100;
@@ -249,7 +249,7 @@ export async function POST(req: NextRequest) {
         INSERT INTO inventory_transactions
         (mode, material_id, material_name, transaction_type, quantity_kg, amount, purchase_id, transaction_date, notes, created_at)
         VALUES (?, ?, ?, 'PURCHASE', ?, ?, ?, ?, ?, ?)
-      `).run(s.mode, s.materialId ?? null, s.materialVariant ? s.materialName + " - " + s.materialVariant : s.materialName, s.quantityKg, total, purchaseId, s.purchaseDate, s.notes, nowIso());
+      `).run(s.mode, s.materialId ?? null, s.materialVariant ? s.materialName + " - " + s.materialVariant : s.materialName, s.quantityKg, total + s.transportCharges + s.weightCharges + s.labourCharges, purchaseId, s.purchaseDate, s.notes, nowIso());
 
       return json({ ok: true, id: purchaseId, total, paid, credit });
     }

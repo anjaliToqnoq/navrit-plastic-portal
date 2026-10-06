@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
       return json({ ok: true, id: Number(r.lastInsertRowid) });
     }
 
-    if (body.action === "addVendorAdvance") {
+    if (body.action === "updateSupplier") {\n      const s = z.object({ supplierId: z.number().int().positive(), name: z.string().trim().min(1), phone: z.string().trim().optional().default(""), location: z.string().trim().optional().default(""), notes: z.string().trim().optional().default("") }).parse(body);\n      sqlite.prepare("UPDATE suppliers SET name=?, phone=?, location=?, notes=?, updated_at=? WHERE id=?").run(s.name, s.phone, s.location, s.notes, nowIso(), s.supplierId);\n      return json({ ok: true });\n    }\n\n    if (body.action === "addVendorAdvance") {
       const x = z.object({
         mode: modeSchema, supplierId: z.number().int().positive(), amount: z.number().positive(),
         advanceDate: dateSchema.optional().default(todayStr()), notes: z.string().trim().optional().default("")

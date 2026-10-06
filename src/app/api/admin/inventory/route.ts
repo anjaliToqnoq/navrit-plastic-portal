@@ -190,6 +190,7 @@ export async function POST(req: NextRequest) {
         borrowingId: z.number().int().positive().optional(),
         purchaseDate: dateSchema.optional().default(todayStr()),
         notes: z.string().trim().optional().default(""),
+        paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
       }).parse(body);
 
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
@@ -213,12 +214,12 @@ export async function POST(req: NextRequest) {
       const r = sqlite.prepare(`
         INSERT INTO purchases
         (mode, material_id, material_name, supplier_id, purchase_type, quantity_kg, rate_per_kg,
-         total_amount, paid_amount, credit_amount, lender_id, borrowing_id, purchase_date, notes, created_at, updated_at)
+         total_amount, paid_amount, credit_amount, lender_id, borrowing_id, purchase_date, notes, paid_by, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         s.mode, s.materialId ?? null, s.materialName, s.supplierId ?? null, s.purchaseType,
         s.quantityKg, s.ratePerKg, total, paid, credit, s.lenderId ?? null, s.borrowingId ?? null,
-        s.purchaseDate, s.notes, nowIso(), nowIso()
+        s.purchaseDate, s.notes, s.paidBy ?? "", nowIso(), nowIso()
       );
       const purchaseId = Number(r.lastInsertRowid);
       if(cashPaid>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"PURCHASE",cashPaid,s.purchaseDate,"Cash",s.notes,nowIso());

@@ -83,6 +83,80 @@ function createDb() {
       value_hi TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS suppliers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      phone TEXT,
+      notes TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS lenders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      phone TEXT,
+      notes TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS borrowings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      lender_id INTEGER NOT NULL REFERENCES lenders(id),
+      amount REAL NOT NULL CHECK(amount > 0),
+      outstanding_amount REAL NOT NULL CHECK(outstanding_amount >= 0),
+      borrowing_date TEXT NOT NULL,
+      purpose TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN','PARTIAL','PAID')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS borrowing_repayments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      borrowing_id INTEGER NOT NULL REFERENCES borrowings(id) ON DELETE CASCADE,
+      amount REAL NOT NULL CHECK(amount > 0),
+      repayment_date TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS purchases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      material_id INTEGER REFERENCES materials(id),
+      material_name TEXT NOT NULL,
+      supplier_id INTEGER REFERENCES suppliers(id),
+      purchase_type TEXT NOT NULL CHECK(purchase_type IN ('NORMAL','SUPPLIER_CREDIT','BORROWED_FUND')),
+      quantity_kg REAL NOT NULL CHECK(quantity_kg > 0),
+      rate_per_kg REAL NOT NULL CHECK(rate_per_kg >= 0),
+      total_amount REAL NOT NULL CHECK(total_amount >= 0),
+      paid_amount REAL NOT NULL DEFAULT 0 CHECK(paid_amount >= 0),
+      credit_amount REAL NOT NULL DEFAULT 0 CHECK(credit_amount >= 0),
+      lender_id INTEGER REFERENCES lenders(id),
+      borrowing_id INTEGER REFERENCES borrowings(id),
+      purchase_date TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS purchases_mode_date_idx ON purchases(mode, purchase_date);
+    CREATE TABLE IF NOT EXISTS inventory_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      material_id INTEGER REFERENCES materials(id),
+      material_name TEXT NOT NULL,
+      transaction_type TEXT NOT NULL CHECK(transaction_type IN ('PURCHASE','ADJUSTMENT')),
+      quantity_kg REAL NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      purchase_id INTEGER REFERENCES purchases(id),
+      transaction_date TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS inventory_mode_material_idx
+      ON inventory_transactions(mode, material_id, transaction_date);
     CREATE TABLE IF NOT EXISTS articles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       slug TEXT NOT NULL UNIQUE,

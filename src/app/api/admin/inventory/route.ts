@@ -304,11 +304,12 @@ export async function POST(req: NextRequest) {
         purchaseId: z.number().int().positive(),
         amount: z.number().positive(),
       }).parse(body);
-      const p = sqlite.prepare("SELECT credit_amount FROM purchases WHERE id=?").get(s.purchaseId) as { credit_amount:number } | undefined;
+      const p = sqlite.prepare("SELECT credit_amount, mode, supplier_id FROM purchases WHERE id=?").get(s.purchaseId) as { credit_amount:number; mode:string; supplier_id:number } | undefined;
       if (!p) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
       if (s.amount > p.credit_amount + 0.005) return NextResponse.json({ error: "Payment exceeds outstanding credit" }, { status: 400 });
       sqlite.prepare("UPDATE purchases SET paid_amount=paid_amount+?, credit_amount=credit_amount-?, updated_at=? WHERE id=?")
         .run(s.amount, s.amount, nowIso(), s.purchaseId);
+      sqlite.prepare("INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(p.mode,p.supplier_id,s.purchaseId,"CREDIT_SETTLEMENT",s.amount,todayStr(),"Cash","Purchase credit payment",nowIso());
       return json({ ok: true });
     }
 
@@ -324,7 +325,7 @@ export async function POST(req: NextRequest) {
       if (s.materialCategory === "Natural Bottles" && !["Green","White"].includes(s.materialVariant)) return NextResponse.json({ error: "Select Green or White for Natural Bottles" }, { status: 400 });
       const materialName = s.materialCategory === "Red Bottles" ? "Red Bottles" : "Natural Bottles - " + s.materialVariant;
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
-      const available = Number((sqlite.prepare("SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions WHERE mode=? AND transaction_date<=? AND (material_name=? OR material_name='Natural Bottles')").get(s.mode,s.saleDate,materialName) as any)?.kg || 0);
+      const available = Number((sqlite.prepare("SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions WHERE mode=? AND transaction_date<=? AND (material_name=? OR material_name LIKE 'Natural Bottles - %' OR material_name='Natural Bottles')").get(s.mode,s.saleDate,materialName) as any)?.kg || 0);
       if (s.quantityKg > available + 0.005) return NextResponse.json({ error: "Insufficient stock. Available up to " + s.saleDate + ": " + available.toFixed(2) + " kg" }, { status: 400 });
       const received = Math.min(s.receivedAmount ?? 0, total);
       const credit = Math.round((total - received) * 100) / 100;

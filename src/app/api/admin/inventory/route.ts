@@ -111,9 +111,8 @@ export async function GET() {
     const paidVendors = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments WHERE mode=? AND NOT (payment_type='CREDIT_SETTLEMENT' AND payment_mode='Advance')").get(m) as any)?.n || 0);
     const borrowed = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM borrowings WHERE mode=?").get(m) as any)?.n || 0);
     const repaid = Number((sqlite.prepare("SELECT COALESCE(SUM(br.amount),0) as n FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id WHERE b.mode=?").get(m) as any)?.n || 0);
-    const processingPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=?").get(m) as any)?.n || 0);
     const monthlyProcessing = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=?").get(m) as any)?.n || 0);
-    return Math.round((opening + received - paidVendors + borrowed - repaid - processingPaid - monthlyProcessing) * 100) / 100;
+    return Math.round((opening + received - paidVendors + borrowed - repaid - monthlyProcessing) * 100) / 100;
   };
   const openingBalance = { PET: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PET'").get() as any)?.n || 0), PLASTIC: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PLASTIC'").get() as any)?.n || 0) };
   return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, saleItems, salePayments, processingBatches, processingBatchItems, processingExpenses, saleProcessingCosts, totals, openingBalance, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });
@@ -372,7 +371,6 @@ export async function POST(req: NextRequest) {
         saleDate: dateSchema.optional().default(todayStr()), receivedBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
         paymentMode: z.string().trim().min(1).optional().default("Cash"),
         loadingCharges: z.number().nonnegative().optional().default(0),
-        processingBatchId: z.number().int().positive().optional(),
         notes: z.string().trim().optional().default("")
       }).parse(body);
 
@@ -386,7 +384,11 @@ export async function POST(req: NextRequest) {
       }
 
       const lineTotals = s.items.map(item => Math.round(item.quantityKg * item.ratePerKg * 100) / 100);
-      const total = Math.round(lineTotals.reduce((n, x) => n + x, 0) * 100) / 100;
+      const grossAmount = Math.round(lineTotals.reduce((n, x) => n + x, 0) * 100) / 100;
+      const totalWeight = Math.round(s.items.reduce((n, x) => n + x.quantityKg, 0) * 1000) / 1000;
+      const labourCharges = Math.round(totalWeight * 2 * 100) / 100;
+      const loadingCharges = s.loadingCharges;
+      const total = Math.round(Math.max(0, grossAmount - labourCharges - loadingCharges) * 100) / 100;
       for (let i = 0; i < s.items.length; i++) {
         const item = s.items[i];
         const materialName = item.materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.materialVariant;
@@ -396,11 +398,11 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const received = Math.min(s.receivedAmount ?? 0, total);
+      const received = Math.min(s.receivedAmount ?? total, total);
       const credit = Math.round((total - received) * 100) / 100;
       const primary = s.items[0];
-      const r = sqlite.prepare("INSERT INTO sales (mode,customer_name,phone,location,material_category,material_variant,quantity_kg,rate_per_kg,total_amount,received_amount,credit_amount,sale_date,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .run(s.mode,s.customerName,s.phone,s.location,primary.materialCategory,s.items.length===1?primary.materialVariant:"MIXED",s.items.reduce((n,x)=>n+x.quantityKg,0),0,total,received,credit,s.saleDate,s.notes,nowIso(),nowIso());
+      const r = sqlite.prepare("INSERT INTO sales (mode,customer_name,phone,location,material_category,material_variant,quantity_kg,rate_per_kg,gross_amount,labour_charges,loading_charges,total_amount,received_amount,credit_amount,sale_date,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(s.mode,s.customerName,s.phone,s.location,primary.materialCategory,s.items.length===1?primary.materialVariant:"MIXED",totalWeight,0,grossAmount,labourCharges,loadingCharges,total,received,credit,s.saleDate,s.notes,nowIso(),nowIso());
       const saleId = Number(r.lastInsertRowid);
 
       for (let i = 0; i < s.items.length; i++) {
@@ -411,14 +413,8 @@ export async function POST(req: NextRequest) {
         sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
           .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],s.saleDate,"SALE #"+saleId+(s.notes ? " - "+s.notes : ""),nowIso());
       }
-      const labourKg = Math.round(s.items.reduce((n,x)=>n+x.quantityKg,0)*1000)/1000;
-      const labourRate = 2;
-      const labourCost = Math.round(labourKg * labourRate * 100)/100;
-      sqlite.prepare("INSERT INTO sale_processing_costs (mode,sale_id,labour_kg,labour_rate,labour_cost,loading_cost,paid_by,payment_date,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
-        .run(s.mode,saleId,labourKg,labourRate,labourCost,s.loadingCharges,s.receivedBy ?? "",s.saleDate,nowIso());
-      if (s.processingBatchId) sqlite.prepare("UPDATE processing_batches SET status='SOLD' WHERE id=? AND mode=?").run(s.processingBatchId,s.mode);
       if (received > 0) sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,saleId,received,s.saleDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
-      return json({ok:true,id:saleId,total,received,credit,labourCost,loadingCharges:s.loadingCharges});
+      return json({ok:true,id:saleId,grossAmount,labourCharges,loadingCharges,total,received,credit});
     }
 
     if (body.action === "receiveSalePayment") {

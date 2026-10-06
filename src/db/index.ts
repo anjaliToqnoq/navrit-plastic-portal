@@ -210,6 +210,12 @@ function createDb() {
       updated_at TEXT NOT NULL
     );
   `);
+  for (const migration of [
+    "ALTER TABLE purchases ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE vendor_payments ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
+  ]) {
+    try { sqlite.exec(migration); } catch { /* column already exists */ }
+  }
   seedSiteContent(sqlite);
   return sqlite;
 }

@@ -92,6 +92,21 @@ function createDb() {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS vendor_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+      purchase_id INTEGER REFERENCES purchases(id) ON DELETE SET NULL,
+      payment_type TEXT NOT NULL CHECK(payment_type IN ('ADVANCE','PURCHASE','CREDIT_SETTLEMENT','OTHER')),
+      amount REAL NOT NULL CHECK(amount > 0),
+      payment_date TEXT NOT NULL,
+      payment_mode TEXT NOT NULL DEFAULT 'Cash',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS vendor_payments_supplier_idx
+      ON vendor_payments(supplier_id, mode, payment_date);
+
     CREATE TABLE IF NOT EXISTS vendor_advances (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),

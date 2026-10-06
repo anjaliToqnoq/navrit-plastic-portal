@@ -59,6 +59,19 @@ export async function GET() {
     ORDER BY outstanding DESC
   `).all();
 
+  const vendorSummary = sqlite.prepare(`
+    SELECT s.id, s.name,
+      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.quantity_kg ELSE 0 END),0),2) as totalKg,
+      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.total_amount ELSE 0 END),0),2) as totalPurchase,
+      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.paid_amount ELSE 0 END),0),2) as totalPaid,
+      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.credit_amount ELSE 0 END),0),2) as unpaid,
+      ROUND(COALESCE(SUM(CASE WHEN va.mode=? THEN va.amount-va.used_amount ELSE 0 END),0),2) as advance
+    FROM suppliers s
+    LEFT JOIN purchases p ON p.supplier_id=s.id
+    LEFT JOIN vendor_advances va ON va.supplier_id=s.id
+    GROUP BY s.id,s.name ORDER BY s.name
+  `).all("PET","PET","PET","PET","PET");
+
   const totals = sqlite.prepare(`
     SELECT
       ROUND(COALESCE(SUM(CASE WHEN mode='PET' THEN quantity_kg ELSE 0 END),0),3) as petKg,
@@ -66,7 +79,7 @@ export async function GET() {
     FROM inventory_transactions
   `).get();
 
-  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, totals });
+  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, totals });
 }
 
 export async function POST(req: NextRequest) {
@@ -85,6 +98,27 @@ export async function POST(req: NextRequest) {
       const r = sqlite.prepare(`INSERT INTO ${table} (name, phone, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`)
         .run(s.name, s.phone, s.notes, nowIso(), nowIso());
       return json({ ok: true, id: Number(r.lastInsertRowid) });
+    }
+
+    if (body.action === "addVendorAdvance") {
+      const x = z.object({
+        mode: modeSchema, supplierId: z.number().int().positive(), amount: z.number().positive(),
+        advanceDate: dateSchema.optional().default(todayStr()), notes: z.string().trim().optional().default("")
+      }).parse(body);
+      sqlite.prepare(`INSERT INTO vendor_advances (mode,supplier_id,amount,used_amount,advance_date,notes,created_at,updated_at) VALUES (?,?,?,0,?,?,?,?)`)
+        .run(x.mode,x.supplierId,x.amount,x.advanceDate,x.notes,nowIso(),nowIso());
+      return json({ok:true});
+    }
+
+    if (body.action === "addOtherExpense") {
+      const x = z.object({
+        mode: modeSchema, purchaseId: z.number().int().positive().optional(), expenseType: z.string().trim().min(1),
+        description: z.string().trim().optional().default(""), amount: z.number().nonnegative(),
+        expenseDate: dateSchema.optional().default(todayStr())
+      }).parse(body);
+      sqlite.prepare(`INSERT INTO other_expenses (mode,purchase_id,expense_type,description,amount,expense_date,created_at) VALUES (?,?,?,?,?,?,?)`)
+        .run(x.mode,x.purchaseId??null,x.expenseType,x.description,x.amount,x.expenseDate,nowIso());
+      return json({ok:true});
     }
 
     if (body.action === "addBorrowing") {

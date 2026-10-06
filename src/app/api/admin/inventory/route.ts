@@ -235,7 +235,7 @@ export async function POST(req: NextRequest) {
         INSERT INTO purchases
         (mode, material_id, material_name, supplier_id, purchase_type, quantity_kg, rate_per_kg,
          total_amount, paid_amount, credit_amount, lender_id, borrowing_id, purchase_date, notes, paid_by, transport_charges, weight_charges, labour_charges, material_variant, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         s.mode, s.materialId ?? null, s.materialName, s.supplierId ?? null, s.purchaseType,
         s.quantityKg, s.ratePerKg, total, paid, credit, s.lenderId ?? null, s.borrowingId ?? null,
@@ -280,7 +280,7 @@ export async function POST(req: NextRequest) {
       sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, material_variant=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, credit_amount=?, purchase_date=?, paid_by=?, notes=?, transport_charges=?, weight_charges=?, labour_charges=?, updated_at=? WHERE id=? AND mode=?`)
         .run(s.materialId ?? null, s.materialName, s.materialVariant, s.supplierId ?? null, s.purchaseType, s.quantityKg, s.ratePerKg, total, credit, s.purchaseDate, s.paidBy ?? "", s.notes, s.transportCharges, s.weightCharges, s.labourCharges, nowIso(), s.purchaseId, s.mode);
       sqlite.prepare("UPDATE inventory_transactions SET material_id=?, material_name=?, quantity_kg=?, amount=?, transaction_date=?, notes=? WHERE purchase_id=? AND transaction_type='PURCHASE'")
-        .run(s.materialId ?? null, s.materialName, s.quantityKg, total + s.transportCharges + s.weightCharges + s.labourCharges, s.purchaseDate, s.notes, s.purchaseId);
+        .run(s.materialId ?? null, s.materialVariant ? s.materialName + " - " + s.materialVariant : s.materialName, s.quantityKg, total + s.transportCharges + s.weightCharges + s.labourCharges, s.purchaseDate, s.notes, s.purchaseId);
       sqlite.prepare("UPDATE vendor_payments SET payment_date=? WHERE purchase_id=?").run(s.purchaseDate, s.purchaseId);
       return json({ ok: true, total, paid: existing.paid_amount, credit });
     }

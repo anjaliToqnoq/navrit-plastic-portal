@@ -233,6 +233,46 @@ function createDb() {
       opening_balance REAL NOT NULL DEFAULT 0 CHECK(opening_balance >= 0),
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS processing_batches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      batch_date TEXT NOT NULL,
+      total_input_kg REAL NOT NULL CHECK(total_input_kg > 0),
+      labour_rate REAL NOT NULL DEFAULT 2 CHECK(labour_rate >= 0),
+      labour_cost REAL NOT NULL DEFAULT 0 CHECK(labour_cost >= 0),
+      status TEXT NOT NULL DEFAULT 'READY' CHECK(status IN ('READY','SOLD','CANCELLED')),
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS processing_batch_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      batch_id INTEGER NOT NULL REFERENCES processing_batches(id) ON DELETE CASCADE,
+      material_variant TEXT NOT NULL CHECK(material_variant IN ('Green','White','White Milk','Red')),
+      quantity_kg REAL NOT NULL CHECK(quantity_kg > 0),
+      bale_count INTEGER NOT NULL DEFAULT 0 CHECK(bale_count >= 0)
+    );
+    CREATE TABLE IF NOT EXISTS processing_expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      expense_type TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      amount REAL NOT NULL CHECK(amount > 0),
+      expense_date TEXT NOT NULL,
+      paid_by TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sale_processing_costs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+      labour_kg REAL NOT NULL CHECK(labour_kg > 0),
+      labour_rate REAL NOT NULL DEFAULT 2 CHECK(labour_rate >= 0),
+      labour_cost REAL NOT NULL CHECK(labour_cost >= 0),
+      loading_cost REAL NOT NULL DEFAULT 0 CHECK(loading_cost >= 0),
+      paid_by TEXT NOT NULL DEFAULT '',
+      payment_date TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
 
     CREATE TABLE IF NOT EXISTS sale_payments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

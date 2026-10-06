@@ -179,9 +179,8 @@ export async function POST(req: NextRequest) {
       if (paid > total) paid = total;
       let credit = Math.round((total - paid) * 100) / 100;
 
-      if (s.purchaseType === "NORMAL") {
-        paid = total;
-        credit = 0;
+      if (!s.supplierId) {
+        return NextResponse.json({ error: "Vendor is required for every purchase" }, { status: 400 });
       }
       if (s.purchaseType === "SUPPLIER_CREDIT" && !s.supplierId) {
         return NextResponse.json({ error: "Supplier is required for supplier credit" }, { status: 400 });

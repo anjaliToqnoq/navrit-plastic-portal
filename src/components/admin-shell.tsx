@@ -4,14 +4,11 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocale } from "@/components/locale-provider";
+import { useBusinessMode } from "@/components/business-mode-provider";
 import clsx from "clsx";
 import {
   LayoutDashboard,
-  IndianRupee,
-  Layers,
   Package,
-  FileText,
-  BookOpen,
   BarChart3,
   Download,
   LogOut,
@@ -21,7 +18,6 @@ import {
   Bell,
   Menu,
   X,
-  ExternalLink,
   Command,
   Plus,
   HardDrive,
@@ -29,19 +25,24 @@ import {
 } from "lucide-react";
 import "@/app/admin-theme.css";
 
-const nav = [
-  { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/admin/rates", label: "Rates", icon: IndianRupee },
-  { href: "/admin/inventory", label: "Inventory & Finance", icon: Package },
-  { href: "/admin/materials", label: "Materials", icon: Package },
-  { href: "/admin/categories", label: "Categories", icon: Layers },
-  { href: "/admin/articles", label: "Articles", icon: FileText },
-  { href: "/admin/content", label: "About Content", icon: BookOpen },
-  { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/admin/reports", label: "Reports", icon: Download },
-  { href: "/admin/report-analysis", label: "Month analysis", icon: LineChart },
-  { href: "/admin/backup", label: "Backup", icon: HardDrive },
-];
+const navByMode = {
+  PET: [
+    { href: "/admin", label: "PET Dashboard", icon: LayoutDashboard },
+    { href: "/admin/inventory", label: "PET Inventory & Finance", icon: Package },
+    { href: "/admin/analytics", label: "PET Analytics", icon: BarChart3 },
+    { href: "/admin/reports", label: "PET Reports", icon: Download },
+    { href: "/admin/report-analysis", label: "PET Month Analysis", icon: LineChart },
+    { href: "/admin/backup", label: "Backup", icon: HardDrive },
+  ],
+  PLASTIC: [
+    { href: "/admin", label: "Plastic Dashboard", icon: LayoutDashboard },
+    { href: "/admin/inventory", label: "Plastic Inventory & Finance", icon: Package },
+    { href: "/admin/analytics", label: "Plastic Analytics", icon: BarChart3 },
+    { href: "/admin/reports", label: "Plastic Reports", icon: Download },
+    { href: "/admin/report-analysis", label: "Plastic Month Analysis", icon: LineChart },
+    { href: "/admin/backup", label: "Backup", icon: HardDrive },
+  ],
+} as const;
 
 type Toast = { id: number; text: string };
 
@@ -69,6 +70,7 @@ export function AdminShell({
   username?: string;
 }) {
   const { dict, locale, setLocale } = useLocale();
+  const { mode, setMode } = useBusinessMode();
   const pathname = usePathname();
   const router = useRouter();
   const [dark, setDark] = useState(true);
@@ -78,6 +80,7 @@ export function AdminShell({
   const [fabOpen, setFabOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const owner = process.env.NEXT_PUBLIC_OWNER_NAME || username || "Admin";
+  const nav = navByMode[mode];
 
   useEffect(() => {
     const saved = localStorage.getItem("navrit-admin-theme");
@@ -157,10 +160,6 @@ export function AdminShell({
             })}
           </nav>
           <div className="space-y-1 border-t border-[var(--ad-border)] p-2.5">
-            <Link href="/" className="ad-nav-item">
-              <ExternalLink size={16} />
-              {dict.backToSite}
-            </Link>
             <button type="button" onClick={logout} className="ad-nav-item w-full text-left">
               <LogOut size={16} />
               {dict.logout}
@@ -234,6 +233,22 @@ export function AdminShell({
                 <div className="flex overflow-hidden rounded-lg border border-[var(--ad-border)] text-[10px] font-bold">
                   <button
                     type="button"
+                    onClick={() => setMode("PET")}
+                    className={clsx("px-2 py-1.5", mode === "PET" && "bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]")}
+                  >
+                    PET
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode("PLASTIC")}
+                    className={clsx("px-2 py-1.5", mode === "PLASTIC" && "bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]")}
+                  >
+                    Plastic
+                  </button>
+                </div>
+                <div className="flex overflow-hidden rounded-lg border border-[var(--ad-border)] text-[10px] font-bold">
+                  <button
+                    type="button"
                     onClick={() => setLocale("en")}
                     className={clsx("px-2 py-1.5", locale === "en" && "bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]")}
                   >
@@ -283,16 +298,14 @@ export function AdminShell({
         </div>
       </div>
 
-      {/* FAB */}
+      {/* Quick actions */}
       <div className="ad-fab">
         {fabOpen && (
           <div className="ad-fab-menu">
             {[
-              { href: "/admin/rates", label: "Update Rates" },
-              { href: "/admin/materials", label: "Add Material" },
-              { href: "/admin/categories", label: "Add Category" },
+              { href: "/admin/inventory", label: mode === "PET" ? "Open PET Inventory" : "Open Plastic Inventory" },
+              { href: "/admin/reports", label: mode === "PET" ? "Open PET Reports" : "Open Plastic Reports" },
               { href: "/admin/backup", label: "Create Backup" },
-              { href: "/admin/reports", label: "Generate Report" },
             ].map((a) => (
               <Link key={a.href} href={a.href} className="ad-btn ad-btn-ghost bg-[var(--ad-card)] shadow-lg" onClick={() => setFabOpen(false)}>
                 {a.label}

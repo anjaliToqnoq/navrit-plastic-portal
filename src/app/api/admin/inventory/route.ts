@@ -431,6 +431,8 @@ export async function POST(req: NextRequest) {
         })).min(1),
         saleDate: dateSchema,
         loadingCharges: z.number().nonnegative().default(0),
+        receivedBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
+        paymentMode: z.string().trim().min(1).default("Cash"),
         notes: z.string().trim().optional().default("")
       }).parse(body);
 
@@ -484,6 +486,10 @@ export async function POST(req: NextRequest) {
             .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],s.saleDate,"SALE #"+s.saleId+(s.notes ? " - "+s.notes : ""),nowIso());
         }
 
+        if (s.receivedBy || s.paymentMode) {
+          sqlite.prepare("UPDATE sale_payments SET received_by=?,payment_mode=? WHERE id=(SELECT id FROM sale_payments WHERE sale_id=? ORDER BY id DESC LIMIT 1)")
+            .run(s.receivedBy ?? "",s.paymentMode,s.saleId);
+        }
         sqlite.exec("COMMIT");
       } catch (e) {
         sqlite.exec("ROLLBACK");

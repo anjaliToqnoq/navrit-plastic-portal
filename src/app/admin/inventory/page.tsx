@@ -26,6 +26,8 @@ export default function InventoryPage() {
     quantityKg:"", ratePerKg:"", paidAmount:"", borrowingId:"", lenderId:"", notes:""
   });
   const [newParty,setNewParty] = useState({name:"",phone:"",notes:""});
+  const [advance,setAdvance] = useState({supplierId:"",amount:"",notes:""});
+  const [expense,setExpense] = useState({purchaseId:"",expenseType:"Weighing",description:"",amount:""});
   const [borrowing,setBorrowing] = useState({lenderId:"",amount:"",purpose:"",notes:""});
   const [repay,setRepay] = useState({borrowingId:"",amount:""});
   const [adjust,setAdjust] = useState({materialId:"",materialName:"",quantityKg:"",amount:"",notes:""});
@@ -64,6 +66,14 @@ export default function InventoryPage() {
       lenderId:purchase.lenderId?Number(purchase.lenderId):undefined, notes:purchase.notes
     });
     if(ok)setPurchase({materialId:"",materialName:"",supplierId:"",purchaseType:"NORMAL",quantityKg:"",ratePerKg:"",paidAmount:"",borrowingId:"",lenderId:"",notes:""});
+  }
+
+  async function addAdvance() {
+    if(await post("addVendorAdvance",{mode,supplierId:Number(advance.supplierId),amount:Number(advance.amount),notes:advance.notes})) setAdvance({supplierId:"",amount:"",notes:""});
+  }
+
+  async function addExpense() {
+    if(await post("addOtherExpense",{mode,purchaseId:expense.purchaseId?Number(expense.purchaseId):undefined,expenseType:expense.expenseType,description:expense.description,amount:Number(expense.amount)})) setExpense({purchaseId:"",expenseType:"Weighing",description:"",amount:""});
   }
 
   async function addParty(action:string) {
@@ -107,27 +117,29 @@ export default function InventoryPage() {
       <div className="ad-card p-4">
         <h2 className="mb-3 font-semibold">Add {mode} purchase</h2>
         <div className="grid gap-2 md:grid-cols-4">
-          <select className="ad-input" value={purchase.materialId} onChange={e=>setPurchase({...purchase,materialId:e.target.value,materialName:""})}>
-            <option value="">Select material</option>
-            {materials.map((m:Material)=><option key={m.id} value={m.id}>{m.name_en}</option>)}
+          <select className="ad-input" value={purchase.supplierId} onChange={e=>setPurchase({...purchase,supplierId:e.target.value})}>
+            <option value="">Select vendor</option>{(data.suppliers||[]).map((s:Supplier)=><option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <input className="ad-input" placeholder="Or material name" value={purchase.materialName} onChange={e=>setPurchase({...purchase,materialName:e.target.value})}/>
-          <select className="ad-input" value={purchase.purchaseType} onChange={e=>setPurchase({...purchase,purchaseType:e.target.value})}>
-            <option value="NORMAL">Normal purchase</option><option value="SUPPLIER_CREDIT">Supplier credit / consignment</option><option value="BORROWED_FUND">Borrowed-fund purchase</option>
+          <select className="ad-input" value={purchase.materialName} onChange={e=>setPurchase({...purchase,materialName:e.target.value})}>
+            <option value="">Material</option>
+            <option value="Natural Bottles">Natural Bottles</option>
+            <option value="Red Bottles">Red Bottles</option>
           </select>
+          
           <select className="ad-input" value={purchase.supplierId} onChange={e=>setPurchase({...purchase,supplierId:e.target.value})}>
             <option value="">Supplier (optional)</option>{(data.suppliers||[]).map((s:Supplier)=><option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <input className="ad-input" type="number" placeholder="Quantity (kg)" value={purchase.quantityKg} onChange={e=>setPurchase({...purchase,quantityKg:e.target.value})}/>
           <input className="ad-input" type="number" placeholder="Rate / kg" value={purchase.ratePerKg} onChange={e=>setPurchase({...purchase,ratePerKg:e.target.value})}/>
-          <input className="ad-input" type="number" placeholder="Paid amount (optional)" value={purchase.paidAmount} onChange={e=>setPurchase({...purchase,paidAmount:e.target.value})}/>
+          <input className="ad-input" type="number" placeholder="Paid to vendor" value={purchase.paidAmount} onChange={e=>setPurchase({...purchase,paidAmount:e.target.value})}/><span className="ad-input flex items-center text-sm">Total: ₹{((Number(purchase.quantityKg)||0)*(Number(purchase.ratePerKg)||0)).toFixed(2)}</span>
           {purchase.purchaseType==="BORROWED_FUND" && <select className="ad-input" value={purchase.borrowingId} onChange={e=>setPurchase({...purchase,borrowingId:e.target.value})}><option value="">Select borrowing</option>{openBorrowings.map((b:Borrowing)=><option key={b.id} value={b.id}>#{b.id} {b.lenderName} — ₹{b.outstanding_amount}</option>)}</select>}
           <input className="ad-input md:col-span-2" placeholder="Notes" value={purchase.notes} onChange={e=>setPurchase({...purchase,notes:e.target.value})}/>
           <button className="ad-btn ad-btn-primary" onClick={addPurchase}>Save purchase</button>
         </div>
       </div>
-      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Material</th><th>Type</th><th>Qty</th><th>Total</th><th>Paid</th><th>Credit</th><th>Action</th></tr></thead><tbody>
-        {filteredPurchases.map((p:Purchase)=><tr key={p.id}><td>{p.purchase_date}</td><td>{p.material_name}</td><td>{p.purchase_type}</td><td>{p.quantity_kg} kg</td><td>₹{p.total_amount}</td><td>₹{p.paid_amount}</td><td>₹{p.credit_amount}</td><td>{p.credit_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={async()=>{const v=prompt("Payment amount",String(p.credit_amount));if(v)await post("paySupplierCredit",{purchaseId:p.id,amount:Number(v)})}}>Pay credit</button>}</td></tr>)}
+      <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Other expense for this purchase</h2><div className="grid gap-2 md:grid-cols-5"><select className="ad-input" value={expense.purchaseId} onChange={e=>setExpense({...expense,purchaseId:e.target.value})}><option value="">Purchase</option>{filteredPurchases.map((p:Purchase)=><option key={p.id} value={p.id}>#{p.id} {p.material_name} · ₹{p.total_amount}</option>)}</select><input className="ad-input" placeholder="Expense type" value={expense.expenseType} onChange={e=>setExpense({...expense,expenseType:e.target.value})}/><input className="ad-input" placeholder="Description" value={expense.description} onChange={e=>setExpense({...expense,description:e.target.value})}/><input className="ad-input" type="number" placeholder="Expense amount" value={expense.amount} onChange={e=>setExpense({...expense,amount:e.target.value})}/><button className="ad-btn ad-btn-primary" onClick={addExpense}>Add expense</button></div></div>
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Vendor</th><th>Material</th><th>Qty</th><th>Rate</th><th>Total</th><th>Paid</th><th>Unpaid</th></tr></thead><tbody>
+        {filteredPurchases.map((p:Purchase)=><tr key={p.id}><td>{p.purchase_date}</td><td>{p.supplierName||"—"}</td><td>{p.material_name}</td><td>{p.quantity_kg} kg</td><td>₹{p.rate_per_kg}</td><td>₹{p.total_amount}</td><td>₹{p.paid_amount}</td><td>₹{p.credit_amount}</td><td>{p.credit_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={async()=>{const v=prompt("Payment amount",String(p.credit_amount));if(v)await post("paySupplierCredit",{purchaseId:p.id,amount:Number(v)})}}>Pay credit</button>}</td></tr>)}
       </tbody></table></div>
     </div>}
 
@@ -153,6 +165,7 @@ export default function InventoryPage() {
     </div>}
 
     {tab==="parties" && <div className="grid gap-5 md:grid-cols-2">
+      <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Vendor advance</h2><select className="ad-input mb-2" value={advance.supplierId} onChange={e=>setAdvance({...advance,supplierId:e.target.value})}><option value="">Vendor</option>{(data.suppliers||[]).map((s:Supplier)=><option key={s.id} value={s.id}>{s.name}</option>)}</select><input className="ad-input mb-2" type="number" placeholder="Advance amount" value={advance.amount} onChange={e=>setAdvance({...advance,amount:e.target.value})}/><input className="ad-input mb-2" placeholder="Notes" value={advance.notes} onChange={e=>setAdvance({...advance,notes:e.target.value})}/><button className="ad-btn ad-btn-primary" onClick={addAdvance}>Save advance</button></div>
       <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Add supplier</h2><input className="ad-input mb-2" placeholder="Name" value={newParty.name} onChange={e=>setNewParty({...newParty,name:e.target.value})}/><input className="ad-input mb-2" placeholder="Phone" value={newParty.phone} onChange={e=>setNewParty({...newParty,phone:e.target.value})}/><button className="ad-btn ad-btn-primary" onClick={()=>addParty("addSupplier")}>Save supplier</button></div>
       <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Add lender</h2><input className="ad-input mb-2" placeholder="Name" value={newParty.name} onChange={e=>setNewParty({...newParty,name:e.target.value})}/><input className="ad-input mb-2" placeholder="Phone" value={newParty.phone} onChange={e=>setNewParty({...newParty,phone:e.target.value})}/><button className="ad-btn ad-btn-primary" onClick={()=>addParty("addLender")}>Save lender</button></div>
     </div>}

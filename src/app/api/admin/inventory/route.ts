@@ -113,8 +113,8 @@ export async function POST(req: NextRequest) {
         notes: z.string().trim().optional().default(""),
       }).parse(body);
       const table = body.action === "addSupplier" ? "suppliers" : "lenders";
-      const r = sqlite.prepare(`INSERT INTO ${table} (name, phone, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`)
-        .run(s.name, s.phone, s.notes, nowIso(), nowIso());
+      const r = sqlite.prepare(`INSERT INTO ${table} (name, phone, location, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(s.name, s.phone, s.location, s.notes, nowIso(), nowIso());
       return json({ ok: true, id: Number(r.lastInsertRowid) });
     }
 

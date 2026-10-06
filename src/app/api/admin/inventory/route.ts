@@ -24,6 +24,8 @@ export async function GET() {
   const suppliers = sqlite.prepare("SELECT * FROM suppliers ORDER BY name").all();
   const vendorPayments = sqlite.prepare(`SELECT vp.*, s.name as supplierName, s.phone as supplierPhone, s.location as supplierLocation, p.material_name as materialName FROM vendor_payments vp JOIN suppliers s ON s.id=vp.supplier_id LEFT JOIN purchases p ON p.id=vp.purchase_id ORDER BY vp.payment_date DESC, vp.id DESC LIMIT 500`).all();
   const lenders = sqlite.prepare("SELECT * FROM lenders ORDER BY name").all();
+  const sales = sqlite.prepare("SELECT * FROM sales ORDER BY sale_date DESC, id DESC LIMIT 200").all();
+  const salePayments = sqlite.prepare("SELECT sp.*, s.customer_name as customerName, s.material_category as materialCategory, s.material_variant as materialVariant FROM sale_payments sp JOIN sales s ON s.id=sp.sale_id ORDER BY sp.payment_date DESC, sp.id DESC LIMIT 500").all();
 
   const inventory = sqlite.prepare(`
     SELECT mode, material_id as materialId, material_name as materialName,
@@ -97,7 +99,14 @@ export async function GET() {
     FROM inventory_transactions
   `).get();
 
-  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, totals });
+  const modeCashflow = (m: string) => {
+    const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=?").get(m) as any)?.n || 0);
+    const paidVendors = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments WHERE mode=?").get(m) as any)?.n || 0);
+    const borrowed = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM borrowings WHERE mode=?").get(m) as any)?.n || 0);
+    const repaid = Number((sqlite.prepare("SELECT COALESCE(SUM(br.amount),0) as n FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id WHERE b.mode=?").get(m) as any)?.n || 0);
+    return Math.round((received - paidVendors + borrowed - repaid) * 100) / 100;
+  };
+  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, salePayments, totals, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });
 }
 
 export async function POST(req: NextRequest) {
@@ -201,6 +210,7 @@ export async function POST(req: NextRequest) {
         transportCharges: z.number().nonnegative().optional().default(0),
         weightCharges: z.number().nonnegative().optional().default(0),
         labourCharges: z.number().nonnegative().optional().default(0),
+        materialVariant: z.enum(["","Green","White"]).optional().default(""),
       }).parse(body);
 
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
@@ -239,7 +249,7 @@ export async function POST(req: NextRequest) {
         INSERT INTO inventory_transactions
         (mode, material_id, material_name, transaction_type, quantity_kg, amount, purchase_id, transaction_date, notes, created_at)
         VALUES (?, ?, ?, 'PURCHASE', ?, ?, ?, ?, ?, ?)
-      `).run(s.mode, s.materialId ?? null, s.materialName, s.quantityKg, total, purchaseId, s.purchaseDate, s.notes, nowIso());
+      `).run(s.mode, s.materialId ?? null, s.materialVariant ? s.materialName + " - " + s.materialVariant : s.materialName, s.quantityKg, total, purchaseId, s.purchaseDate, s.notes, nowIso());
 
       return json({ ok: true, id: purchaseId, total, paid, credit });
     }
@@ -302,6 +312,38 @@ export async function POST(req: NextRequest) {
       return json({ ok: true });
     }
 
+    if (body.action === "addSale") {
+      const s = z.object({
+        mode: modeSchema, customerName: z.string().trim().min(1), phone: z.string().trim().optional().default(""),
+        location: z.string().trim().optional().default(""), materialCategory: z.enum(["Natural Bottles","Red Bottles"]),
+        materialVariant: z.enum(["Green","White","Red"]).optional().default(""), quantityKg: z.number().positive(),
+        ratePerKg: z.number().nonnegative(), receivedAmount: z.number().nonnegative().optional(),
+        saleDate: dateSchema.optional().default(todayStr()), receivedBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
+        paymentMode: z.string().trim().min(1).optional().default("Cash"), notes: z.string().trim().optional().default("")
+      }).parse(body);
+      if (s.materialCategory === "Natural Bottles" && !["Green","White"].includes(s.materialVariant)) return NextResponse.json({ error: "Select Green or White for Natural Bottles" }, { status: 400 });
+      const materialName = s.materialCategory === "Red Bottles" ? "Red Bottles" : "Natural Bottles - " + s.materialVariant;
+      const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
+      const available = Number((sqlite.prepare("SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions WHERE mode=? AND transaction_date<=? AND (material_name=? OR material_name='Natural Bottles')").get(s.mode,s.saleDate,materialName) as any)?.kg || 0);
+      if (s.quantityKg > available + 0.005) return NextResponse.json({ error: "Insufficient stock. Available up to " + s.saleDate + ": " + available.toFixed(2) + " kg" }, { status: 400 });
+      const received = Math.min(s.receivedAmount ?? 0, total);
+      const credit = Math.round((total - received) * 100) / 100;
+      const r = sqlite.prepare("INSERT INTO sales (mode,customer_name,phone,location,material_category,material_variant,quantity_kg,rate_per_kg,total_amount,received_amount,credit_amount,sale_date,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(s.mode,s.customerName,s.phone,s.location,s.materialCategory,s.materialVariant,s.quantityKg,s.ratePerKg,total,received,credit,s.saleDate,s.notes,nowIso(),nowIso());
+      const saleId = Number(r.lastInsertRowid);
+      if (received > 0) sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,saleId,received,s.saleDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
+      sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(s.mode,null,materialName,"ADJUSTMENT",-s.quantityKg,-total,s.saleDate,"SALE #"+saleId+(s.notes ? " - "+s.notes : ""),nowIso());
+      return json({ok:true,id:saleId,total,received,credit});
+    }
+
+    if (body.action === "receiveSalePayment") {
+      const s = z.object({mode:modeSchema,saleId:z.number().int().positive(),amount:z.number().positive(),paymentDate:dateSchema.optional().default(todayStr()),paymentMode:z.string().trim().min(1).default("Cash"),receivedBy:z.enum(["Rahul","Devesh","Nitin"]).optional(),notes:z.string().trim().optional().default("")}).parse(body);
+      const sale = sqlite.prepare("SELECT credit_amount FROM sales WHERE id=? AND mode=?").get(s.saleId,s.mode) as any;
+      if (!sale) return NextResponse.json({error:"Sale not found"},{status:404});
+      if (s.amount > Number(sale.credit_amount) + 0.005) return NextResponse.json({error:"Payment exceeds pending amount"},{status:400});
+      sqlite.prepare("UPDATE sales SET received_amount=received_amount+?,credit_amount=credit_amount-?,updated_at=? WHERE id=?").run(s.amount,s.amount,nowIso(),s.saleId);
+      sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,s.saleId,s.amount,s.paymentDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
+      return json({ok:true});
+    }
     if (body.action === "adjustInventory") {
       const s = z.object({
         mode: modeSchema,

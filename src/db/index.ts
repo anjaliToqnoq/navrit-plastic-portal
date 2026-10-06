@@ -212,6 +212,9 @@ function createDb() {
   `);
   for (const migration of [
     "ALTER TABLE purchases ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE purchases ADD COLUMN transport_charges REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE purchases ADD COLUMN weight_charges REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE purchases ADD COLUMN labour_charges REAL NOT NULL DEFAULT 0",
     "ALTER TABLE vendor_payments ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
   ]) {
     try { sqlite.exec(migration); } catch { /* column already exists */ }

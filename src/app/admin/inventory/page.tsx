@@ -31,7 +31,7 @@ export default function InventoryPage() {
 
   const [openingBalance,setOpeningBalance] = useState("");
   const [message,setMessage] = useState("");
-  const emptyPurchase = { materialId:"", materialName:"", materialVariant:"", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), notes:"", transportCharges:"", weightCharges:"", labourCharges:"" };
+  const emptyPurchase = { materialId:"", materialName:"", materialVariant:"", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), notes:"",  };
   const [purchase,setPurchase] = useState(emptyPurchase);
   const [editingPurchase,setEditingPurchase] = useState<number|null>(null);
   const [expense,setExpense] = useState({purchaseId:"",expenseType:"Weighing",description:"",amount:""});
@@ -83,7 +83,6 @@ export default function InventoryPage() {
       supplierId:purchase.supplierId?Number(purchase.supplierId):undefined,
       purchaseType:purchase.purchaseType, quantityKg:Number(purchase.quantityKg),
       ratePerKg:Number(purchase.ratePerKg), paidAmount:purchase.paidAmount===""?undefined:Number(purchase.paidAmount), paidBy:purchase.paidBy||undefined,
-      transportCharges:Number(purchase.transportCharges||0), weightCharges:Number(purchase.weightCharges||0), labourCharges:Number(purchase.labourCharges||0),
       borrowingId:purchase.borrowingId?Number(purchase.borrowingId):undefined,
       lenderId:purchase.lenderId?Number(purchase.lenderId):undefined, purchaseDate:purchase.purchaseDate, notes:purchase.notes, materialVariant:purchase.materialName==="Natural Bottles"?purchase.materialVariant||undefined:undefined
     });
@@ -166,16 +165,16 @@ export default function InventoryPage() {
           <span className="ad-input flex items-center text-sm">Total: ₹{((Number(purchase.quantityKg)||0)*(Number(purchase.ratePerKg)||0)).toFixed(2)}</span><input className="ad-input" type="number" min="0" placeholder="Paid to vendor" value={purchase.paidAmount} onChange={e=>setPurchase({...purchase,paidAmount:e.target.value})}/><select className="ad-input" value={purchase.paidBy} onChange={e=>setPurchase({...purchase,paidBy:e.target.value})}><option value="">Payment done by</option><option>Rahul</option><option>Devesh</option><option>Nitin</option></select>
           {purchase.purchaseType==="BORROWED_FUND" && <select className="ad-input" value={purchase.borrowingId} onChange={e=>setPurchase({...purchase,borrowingId:e.target.value})}><option value="">Select borrowing</option>{openBorrowings.map((b:Borrowing)=><option key={b.id} value={b.id}>#{b.id} {b.lenderName} — ₹{b.outstanding_amount}</option>)}</select>}
           <input className="ad-input md:col-span-2" placeholder="Notes" value={purchase.notes} onChange={e=>setPurchase({...purchase,notes:e.target.value})}/>
-          <input className="ad-input" type="number" min="0" placeholder="Transport Charges" value={purchase.transportCharges} onChange={e=>setPurchase({...purchase,transportCharges:e.target.value})}/>
-          <input className="ad-input" type="number" min="0" placeholder="Weight Charges" value={purchase.weightCharges} onChange={e=>setPurchase({...purchase,weightCharges:e.target.value})}/>
-          <input className="ad-input" type="number" min="0" placeholder="Labour Charges" value={purchase.labourCharges} onChange={e=>setPurchase({...purchase,labourCharges:e.target.value})}/>
-          <span className="ad-input flex items-center text-sm">Effective rate: ₹{(((Number(purchase.quantityKg)||0)*(Number(purchase.ratePerKg)||0)+Number(purchase.transportCharges||0)+Number(purchase.weightCharges||0)+Number(purchase.labourCharges||0))/Math.max(Number(purchase.quantityKg)||1,1)).toFixed(2)}/kg</span>
+          
+          
+          
+          
           <button className="ad-btn ad-btn-primary" onClick={editingPurchase ? editPurchase : addPurchase}>{editingPurchase ? "Update purchase" : "Save purchase"}</button>{editingPurchase&&<button className="ad-btn ad-btn-ghost" onClick={()=>{setEditingPurchase(null);setPurchase({...emptyPurchase})}}>Cancel</button>}
         </div>
       </div>
 
-      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Vendor</th><th>Material</th><th>Qty</th><th>Rate</th><th>Effective Rate</th><th>Vendor Total</th><th>Other Cost</th><th>Paid</th><th>Unpaid</th><th>Payment done by</th><th>Status</th><th>Action</th></tr></thead><tbody>
-        {filteredPurchases.map((p:Purchase)=><tr key={p.id}><td>{p.purchase_date}</td><td>{p.supplierName||"—"}</td><td>{p.material_name}{p.material_variant?" - "+p.material_variant:""}</td><td>{p.quantity_kg} kg</td><td>₹{p.rate_per_kg}</td><td>₹{Number(p.effective_cost||p.rate_per_kg).toFixed(2)}/kg</td><td>₹{p.total_amount}</td><td>₹{(Number(p.transport_charges||0)+Number(p.weight_charges||0)+Number(p.labour_charges||0)).toFixed(2)}</td><td>₹{p.paid_amount}</td><td>₹{p.credit_amount}</td><td>{Number(p.paid_amount)>0?p.paid_by||"—":"—"}</td><td>{Number(p.paid_amount)>0?"PAID":"UNPAID"}</td><td><button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>startEditPurchase(p)}>Edit</button>{p.credit_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={async()=>{const v=prompt("Payment amount",String(p.credit_amount));if(v)await post("paySupplierCredit",{purchaseId:p.id,amount:Number(v)})}}>Pay credit</button>}</td></tr>)}
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Vendor</th><th>Material</th><th>Qty</th><th>Rate</th><th>Vendor Total</th><th>Paid</th><th>Unpaid</th><th>Payment done by</th><th>Status</th><th>Action</th></tr></thead><tbody>
+        {filteredPurchases.map((p:Purchase)=><tr key={p.id}><td>{p.purchase_date}</td><td>{p.supplierName||"—"}</td><td>{p.material_name}{p.material_variant?" - "+p.material_variant:""}</td><td>{p.quantity_kg} kg</td><td>₹{p.rate_per_kg}</td><td>₹{p.total_amount}</td><td>₹{p.paid_amount}</td><td>₹{p.credit_amount}</td><td>{Number(p.paid_amount)>0?p.paid_by||"—":"—"}</td><td>{Number(p.paid_amount)>0?"PAID":"UNPAID"}</td><td><button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>startEditPurchase(p)}>Edit</button>{p.credit_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={async()=>{const v=prompt("Payment amount",String(p.credit_amount));if(v)await post("paySupplierCredit",{purchaseId:p.id,amount:Number(v)})}}>Pay credit</button>}</td></tr>)}
       </tbody></table></div>
     </div>}
 

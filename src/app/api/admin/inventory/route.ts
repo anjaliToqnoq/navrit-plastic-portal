@@ -28,6 +28,10 @@ export async function GET() {
   const sales = sqlite.prepare("SELECT * FROM sales ORDER BY sale_date DESC, id DESC LIMIT 200").all();
   const saleItems = sqlite.prepare("SELECT * FROM sale_items ORDER BY sale_id, id").all();
   const salePayments = sqlite.prepare("SELECT sp.*, s.customer_name as customerName, s.material_category as materialCategory, s.material_variant as materialVariant FROM sale_payments sp JOIN sales s ON s.id=sp.sale_id ORDER BY sp.payment_date DESC, sp.id DESC LIMIT 500").all();
+  const processingBatches = sqlite.prepare("SELECT * FROM processing_batches ORDER BY batch_date DESC, id DESC LIMIT 200").all();
+  const processingBatchItems = sqlite.prepare("SELECT * FROM processing_batch_items ORDER BY batch_id, id").all();
+  const processingExpenses = sqlite.prepare("SELECT * FROM processing_expenses ORDER BY expense_date DESC, id DESC LIMIT 500").all();
+  const saleProcessingCosts = sqlite.prepare("SELECT * FROM sale_processing_costs ORDER BY payment_date DESC, id DESC LIMIT 500").all();
 
   const inventory = sqlite.prepare(`
     SELECT mode, material_id as materialId, material_name as materialName,
@@ -107,10 +111,12 @@ export async function GET() {
     const paidVendors = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments WHERE mode=? AND NOT (payment_type='CREDIT_SETTLEMENT' AND payment_mode='Advance')").get(m) as any)?.n || 0);
     const borrowed = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM borrowings WHERE mode=?").get(m) as any)?.n || 0);
     const repaid = Number((sqlite.prepare("SELECT COALESCE(SUM(br.amount),0) as n FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id WHERE b.mode=?").get(m) as any)?.n || 0);
-    return Math.round((opening + received - paidVendors + borrowed - repaid) * 100) / 100;
+    const processingPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=?").get(m) as any)?.n || 0);
+    const monthlyProcessing = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=?").get(m) as any)?.n || 0);
+    return Math.round((opening + received - paidVendors + borrowed - repaid - processingPaid - monthlyProcessing) * 100) / 100;
   };
   const openingBalance = { PET: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PET'").get() as any)?.n || 0), PLASTIC: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PLASTIC'").get() as any)?.n || 0) };
-  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, saleItems, salePayments, totals, openingBalance, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });
+  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, saleItems, salePayments, processingBatches, processingBatchItems, processingExpenses, saleProcessingCosts, totals, openingBalance, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });
 }
 
 export async function POST(req: NextRequest) {
@@ -324,6 +330,40 @@ export async function POST(req: NextRequest) {
       return json({ ok: true });
     }
 
+    if (body.action === "addProcessingBatch") {
+      const s = z.object({
+        mode: modeSchema,
+        batchDate: dateSchema.optional().default(todayStr()),
+        items: z.array(z.object({
+          materialVariant: z.enum(["Green","White","White Milk","Red"]),
+          quantityKg: z.number().positive(),
+          baleCount: z.number().int().nonnegative().optional().default(0)
+        })).min(1),
+        notes: z.string().trim().optional().default("")
+      }).parse(body);
+      if (s.mode === "PET" && s.items.some(x => x.materialVariant === "Red")) return NextResponse.json({error:"Red material is not valid for PET processing"},{status:400});
+      const totalInput = Math.round(s.items.reduce((n,x)=>n+x.quantityKg,0)*1000)/1000;
+      const labourRate = 2;
+      const labourCost = Math.round(totalInput * labourRate * 100)/100;
+      const r = sqlite.prepare("INSERT INTO processing_batches (mode,batch_date,total_input_kg,labour_rate,labour_cost,status,notes,created_at) VALUES (?,?,?,?,?,'READY',?,?)").run(s.mode,s.batchDate,totalInput,labourRate,labourCost,s.notes,nowIso());
+      const batchId = Number(r.lastInsertRowid);
+      for (const item of s.items) sqlite.prepare("INSERT INTO processing_batch_items (batch_id,material_variant,quantity_kg,bale_count) VALUES (?,?,?,?)").run(batchId,item.materialVariant,item.quantityKg,item.baleCount);
+      return json({ok:true,id:batchId,totalInput,labourCost});
+    }
+
+    if (body.action === "addProcessingExpense") {
+      const s = z.object({
+        mode: modeSchema,
+        expenseType: z.enum(["Electricity","Thread","Other"]),
+        description: z.string().trim().optional().default(""),
+        amount: z.number().positive(),
+        expenseDate: dateSchema.optional().default(todayStr()),
+        paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional()
+      }).parse(body);
+      sqlite.prepare("INSERT INTO processing_expenses (mode,expense_type,description,amount,expense_date,paid_by,created_at) VALUES (?,?,?,?,?,?,?)").run(s.mode,s.expenseType,s.description,s.amount,s.expenseDate,s.paidBy??"",nowIso());
+      return json({ok:true});
+    }
+
     if (body.action === "addSale") {
       const s = z.object({
         mode: modeSchema, customerName: z.string().trim().min(1), phone: z.string().trim().optional().default(""),
@@ -336,7 +376,10 @@ export async function POST(req: NextRequest) {
         })).min(1),
         receivedAmount: z.number().nonnegative().optional(),
         saleDate: dateSchema.optional().default(todayStr()), receivedBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
-        paymentMode: z.string().trim().min(1).optional().default("Cash"), notes: z.string().trim().optional().default("")
+        paymentMode: z.string().trim().min(1).optional().default("Cash"),
+        loadingCharges: z.number().nonnegative().optional().default(0),
+        processingBatchId: z.number().int().positive().optional(),
+        notes: z.string().trim().optional().default("")
       }).parse(body);
 
       for (const item of s.items) {
@@ -374,8 +417,14 @@ export async function POST(req: NextRequest) {
         sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
           .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],s.saleDate,"SALE #"+saleId+(s.notes ? " - "+s.notes : ""),nowIso());
       }
+      const labourKg = Math.round(s.items.reduce((n,x)=>n+x.quantityKg,0)*1000)/1000;
+      const labourRate = 2;
+      const labourCost = Math.round(labourKg * labourRate * 100)/100;
+      sqlite.prepare("INSERT INTO sale_processing_costs (mode,sale_id,labour_kg,labour_rate,labour_cost,loading_cost,paid_by,payment_date,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+        .run(s.mode,saleId,labourKg,labourRate,labourCost,s.loadingCharges,s.receivedBy ?? "",s.saleDate,nowIso());
+      if (s.processingBatchId) sqlite.prepare("UPDATE processing_batches SET status='SOLD' WHERE id=? AND mode=?").run(s.processingBatchId,s.mode);
       if (received > 0) sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,saleId,received,s.saleDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
-      return json({ok:true,id:saleId,total,received,credit});
+      return json({ok:true,id:saleId,total,received,credit,labourCost,loadingCharges:s.loadingCharges});
     }
 
     if (body.action === "receiveSalePayment") {

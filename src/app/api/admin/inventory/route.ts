@@ -458,7 +458,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({error:"Final sale amount cannot be less than payment already received"},{status:400});
       }
 
-      const oldItems = sqlite.prepare("SELECT material_variant, quantity_kg FROM sale_items WHERE sale_id=?").all(s.saleId) as Array<{material_variant:string;quantity_kg:number}>;
       for (const item of s.items) {
         const materialName = item.materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.materialVariant;
         const available = Number((sqlite.prepare(

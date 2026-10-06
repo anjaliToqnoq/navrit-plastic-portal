@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AdminShell, adminToast } from "@/components/admin-shell";
 import { useBusinessMode, type BusinessMode } from "@/components/business-mode-provider";
+import VendorManagement from "./vendor-management";
 
 type Mode = BusinessMode;
 type Material = { id:number; name_en:string; name_hi:string; category_en:string };
@@ -25,7 +26,7 @@ export default function InventoryPage() {
     materialId:"", materialName:"", supplierId:"", purchaseType:"NORMAL",
     quantityKg:"", ratePerKg:"", paidAmount:"", borrowingId:"", lenderId:"", notes:""
   });
-  const [newParty,setNewParty] = useState({name:"",phone:"",notes:""});
+  const [newParty,setNewParty] = useState({name:"",phone:"",location:"",notes:""});
   const [advance,setAdvance] = useState({supplierId:"",amount:"",notes:""});
   const [expense,setExpense] = useState({purchaseId:"",expenseType:"Weighing",description:"",amount:""});
   const [borrowing,setBorrowing] = useState({lenderId:"",amount:"",purpose:"",notes:""});
@@ -77,7 +78,7 @@ export default function InventoryPage() {
   }
 
   async function addParty(action:string) {
-    if(await post(action,newParty)) setNewParty({name:"",phone:"",notes:""});
+    if(await post(action,newParty)) setNewParty({name:"",phone:"",location:"",notes:""});
   }
 
   async function addBorrowing() {
@@ -110,7 +111,7 @@ export default function InventoryPage() {
     </div>
 
     <div className="mb-4 flex flex-wrap gap-2">
-      {["purchases","inventory","borrowings","parties"].map(x=><button key={x} onClick={()=>setTab(x)} className={tab===x?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{x[0].toUpperCase()+x.slice(1)}</button>)}
+      {["purchases","inventory","borrowings","parties","vendors"].map(x=><button key={x} onClick={()=>setTab(x)} className={tab===x?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{x[0].toUpperCase()+x.slice(1)}</button>)}
     </div>
 
     {tab==="purchases" && <div className="space-y-5">
@@ -126,9 +127,6 @@ export default function InventoryPage() {
             <option value="Red Bottles">Red Bottles</option>
           </select>
           
-          <select className="ad-input" value={purchase.supplierId} onChange={e=>setPurchase({...purchase,supplierId:e.target.value})}>
-            <option value="">Supplier (optional)</option>{(data.suppliers||[]).map((s:Supplier)=><option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
           <input className="ad-input" type="number" placeholder="Quantity (kg)" value={purchase.quantityKg} onChange={e=>setPurchase({...purchase,quantityKg:e.target.value})}/>
           <input className="ad-input" type="number" placeholder="Rate / kg" value={purchase.ratePerKg} onChange={e=>setPurchase({...purchase,ratePerKg:e.target.value})}/>
           <input className="ad-input" type="number" placeholder="Paid to vendor" value={purchase.paidAmount} onChange={e=>setPurchase({...purchase,paidAmount:e.target.value})}/><span className="ad-input flex items-center text-sm">Total: ₹{((Number(purchase.quantityKg)||0)*(Number(purchase.ratePerKg)||0)).toFixed(2)}</span>
@@ -164,6 +162,8 @@ export default function InventoryPage() {
       <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Lender</th><th>Amount</th><th>Outstanding</th><th>Action</th></tr></thead><tbody>{filteredBorrowings.map((b:Borrowing)=><tr key={b.id}><td>{b.borrowing_date}</td><td>{b.lenderName}</td><td>₹{b.amount}</td><td>₹{b.outstanding_amount}</td><td>{b.outstanding_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={async()=>{const v=prompt("Repayment amount",String(b.outstanding_amount));if(v)await post("repayBorrowing",{borrowingId:b.id,amount:Number(v)})}}>Repay</button>}</td></tr>)}</tbody></table></div>
     </div>}
 
+    {tab==="vendors" && <VendorManagement data={data} mode={mode} post={post}/>} 
+
     {tab==="parties" && <div className="space-y-5">
       <div className="grid gap-5 md:grid-cols-2">
         <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Vendor advance</h2>
@@ -175,6 +175,7 @@ export default function InventoryPage() {
         <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Add vendor</h2>
           <input className="ad-input mb-2 w-full" placeholder="Vendor name" value={newParty.name} onChange={e=>setNewParty({...newParty,name:e.target.value})}/>
           <input className="ad-input mb-2 w-full" placeholder="Phone" value={newParty.phone} onChange={e=>setNewParty({...newParty,phone:e.target.value})}/>
+          <input className="ad-input mb-2 w-full" placeholder="Location" value={newParty.location} onChange={e=>setNewParty({...newParty,location:e.target.value})}/>
           <input className="ad-input mb-2 w-full" placeholder="Notes" value={newParty.notes} onChange={e=>setNewParty({...newParty,notes:e.target.value})}/>
           <button className="ad-btn ad-btn-primary" onClick={()=>addParty("addSupplier")}>Save vendor</button>
         </div>

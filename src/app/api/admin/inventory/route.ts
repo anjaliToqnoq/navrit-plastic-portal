@@ -72,6 +72,19 @@ export async function GET() {
     GROUP BY s.id,s.name ORDER BY s.name
   `).all("PET","PET","PET","PET","PET");
 
+  const vendorSummary = sqlite.prepare(`
+    SELECT s.id, s.name,
+      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.quantity_kg ELSE 0 END),0),2) as totalKg,
+      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.total_amount ELSE 0 END),0),2) as totalPurchase,
+      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.paid_amount ELSE 0 END),0),2) as totalPaid,
+      ROUND(COALESCE(SUM(CASE WHEN p.mode=? THEN p.credit_amount ELSE 0 END),0),2) as unpaid,
+      ROUND(COALESCE(SUM(CASE WHEN va.mode=? THEN va.amount-va.used_amount ELSE 0 END),0),2) as advance
+    FROM suppliers s
+    LEFT JOIN purchases p ON p.supplier_id=s.id
+    LEFT JOIN vendor_advances va ON va.supplier_id=s.id
+    GROUP BY s.id,s.name ORDER BY s.name
+  `).all(mode,mode,mode,mode,mode);
+
   const totals = sqlite.prepare(`
     SELECT
       ROUND(COALESCE(SUM(CASE WHEN mode='PET' THEN quantity_kg ELSE 0 END),0),3) as petKg,

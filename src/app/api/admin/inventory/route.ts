@@ -220,7 +220,7 @@ export async function POST(req: NextRequest) {
         transportCharges: z.number().nonnegative().optional().default(0),
         weightCharges: z.number().nonnegative().optional().default(0),
         labourCharges: z.number().nonnegative().optional().default(0),
-        materialVariant: z.enum(["","Green","White"]).optional().default(""),
+        materialVariant: z.enum(["","Green","White","White Milk"]).optional().default(""),
       }).parse(body);
 
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
@@ -280,7 +280,7 @@ export async function POST(req: NextRequest) {
         transportCharges: z.number().nonnegative().optional().default(0),
         weightCharges: z.number().nonnegative().optional().default(0),
         labourCharges: z.number().nonnegative().optional().default(0),
-        materialVariant: z.enum(["","Green","White"]).optional().default(""),
+        materialVariant: z.enum(["","Green","White","White Milk"]).optional().default(""),
       }).parse(body);
       const existing = sqlite.prepare("SELECT id, paid_amount FROM purchases WHERE id=? AND mode=?").get(s.purchaseId, s.mode) as {id:number;paid_amount:number} | undefined;
       if (!existing) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });

@@ -198,7 +198,7 @@ export default function InventoryPage() {
       <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Buyer</th><th>Contact</th><th>Material</th><th>Qty</th><th>Rate</th><th>Total</th><th>Received</th><th>Pending</th><th>Received by</th><th>Action</th></tr></thead><tbody>
         {(data.sales||[]).filter((s:any)=>s.mode===mode).map((s:any)=><tr key={s.id}><td>{s.sale_date}</td><td>{s.customer_name}</td><td>{s.phone||"—"}</td><td>{s.material_category}{s.material_variant?" - "+s.material_variant:""}</td><td>{s.quantity_kg} kg</td><td>₹{s.rate_per_kg}</td><td>₹{s.total_amount}</td><td>₹{s.received_amount}</td><td>₹{s.credit_amount}</td><td>{s.received_amount>0?((data.salePayments||[]).find((p:any)=>p.sale_id===s.id)?.received_by||"—"):"—"}</td><td>{s.credit_amount>0?<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={()=>receiveSalePayment(s)}>Receive</button>:"PAID"}</td></tr>)}
       </tbody></table></div>
-    </div>
+    </div>}
     {tab==="inventory" && <div className="space-y-5">
       <div className="ad-card p-4"><h2 className="mb-3 font-semibold">Inventory adjustment</h2><div className="grid gap-2 md:grid-cols-5">
         <select className="ad-input" value={adjust.materialId} onChange={e=>setAdjust({...adjust,materialId:e.target.value,materialName:""})}><option value="">Material</option>{materials.map((m:Material)=><option key={m.id} value={m.id}>{m.name_en}</option>)}</select>

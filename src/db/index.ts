@@ -198,6 +198,37 @@ function createDb() {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS purchases_mode_date_idx ON purchases(mode, purchase_date);
+    CREATE TABLE IF NOT EXISTS sales (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      customer_name TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      location TEXT NOT NULL DEFAULT '',
+      material_category TEXT NOT NULL CHECK(material_category IN ('Natural Bottles','Red Bottles')),
+      material_variant TEXT NOT NULL DEFAULT '',
+      quantity_kg REAL NOT NULL CHECK(quantity_kg > 0),
+      rate_per_kg REAL NOT NULL CHECK(rate_per_kg >= 0),
+      total_amount REAL NOT NULL CHECK(total_amount >= 0),
+      received_amount REAL NOT NULL DEFAULT 0 CHECK(received_amount >= 0),
+      credit_amount REAL NOT NULL DEFAULT 0 CHECK(credit_amount >= 0),
+      sale_date TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS sales_mode_date_idx ON sales(mode, sale_date);
+    CREATE TABLE IF NOT EXISTS sale_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+      amount REAL NOT NULL CHECK(amount > 0),
+      payment_date TEXT NOT NULL,
+      payment_mode TEXT NOT NULL DEFAULT 'Cash',
+      received_by TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS sale_payments_sale_idx ON sale_payments(sale_id, payment_date);
     CREATE TABLE IF NOT EXISTS inventory_transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),

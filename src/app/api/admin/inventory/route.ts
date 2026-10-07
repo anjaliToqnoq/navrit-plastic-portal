@@ -114,8 +114,9 @@ export async function GET() {
     const borrowed = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM borrowings WHERE mode=?").get(m) as any)?.n || 0);
     const repaid = Number((sqlite.prepare("SELECT COALESCE(SUM(br.amount),0) as n FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id WHERE b.mode=?").get(m) as any)?.n || 0);
     const monthlyProcessing = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=?").get(m) as any)?.n || 0);
+    const saleProcessing = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=?").get(m) as any)?.n || 0);
     const otherExpenses = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=?").get(m) as any)?.n || 0);
-    return Math.round((opening + received - paidVendors + borrowed - repaid - monthlyProcessing - otherExpenses) * 100) / 100;
+    return Math.round((opening + received - paidVendors + borrowed - repaid - monthlyProcessing - saleProcessing - otherExpenses) * 100) / 100;
   };
   const openingBalance = { PET: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PET'").get() as any)?.n || 0), PLASTIC: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PLASTIC'").get() as any)?.n || 0) };
 

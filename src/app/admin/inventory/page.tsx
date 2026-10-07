@@ -106,11 +106,6 @@ export default function InventoryPage() {
     if(ok) setExpense({expenseType:"Electricity",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),billingMonth:new Date().toISOString().slice(0,7),billingStartDate:"",billingEndDate:"",paidBy:""});
   }
 
-  async function saveOpeningBalance() {
-    if(openingBalance==="") return;
-    await post("setOpeningBalance",{mode,amount:Number(openingBalance)});
-  }
-
   async function receiveSalePayment(s:any) {
     const v=prompt("Payment amount",String(s.credit_amount));
     if(v) await post("receiveSalePayment",{mode,saleId:s.id,amount:Number(v),receivedBy:prompt("Received by (Rahul / Devesh / Nitin)")||undefined,paymentMode:prompt("Payment mode","Cash")||"Cash",paymentDate:new Date().toISOString().slice(0,10)});
@@ -165,24 +160,6 @@ export default function InventoryPage() {
         <span className="ml-2 text-xs text-[var(--ad-muted)]">Current stock: <b>{currentKg.toFixed(2)} kg</b></span>
         {message && <span className="text-xs text-[var(--ad-accent)]">{message}</span>}
       </div>
-      <details className="ad-card w-full sm:w-auto sm:min-w-[300px]">
-        <summary className="cursor-pointer list-none p-3">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold">Opening Balance</p>
-              <p className="mt-0.5 text-[11px] text-[var(--ad-muted)]">One-time initial setup · {mode}</p>
-            </div>
-            <p className="text-sm font-bold">₹{Number(data.openingBalance?.[mode]||0).toFixed(2)}</p>
-          </div>
-        </summary>
-        <div className="border-t border-[var(--ad-border)] p-3">
-          <p className="mb-2 text-[11px] text-[var(--ad-muted)]">Use this only for the company cash balance that existed before tracking started. After setup, manage normal transactions from the relevant tabs.</p>
-          <div className="flex gap-2">
-            <input className="ad-input" type="number" min="0" placeholder="Initial company balance" value={openingBalance} onChange={e=>setOpeningBalance(e.target.value)}/>
-            <button className="ad-btn ad-btn-ghost" onClick={saveOpeningBalance}>Save</button>
-          </div>
-        </div>
-      </details>
     </div>
 
     <div className="mb-5 grid gap-3 sm:grid-cols-3">

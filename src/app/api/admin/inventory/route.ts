@@ -171,8 +171,8 @@ export async function POST(req: NextRequest) {
         amount: z.number().positive(),
         expenseDate: dateSchema.optional().default(todayStr()),
         billingMonth: z.string().optional(),
-        billingStartDate: dateSchema.optional(),
-        billingEndDate: dateSchema.optional(),
+        billingStartDate: z.union([dateSchema, z.literal("")]).optional(),
+        billingEndDate: z.union([dateSchema, z.literal("")]).optional(),
         paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional()
       }).parse(body);
       const billingMonth = x.expenseType === "Electricity" ? (x.billingMonth ?? "") : "";

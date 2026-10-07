@@ -152,8 +152,8 @@ export default function MaterialAnalysisPage() {
 
       <div className="ad-card p-4">
         <h2 className="mb-3 font-semibold">Monthly Snapshot</h2>
-        <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Month</th><th>Purchased</th><th>Processed</th><th>Finished</th><th>Waste</th><th>Sold</th><th>Revenue</th><th>Expenses</th></tr></thead><tbody>
-          {(data?.monthly||[]).map((m:any)=><tr key={m.month}><td>{m.month}</td><td>{kg(m.purchasedKg)}</td><td>{kg(m.processedKg)}</td><td>{kg(m.finishedKg)}</td><td>{kg(m.wasteKg)}</td><td>{kg(m.soldKg)}</td><td>{money(m.revenue)}</td><td>{money(m.expenses)}</td></tr>)}
+        <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Month</th><th>Purchased</th><th>Processed</th><th>Finished</th><th>Waste</th><th>Sold</th><th>Revenue</th><th>Processing Expense</th><th>Admin & Maintenance</th><th>Total Expense</th></tr></thead><tbody>
+          {(data?.monthly||[]).map((m:any)=><tr key={m.month}><td>{m.month}</td><td>{kg(m.purchasedKg)}</td><td>{kg(m.processedKg)}</td><td>{kg(m.finishedKg)}</td><td>{kg(m.wasteKg)}</td><td>{kg(m.soldKg)}</td><td>{money(m.revenue)}</td><td>{money(m.processingExpenses||0)}</td><td>{money(m.adminMaintenanceExpenses||0)}</td><td>{money(m.expenses)}</td></tr>)}
         </tbody></table></div>
       </div>
     </div>

@@ -330,6 +330,8 @@ function createDb() {
     "ALTER TABLE purchases ADD COLUMN weight_charges REAL NOT NULL DEFAULT 0",
     "ALTER TABLE purchases ADD COLUMN labour_charges REAL NOT NULL DEFAULT 0",
     "ALTER TABLE vendor_payments ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE other_expenses ADD COLUMN expense_frequency TEXT NOT NULL DEFAULT 'ONE_TIME'",
+    "ALTER TABLE other_expenses ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
   ]) {
     try { sqlite.exec(migration); } catch { /* column already exists */ }
   }

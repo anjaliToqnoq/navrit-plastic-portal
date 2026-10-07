@@ -75,8 +75,10 @@ export async function GET(req: NextRequest) {
   const revenue = sales.reduce((s,x)=>s+n(x.total_amount),0);
   const saleDirectCost = sales.reduce((s,x)=>s+n(x.labour_charges)+n(x.loading_charges),0);
   const processingCost = batches.reduce((s,x)=>s+n(x.labour_cost)+n(x.processing_cost),0);
-  const processingExpenseCost = processingExpenses.reduce((s,x)=>s+n(x.amount),0);
-  const otherExpenseCost = otherExpenses.reduce((s,x)=>s+n(x.amount),0);
+  const processingOtherExpenses = otherExpenses.filter(x=>x.expense_type==="Electricity" || x.expense_type==="Thread");
+  const adminMaintenanceExpenses = otherExpenses.filter(x=>x.expense_type==="GST / Admin" || x.expense_type==="Infrastructure / Maintenance" || x.expense_type==="Other");
+  const processingExpenseCost = processingExpenses.reduce((s,x)=>s+n(x.amount),0) + processingOtherExpenses.reduce((s,x)=>s+n(x.amount),0);
+  const otherExpenseCost = adminMaintenanceExpenses.reduce((s,x)=>s+n(x.amount),0);
   const finishedCostPerKg = finishedOutputKg > 0 ? (purchaseCost + processingCost + processingExpenseCost) / finishedOutputKg : 0;
   const estimatedCogs = soldKg * finishedCostPerKg;
   const estimatedNetProfit = revenue - estimatedCogs - otherExpenseCost;
@@ -94,13 +96,19 @@ export async function GET(req: NextRequest) {
   const months = new Map<string, any>();
   const addMonth=(date:string, key:string, value:number)=>{
     const m=(date||"").slice(0,7); if(!m)return;
-    const row=months.get(m)||{month:m,purchasedKg:0,processedKg:0,finishedKg:0,wasteKg:0,soldKg:0,revenue:0,expenses:0};
+    const row=months.get(m)||{month:m,purchasedKg:0,processedKg:0,finishedKg:0,wasteKg:0,soldKg:0,revenue:0,expenses:0,processingExpenses:0,adminMaintenanceExpenses:0};
     row[key]+=value; months.set(m,row);
   };
   purchases.forEach(x=>addMonth(x.purchase_date,"purchasedKg",n(x.quantity_kg)));
   batches.forEach(x=>{addMonth(x.batch_date,"processedKg",n(x.total_input_kg));addMonth(x.batch_date,"finishedKg",n(x.total_output_kg));addMonth(x.batch_date,"wasteKg",n(x.waste_kg));});
   sales.forEach(x=>{addMonth(x.sale_date,"soldKg",n(x.quantity_kg));addMonth(x.sale_date,"revenue",n(x.total_amount));});
-  [...processingExpenses,...otherExpenses].forEach(x=>addMonth(x.expense_date,"expenses",n(x.amount)));
+  processingExpenses.forEach(x=>addMonth(x.expense_date,"processingExpenses",n(x.amount)));
+  otherExpenses.forEach(x=>{
+    const month=x.expense_type==="Electricity" && x.billing_month ? x.billing_month : (x.expense_date||"").slice(0,7);
+    const key=(x.expense_type==="Electricity" || x.expense_type==="Thread") ? "processingExpenses" : "adminMaintenanceExpenses";
+    const row=months.get(month)||{month,purchasedKg:0,processedKg:0,finishedKg:0,wasteKg:0,soldKg:0,revenue:0,expenses:0,processingExpenses:0,adminMaintenanceExpenses:0};
+    row[key]+=n(x.amount); row.expenses=(row.processingExpenses||0)+(row.adminMaintenanceExpenses||0); months.set(month,row);
+  });
   const monthly=[...months.values()].sort((a,b)=>a.month.localeCompare(b.month));
 
   return NextResponse.json({
@@ -111,7 +119,7 @@ export async function GET(req: NextRequest) {
       wasteKg:round(wasteKg,3), wastePct:processedInputKg?round(wasteKg/processedInputKg*100):0,
       soldKg:round(soldKg,3), stockKg:round(stockKg,3), revenue:round(revenue),
       saleDirectCost:round(saleDirectCost), processingCost:round(processingCost+processingExpenseCost),
-      otherExpenses:round(otherExpenseCost), estimatedCogs:round(estimatedCogs),
+      otherExpenses:round(otherExpenseCost), processingOtherExpenses:round(processingOtherExpenses.reduce((s,x)=>s+n(x.amount),0)), adminMaintenanceExpenses:round(otherExpenseCost), estimatedCogs:round(estimatedCogs),
       estimatedNetProfit:round(estimatedNetProfit),
       finishedCostPerKg:round(finishedCostPerKg),
     },

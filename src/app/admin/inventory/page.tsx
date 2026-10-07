@@ -27,7 +27,6 @@ export default function InventoryPage() {
   const [editingSale,setEditingSale] = useState<number|null>(null);
   const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
 
-  const [openingBalance,setOpeningBalance] = useState("");
   const [message,setMessage] = useState("");
   const emptyPurchase = { materialId:"", materialName:"", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), notes:"",  };
   const [purchase,setPurchase] = useState(emptyPurchase);

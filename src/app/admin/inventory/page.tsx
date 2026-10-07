@@ -22,6 +22,7 @@ export default function InventoryPage() {
   const { mode } = useBusinessMode();
   const [data,setData] = useState<any>(null);
   const [tab,setTab] = useState("purchases");
+  const [expense,setExpense] = useState({expenseType:"Electricity",expenseFrequency:"MONTHLY",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),paidBy:""});
   const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",saleDate:new Date().toISOString().slice(0,10),notes:""});
   const [editingSale,setEditingSale] = useState<number|null>(null);
   const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
@@ -98,6 +99,13 @@ export default function InventoryPage() {
     setSaleItems(items.length ? items.map((x:any)=>({materialCategory:x.material_category,materialVariant:x.material_variant,quantityKg:String(x.quantity_kg),ratePerKg:String(x.rate_per_kg)})) : [{materialCategory:s.material_category,materialVariant:s.material_variant==="MIXED"?"Green":s.material_variant,quantityKg:String(s.quantity_kg),ratePerKg:String(s.rate_per_kg||0)}]);
     window.scrollTo({top:0,behavior:"smooth"});
   }
+  async function addExpense() {
+    const amount=Number(expense.amount||0);
+    if(amount<=0) { setMessage("Enter a valid expense amount"); return; }
+    const ok=await post("addOtherExpense",{mode,expenseType:expense.expenseType,expenseFrequency:expense.expenseFrequency,description:expense.description,amount,expenseDate:expense.expenseDate,paidBy:expense.paidBy||undefined});
+    if(ok) setExpense({expenseType:"Electricity",expenseFrequency:"MONTHLY",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),paidBy:""});
+  }
+
   async function saveOpeningBalance() {
     if(openingBalance==="") return;
     await post("setOpeningBalance",{mode,amount:Number(openingBalance)});
@@ -164,7 +172,7 @@ export default function InventoryPage() {
     </div>
 
     <div className="mb-4 flex flex-wrap gap-2">
-      {[["purchases","Purchases"],["sales","Sales"],["inventory","Inventory"],["borrowings","Borrowings"]].map(([value,label])=><button key={value} onClick={()=>setTab(value)} className={tab===value?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{label}</button>)}
+      {[["purchases","Purchases"],["sales","Sales"],["inventory","Inventory"],["expenses","Expenses"],["borrowings","Borrowings"]].map(([value,label])=><button key={value} onClick={()=>setTab(value)} className={tab===value?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{label}</button>)}
     </div>
 
     {tab==="purchases" && <div className="space-y-5">
@@ -259,6 +267,37 @@ export default function InventoryPage() {
         <button className="ad-btn ad-btn-primary" onClick={adjustInventory}>Save adjustment</button>
       </div><input className="ad-input mt-2 w-full" placeholder="Reason / notes (required)" value={adjust.notes} onChange={e=>setAdjust({...adjust,notes:e.target.value})}/></div>
       <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Material</th><th>Mode</th><th>Quantity</th><th>Value</th></tr></thead><tbody>{filteredInventory.map((x:any)=><tr key={x.mode+"-"+x.materialId}><td>{x.materialName}</td><td>{x.mode}</td><td>{Number(x.quantityKg).toFixed(2)} kg</td><td>₹{Number(x.value).toFixed(2)}</td></tr>)}</tbody></table></div>
+    </div>}
+
+    {tab==="expenses" && <div className="space-y-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Total Expenses</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Monthly Expenses</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode&&x.expense_frequency==="MONTHLY").reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Electricity + Thread</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode&&(x.expense_type==="Electricity"||x.expense_type==="Thread")).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Admin + Maintenance</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode&&(x.expense_type==="GST / Admin"||x.expense_type==="Infrastructure / Maintenance")).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
+      </div>
+      <div className="ad-card p-4">
+        <h2 className="mb-3 font-semibold">Add Business Expense</h2>
+        <p className="mb-3 text-xs ad-muted">Use this for costs outside a specific sale or purchase. Sale labour/loading stay on the Sale screen.</p>
+        <div className="grid gap-2 md:grid-cols-6">
+          <select className="ad-input" value={expense.expenseType} onChange={e=>setExpense({...expense,expenseType:e.target.value})}>
+            <option>Electricity</option><option>Thread</option><option>GST / Admin</option><option>Infrastructure / Maintenance</option><option>Other</option>
+          </select>
+          <select className="ad-input" value={expense.expenseFrequency} onChange={e=>setExpense({...expense,expenseFrequency:e.target.value})}>
+            <option value="MONTHLY">Monthly</option><option value="ONE_TIME">One-time</option>
+          </select>
+          <input className="ad-input" type="number" min="0" placeholder="Amount" value={expense.amount} onChange={e=>setExpense({...expense,amount:e.target.value})}/>
+          <input className="ad-input" type="date" value={expense.expenseDate} onChange={e=>setExpense({...expense,expenseDate:e.target.value})}/>
+          <select className="ad-input" value={expense.paidBy} onChange={e=>setExpense({...expense,paidBy:e.target.value})}>
+            <option value="">Paid by</option><option>Rahul</option><option>Devesh</option><option>Nitin</option>
+          </select>
+          <input className="ad-input" placeholder="Description / notes" value={expense.description} onChange={e=>setExpense({...expense,description:e.target.value})}/>
+        </div>
+        <button className="ad-btn ad-btn-primary mt-3" onClick={addExpense}>Save Expense</button>
+      </div>
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Category</th><th>Frequency</th><th>Description</th><th>Amount</th><th>Paid by</th></tr></thead><tbody>
+        {(data.otherExpenses||[]).filter((x:any)=>x.mode===mode).map((x:any)=><tr key={x.id}><td>{x.expense_date}</td><td>{x.expense_type}</td><td>{x.expense_frequency==="MONTHLY"?"Monthly":"One-time"}</td><td>{x.description||"—"}</td><td>₹{Number(x.amount).toFixed(2)}</td><td>{x.paid_by||"—"}</td></tr>)}
+      </tbody></table></div>
     </div>}
 
     {tab==="borrowings" && <div className="space-y-5">

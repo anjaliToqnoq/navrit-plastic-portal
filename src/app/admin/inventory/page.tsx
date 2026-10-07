@@ -22,7 +22,7 @@ export default function InventoryPage() {
   const { mode } = useBusinessMode();
   const [data,setData] = useState<any>(null);
   const [tab,setTab] = useState("purchases");
-  const [expense,setExpense] = useState({expenseType:"Electricity",expenseFrequency:"MONTHLY",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),paidBy:""});
+  const [expense,setExpense] = useState({expenseType:"Electricity",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),billingMonth:new Date().toISOString().slice(0,7),billingStartDate:"",billingEndDate:"",paidBy:""});
   const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",saleDate:new Date().toISOString().slice(0,10),notes:""});
   const [editingSale,setEditingSale] = useState<number|null>(null);
   const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
@@ -102,8 +102,8 @@ export default function InventoryPage() {
   async function addExpense() {
     const amount=Number(expense.amount||0);
     if(amount<=0) { setMessage("Enter a valid expense amount"); return; }
-    const ok=await post("addOtherExpense",{mode,expenseType:expense.expenseType,expenseFrequency:expense.expenseFrequency,description:expense.description,amount,expenseDate:expense.expenseDate,paidBy:expense.paidBy||undefined});
-    if(ok) setExpense({expenseType:"Electricity",expenseFrequency:"MONTHLY",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),paidBy:""});
+    const ok=await post("addOtherExpense",{mode,expenseType:expense.expenseType,description:expense.description,amount,expenseDate:expense.expenseDate,billingMonth:expense.expenseType==="Electricity"?expense.billingMonth:"",billingStartDate:expense.expenseType==="Electricity"?expense.billingStartDate:"",billingEndDate:expense.expenseType==="Electricity"?expense.billingEndDate:"",paidBy:expense.paidBy||undefined});
+    if(ok) setExpense({expenseType:"Electricity",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),billingMonth:new Date().toISOString().slice(0,7),billingStartDate:"",billingEndDate:"",paidBy:""});
   }
 
   async function saveOpeningBalance() {
@@ -288,9 +288,9 @@ export default function InventoryPage() {
     {tab==="expenses" && <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="ad-card p-4"><p className="ad-muted text-xs">Total Expenses</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
-        <div className="ad-card p-4"><p className="ad-muted text-xs">Monthly Expenses</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode&&x.expense_frequency==="MONTHLY").reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
-        <div className="ad-card p-4"><p className="ad-muted text-xs">Electricity + Thread</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode&&(x.expense_type==="Electricity"||x.expense_type==="Thread")).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
-        <div className="ad-card p-4"><p className="ad-muted text-xs">Admin + Maintenance</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode&&(x.expense_type==="GST / Admin"||x.expense_type==="Infrastructure / Maintenance")).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Monthly Processing Expense</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode&&(x.expense_type==="Electricity"||x.expense_type==="Thread")).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Other Admin & Maintenance</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode&&(x.expense_type==="GST / Admin"||x.expense_type==="Infrastructure / Maintenance"||x.expense_type==="Other")).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Current Month</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode&&((x.expense_type==="Electricity"&&x.billing_month===new Date().toISOString().slice(0,7))||(!x.billing_month&&String(x.expense_date||"").startsWith(new Date().toISOString().slice(0,7))))).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
       </div>
       <div className="ad-card p-4">
         <h2 className="mb-3 font-semibold">Add Business Expense</h2>
@@ -299,11 +299,9 @@ export default function InventoryPage() {
           <select className="ad-input" value={expense.expenseType} onChange={e=>setExpense({...expense,expenseType:e.target.value})}>
             <option>Electricity</option><option>Thread</option><option>GST / Admin</option><option>Infrastructure / Maintenance</option><option>Other</option>
           </select>
-          <select className="ad-input" value={expense.expenseFrequency} onChange={e=>setExpense({...expense,expenseFrequency:e.target.value})}>
-            <option value="MONTHLY">Monthly</option><option value="ONE_TIME">One-time</option>
-          </select>
           <input className="ad-input" type="number" min="0" placeholder="Amount" value={expense.amount} onChange={e=>setExpense({...expense,amount:e.target.value})}/>
           <input className="ad-input" type="date" value={expense.expenseDate} onChange={e=>setExpense({...expense,expenseDate:e.target.value})}/>
+          {expense.expenseType==="Electricity" && <><input className="ad-input" type="month" value={expense.billingMonth} onChange={e=>setExpense({...expense,billingMonth:e.target.value})}/><input className="ad-input" type="date" value={expense.billingStartDate} onChange={e=>setExpense({...expense,billingStartDate:e.target.value})} placeholder="Billing start"/><input className="ad-input" type="date" value={expense.billingEndDate} onChange={e=>setExpense({...expense,billingEndDate:e.target.value})} placeholder="Billing end"/></>}
           <select className="ad-input" value={expense.paidBy} onChange={e=>setExpense({...expense,paidBy:e.target.value})}>
             <option value="">Paid by</option><option>Rahul</option><option>Devesh</option><option>Nitin</option>
           </select>
@@ -311,8 +309,8 @@ export default function InventoryPage() {
         </div>
         <button className="ad-btn ad-btn-primary mt-3" onClick={addExpense}>Save Expense</button>
       </div>
-      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Category</th><th>Frequency</th><th>Description</th><th>Amount</th><th>Paid by</th></tr></thead><tbody>
-        {(data.otherExpenses||[]).filter((x:any)=>x.mode===mode).map((x:any)=><tr key={x.id}><td>{x.expense_date}</td><td>{x.expense_type}</td><td>{x.expense_frequency==="MONTHLY"?"Monthly":"One-time"}</td><td>{x.description||"—"}</td><td>₹{Number(x.amount).toFixed(2)}</td><td>{x.paid_by||"—"}</td></tr>)}
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Payment Date</th><th>Category</th><th>Billing Period</th><th>Description</th><th>Amount</th><th>Paid by</th></tr></thead><tbody>
+        {(data.otherExpenses||[]).filter((x:any)=>x.mode===mode).map((x:any)=><tr key={x.id}><td>{x.expense_date}</td><td>{x.expense_type}</td><td>{x.expense_type==="Electricity" ? (x.billing_start_date&&x.billing_end_date ? `${x.billing_start_date} → ${x.billing_end_date}` : x.billing_month||"—") : "Expense date month"}</td><td>{x.description||"—"}</td><td>₹{Number(x.amount).toFixed(2)}</td><td>{x.paid_by||"—"}</td></tr>)}
       </tbody></table></div>
     </div>}
 

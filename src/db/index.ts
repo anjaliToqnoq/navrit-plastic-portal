@@ -277,6 +277,16 @@ function createDb() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS processing_batch_outputs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      batch_id INTEGER NOT NULL REFERENCES processing_batches(id) ON DELETE CASCADE,
+      material_variant TEXT NOT NULL CHECK(material_variant IN ('Green','White','White Milk','Red')),
+      quantity_kg REAL NOT NULL CHECK(quantity_kg > 0),
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS processing_batch_outputs_batch_idx
+      ON processing_batch_outputs(batch_id);
+
     CREATE TABLE IF NOT EXISTS sale_payments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
@@ -321,6 +331,9 @@ function createDb() {
     );
   `);
   for (const migration of [
+    "ALTER TABLE processing_batches ADD COLUMN total_output_kg REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE processing_batches ADD COLUMN waste_kg REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE processing_batches ADD COLUMN processing_cost REAL NOT NULL DEFAULT 0",
     "ALTER TABLE sales ADD COLUMN gross_amount REAL NOT NULL DEFAULT 0",
     "ALTER TABLE sales ADD COLUMN labour_charges REAL NOT NULL DEFAULT 0",
     "ALTER TABLE sales ADD COLUMN loading_charges REAL NOT NULL DEFAULT 0",

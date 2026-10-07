@@ -369,6 +369,13 @@ export async function POST(req: NextRequest) {
 
       const inputItems = sqlite.prepare("SELECT material_variant, quantity_kg FROM processing_batch_items WHERE batch_id=?").all(s.batchId) as Array<{material_variant:string;quantity_kg:number}>;
       const inputKg = Number(batch.total_input_kg);
+      for (const item of inputItems) {
+        const materialName = item.material_variant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.material_variant;
+        const available = Number((sqlite.prepare("SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions WHERE mode=? AND transaction_date<=? AND material_name=?").get(s.mode,batch.batch_date,materialName) as any)?.kg || 0);
+        if (Number(item.quantity_kg) > available + 0.005) {
+          return NextResponse.json({error:"Insufficient stock for processing " + item.material_variant + ". Available up to " + batch.batch_date + ": " + available.toFixed(2) + " kg"}, {status:400});
+        }
+      }
       const outputKg = Math.round(s.outputs.reduce((n,x)=>n+x.quantityKg,0)*1000)/1000;
       const wasteKg = Math.round((inputKg-outputKg)*1000)/1000;
       if (wasteKg < -0.005) return NextResponse.json({error:"Output cannot be greater than batch input"}, {status:400});

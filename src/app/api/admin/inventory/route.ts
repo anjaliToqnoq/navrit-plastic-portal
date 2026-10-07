@@ -30,6 +30,7 @@ export async function GET() {
   const salePayments = sqlite.prepare("SELECT sp.*, s.customer_name as customerName, s.material_category as materialCategory, s.material_variant as materialVariant FROM sale_payments sp JOIN sales s ON s.id=sp.sale_id ORDER BY sp.payment_date DESC, sp.id DESC LIMIT 500").all();
   const processingBatches = sqlite.prepare("SELECT * FROM processing_batches ORDER BY batch_date DESC, id DESC LIMIT 200").all();
   const processingBatchItems = sqlite.prepare("SELECT * FROM processing_batch_items ORDER BY batch_id, id").all();
+  const processingBatchOutputs = sqlite.prepare("SELECT * FROM processing_batch_outputs ORDER BY batch_id, id").all();
   const processingExpenses = sqlite.prepare("SELECT * FROM processing_expenses ORDER BY expense_date DESC, id DESC LIMIT 500").all();
   const saleProcessingCosts = sqlite.prepare("SELECT * FROM sale_processing_costs ORDER BY payment_date DESC, id DESC LIMIT 500").all();
   const otherExpenses = sqlite.prepare("SELECT * FROM other_expenses WHERE mode IN ('PET','PLASTIC') ORDER BY expense_date DESC, id DESC LIMIT 500").all();
@@ -118,7 +119,7 @@ export async function GET() {
   };
   const openingBalance = { PET: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PET'").get() as any)?.n || 0), PLASTIC: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PLASTIC'").get() as any)?.n || 0) };
 
-  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, saleItems, salePayments, processingBatches, processingBatchItems, processingExpenses, saleProcessingCosts, otherExpenses, totals, openingBalance, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });
+  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, saleItems, salePayments, processingBatches, processingBatchItems, processingBatchOutputs, processingExpenses, saleProcessingCosts, otherExpenses, totals, openingBalance, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });
 }
 
 export async function POST(req: NextRequest) {
@@ -347,6 +348,58 @@ export async function POST(req: NextRequest) {
       const batchId = Number(r.lastInsertRowid);
       for (const item of s.items) sqlite.prepare("INSERT INTO processing_batch_items (batch_id,material_variant,quantity_kg,bale_count) VALUES (?,?,?,?)").run(batchId,item.materialVariant,item.quantityKg,item.baleCount);
       return json({ok:true,id:batchId,totalInput,labourCost});
+    }
+
+    if (body.action === "completeProcessingBatch") {
+      const s = z.object({
+        mode: modeSchema,
+        batchId: z.number().int().positive(),
+        outputs: z.array(z.object({
+          materialVariant: z.enum(["Green","White","White Milk","Red"]),
+          quantityKg: z.number().positive()
+        })).min(1),
+        processingCost: z.number().nonnegative().default(0)
+      }).parse(body);
+
+      const batch = sqlite.prepare("SELECT * FROM processing_batches WHERE id=? AND mode=?").get(s.batchId,s.mode) as any;
+      if (!batch) return NextResponse.json({error:"Processing batch not found"},{status:404});
+      if (Number(batch.total_output_kg) > 0 || Number(batch.waste_kg) > 0) {
+        return NextResponse.json({error:"This processing batch is already completed"},{status:400});
+      }
+
+      const inputItems = sqlite.prepare("SELECT material_variant, quantity_kg FROM processing_batch_items WHERE batch_id=?").all(s.batchId) as Array<{material_variant:string;quantity_kg:number}>;
+      const inputKg = Number(batch.total_input_kg);
+      const outputKg = Math.round(s.outputs.reduce((n,x)=>n+x.quantityKg,0)*1000)/1000;
+      const wasteKg = Math.round((inputKg-outputKg)*1000)/1000;
+      if (wasteKg < -0.005) return NextResponse.json({error:"Output cannot be greater than batch input"}, {status:400});
+
+      for (const item of s.outputs) {
+        const allowed = s.mode === "PET" ? ["Green","White","White Milk"] : ["Green","White","White Milk","Red"];
+        if (!allowed.includes(item.materialVariant)) return NextResponse.json({error:"Invalid output material for this mode"}, {status:400});
+      }
+
+      sqlite.exec("BEGIN");
+      try {
+        for (const item of inputItems) {
+          const materialName = item.material_variant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.material_variant;
+          sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+            .run(s.mode,null,materialName,"ADJUSTMENT",-Number(item.quantity_kg),0,batch.batch_date,"PROCESSING INPUT #"+s.batchId,nowIso());
+        }
+        for (const item of s.outputs) {
+          const materialName = item.materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.materialVariant;
+          sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+            .run(s.mode,null,materialName,"ADJUSTMENT",item.quantityKg,0,batch.batch_date,"PROCESSING OUTPUT #"+s.batchId,nowIso());
+          sqlite.prepare("INSERT INTO processing_batch_outputs (batch_id,material_variant,quantity_kg,created_at) VALUES (?,?,?,?)")
+            .run(s.batchId,item.materialVariant,item.quantityKg,nowIso());
+        }
+        sqlite.prepare("UPDATE processing_batches SET total_output_kg=?, waste_kg=?, processing_cost=?, status='SOLD' WHERE id=?")
+          .run(outputKg,Math.max(0,wasteKg),s.processingCost,s.batchId);
+        sqlite.exec("COMMIT");
+      } catch (e) {
+        sqlite.exec("ROLLBACK");
+        throw e;
+      }
+      return json({ok:true,batchId:s.batchId,inputKg,outputKg,wasteKg:Math.max(0,wasteKg)});
     }
 
     if (body.action === "addProcessingExpense") {

@@ -12,6 +12,7 @@ type AccountsData = {
   cashBalance?: Record<string, number>;
   salePayments?: Row[];
   purchases?: Row[];
+  vendorPayments?: Row[];
   otherExpenses?: Row[];
   processingExpenses?: Row[];
   saleProcessingCosts?: Row[];
@@ -81,7 +82,17 @@ export default function AccountsPage() {
   const accounts = useMemo(() => {
     return people.map((person) => {
       const received = sumBy(data?.salePayments, "received_by", person, mode);
-      const purchasesPaid = sumBy(data?.purchases, "paid_by", person, mode);
+      // Use actual vendor cash-payment records, not purchases.paid_amount.
+      // paid_amount can include supplier advances, which are not a new cash outflow
+      // at purchase time and therefore must not reduce the person's account again.
+      const purchasesPaid = (data?.vendorPayments || [])
+        .filter((row) =>
+          row.mode === mode &&
+          String(row.paid_by || "") === person &&
+          String(row.payment_type || "") !== "ADVANCE" &&
+          String(row.payment_mode || "") !== "Advance"
+        )
+        .reduce((total, row) => total + Number(row.amount ?? 0), 0);
       const expensesPaid = sumBy(data?.otherExpenses, "paid_by", person, mode);
       const processingPaid = sumBy(data?.processingExpenses, "paid_by", person, mode);
       const saleProcessingPaid = (data?.saleProcessingCosts || [])

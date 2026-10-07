@@ -6,7 +6,7 @@ import { useBusinessMode } from "@/components/business-mode-provider";
 import { ArrowDownLeft, ArrowUpRight, RefreshCw, WalletCards } from "lucide-react";
 
 type Person = "Rahul" | "Nitin" | "Devesh";
-type Row = { [key: string]: string | number | null | undefined };
+type Row = Record<string, unknown>;
 type AccountsData = {
   openingBalance?: Record<string, number>;
   cashBalance?: Record<string, number>;
@@ -105,10 +105,10 @@ export default function AccountsPage() {
     (data?.salePayments || [])
       .filter((x) => x.mode === mode && x.received_by)
       .forEach((x) => rows.push({
-        date: x.payment_date,
+        date: String(x.payment_date ?? ""),
         type: "Sale receipt",
         description: x.customerName ? `Sale from ${x.customerName}` : `Sale #${x.sale_id}`,
-        person: x.received_by,
+        person: String(x.received_by ?? ""),
         amount: Number(x.amount || 0),
         direction: "in",
       }));
@@ -116,10 +116,10 @@ export default function AccountsPage() {
     (data?.purchases || [])
       .filter((x) => x.mode === mode && x.paid_by && Number(x.paid_amount) > 0)
       .forEach((x) => rows.push({
-        date: x.purchase_date,
+        date: String(x.purchase_date ?? ""),
         type: "Purchase payment",
         description: `Purchase #${x.id} — ${x.material_name}`,
-        person: x.paid_by,
+        person: String(x.paid_by ?? ""),
         amount: Number(x.paid_amount || 0),
         direction: "out",
       }));
@@ -129,10 +129,10 @@ export default function AccountsPage() {
       .forEach((x) => {
         const amount = Number(x.amount ?? ((x.labour_cost || 0) + (x.loading_cost || 0)));
         rows.push({
-          date: x.expense_date || x.payment_date,
+          date: String(x.expense_date ?? x.payment_date ?? ""),
           type: "Expense",
           description: x.description || x.expense_type || "Business expense",
-          person: x.paid_by,
+          person: String(x.paid_by ?? ""),
           amount,
           direction: "out",
         });

@@ -127,7 +127,7 @@ export default function AccountsPage() {
     [...(data?.otherExpenses || []), ...(data?.processingExpenses || []), ...(data?.saleProcessingCosts || [])]
       .filter((x) => x.mode === mode && x.paid_by && Number(x.amount ?? x.labour_cost ?? x.loading_cost) > 0)
       .forEach((x) => {
-        const amount = Number(x.amount ?? ((x.labour_cost || 0) + (x.loading_cost || 0)));
+        const amount = Number(x.amount ?? (Number(x.labour_cost || 0) + Number(x.loading_cost || 0)));
         rows.push({
           date: String(x.expense_date ?? x.payment_date ?? ""),
           type: "Expense",

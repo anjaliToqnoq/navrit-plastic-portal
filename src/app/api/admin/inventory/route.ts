@@ -180,9 +180,12 @@ export async function POST(req: NextRequest) {
       }
       if (x.expenseType === "Electricity" && x.billingStartDate && x.billingEndDate && x.billingStartDate > x.billingEndDate) {
         return NextResponse.json({error:"Electricity billing start date cannot be after end date"}, {status:400});
+      const billingMonth = x.expenseType === "Electricity" ? (x.billingMonth ?? "") : "";
+      const billingStartDate = x.expenseType === "Electricity" ? (x.billingStartDate ?? "") : "";
+      const billingEndDate = x.expenseType === "Electricity" ? (x.billingEndDate ?? "") : "";
       }
       sqlite.prepare(`INSERT INTO other_expenses (mode,purchase_id,expense_type,description,amount,expense_date,expense_frequency,paid_by,created_at,billing_month,billing_start_date,billing_end_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(x.mode,null,x.expenseType,x.description,x.amount,x.expenseDate,"ONE_TIME",x.paidBy??"",nowIso(),x.expenseType==="Electricity"?x.billingMonth:"",x.expenseType==="Electricity"?x.billingStartDate:"",x.expenseType==="Electricity"?x.billingEndDate:"");
+        .run(x.mode,null,x.expenseType,x.description,x.amount,x.expenseDate,"ONE_TIME",x.paidBy??"",nowIso(),billingMonth,billingStartDate,billingEndDate);
       return json({ok:true});
     }
 

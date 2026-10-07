@@ -167,14 +167,22 @@ export async function POST(req: NextRequest) {
       const x = z.object({
         mode: modeSchema,
         expenseType: z.enum(["Electricity","Thread","GST / Admin","Infrastructure / Maintenance","Other"]),
-        expenseFrequency: z.enum(["MONTHLY","ONE_TIME"]).default("ONE_TIME"),
         description: z.string().trim().optional().default(""),
         amount: z.number().positive(),
         expenseDate: dateSchema.optional().default(todayStr()),
+        billingMonth: z.string().regex(/^\d{4}-\d{2}$/).optional().default(""),
+        billingStartDate: dateSchema.optional().default(""),
+        billingEndDate: dateSchema.optional().default(""),
         paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional()
       }).parse(body);
-      sqlite.prepare(`INSERT INTO other_expenses (mode,purchase_id,expense_type,description,amount,expense_date,expense_frequency,paid_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)`)
-        .run(x.mode,null,x.expenseType,x.description,x.amount,x.expenseDate,x.expenseFrequency,x.paidBy??"",nowIso());
+      if (x.expenseType === "Electricity" && ((x.billingStartDate && !x.billingEndDate) || (!x.billingStartDate && x.billingEndDate))) {
+        return NextResponse.json({error:"Electricity billing period needs both start and end dates"}, {status:400});
+      }
+      if (x.expenseType === "Electricity" && x.billingStartDate && x.billingEndDate && x.billingStartDate > x.billingEndDate) {
+        return NextResponse.json({error:"Electricity billing start date cannot be after end date"}, {status:400});
+      }
+      sqlite.prepare(`INSERT INTO other_expenses (mode,purchase_id,expense_type,description,amount,expense_date,expense_frequency,paid_by,created_at,billing_month,billing_start_date,billing_end_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(x.mode,null,x.expenseType,x.description,x.amount,x.expenseDate,"ONE_TIME",x.paidBy??"",nowIso(),x.expenseType==="Electricity"?x.billingMonth:"",x.expenseType==="Electricity"?x.billingStartDate:"",x.expenseType==="Electricity"?x.billingEndDate:"");
       return json({ok:true});
     }
 

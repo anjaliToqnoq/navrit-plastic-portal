@@ -133,7 +133,7 @@ export default function AccountsPage() {
         rows.push({
           date: String(x.expense_date ?? x.payment_date ?? ""),
           type: "Expense",
-          description: x.description || x.expense_type || "Business expense",
+          description: String(x.description ?? x.expense_type ?? "Business expense"),
           person: String(x.paid_by ?? ""),
           amount,
           direction: "out",

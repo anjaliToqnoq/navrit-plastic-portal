@@ -1,20 +1,247 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { AdminShell } from "@/components/admin-shell";
+import { useBusinessMode } from "@/components/business-mode-provider";
+import { ArrowDownLeft, ArrowUpRight, RefreshCw, WalletCards } from "lucide-react";
+
+type Person = "Rahul" | "Nitin" | "Devesh";
+
+const people: Person[] = ["Rahul", "Nitin", "Devesh"];
+
+function money(value: number) {
+  return `₹${Number(value || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function sumBy(rows: any[], field: string, person: Person, mode: string) {
+  return (rows || [])
+    .filter((row) => row.mode === mode && String(row[field] || "") === person)
+    .reduce((total, row) => total + Number(row.amount ?? row.paid_amount ?? row.received_amount ?? 0), 0);
+}
 
 export default function AccountsPage() {
+  const { mode } = useBusinessMode();
+  const [data, setData] = useState<any>(null);
+  const [opening, setOpening] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/inventory", { cache: "no-store" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to load accounts");
+      setData(json);
+      setOpening(String(Number(json.openingBalance?.[mode] || 0)));
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, [mode]);
+
+  async function saveOpeningBalance() {
+    const amount = Number(opening);
+    if (!Number.isFinite(amount) || amount < 0) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/admin/inventory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "setOpeningBalance", mode, amount }),
+      });
+      if (!res.ok) throw new Error((await res.json())?.error || "Failed to save opening balance");
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const companyBalance = Number(data?.cashBalance?.[mode] || 0);
+  const openingBalance = Number(data?.openingBalance?.[mode] || 0);
+
+  const accounts = useMemo(() => {
+    return people.map((person) => {
+      const received = sumBy(data?.salePayments, "received_by", person, mode);
+      const purchasesPaid = sumBy(data?.purchases, "paid_by", person, mode);
+      const expensesPaid = sumBy(data?.otherExpenses, "paid_by", person, mode);
+      const processingPaid = sumBy(data?.processingExpenses, "paid_by", person, mode);
+      const saleProcessingPaid = sumBy(data?.saleProcessingCosts, "paid_by", person, mode);
+      const paid = purchasesPaid + expensesPaid + processingPaid + saleProcessingPaid;
+      return {
+        person,
+        received,
+        paid,
+        balance: received - paid,
+        purchasesPaid,
+        expensesPaid: expensesPaid + processingPaid + saleProcessingPaid,
+      };
+    });
+  }, [data, mode]);
+
+  const transactions = useMemo(() => {
+    const rows: Array<{ date: string; type: string; description: string; person: string; amount: number; direction: "in" | "out" }> = [];
+
+    (data?.salePayments || [])
+      .filter((x: any) => x.mode === mode && x.received_by)
+      .forEach((x: any) => rows.push({
+        date: x.payment_date,
+        type: "Sale receipt",
+        description: x.customerName ? `Sale from ${x.customerName}` : `Sale #${x.sale_id}`,
+        person: x.received_by,
+        amount: Number(x.amount || 0),
+        direction: "in",
+      }));
+
+    (data?.purchases || [])
+      .filter((x: any) => x.mode === mode && x.paid_by && Number(x.paid_amount) > 0)
+      .forEach((x: any) => rows.push({
+        date: x.purchase_date,
+        type: "Purchase payment",
+        description: `Purchase #${x.id} — ${x.material_name}`,
+        person: x.paid_by,
+        amount: Number(x.paid_amount || 0),
+        direction: "out",
+      }));
+
+    [...(data?.otherExpenses || []), ...(data?.processingExpenses || []), ...(data?.saleProcessingCosts || [])]
+      .filter((x: any) => x.mode === mode && x.paid_by && Number(x.amount ?? x.labour_cost ?? x.loading_cost) > 0)
+      .forEach((x: any) => {
+        const amount = Number(x.amount ?? ((x.labour_cost || 0) + (x.loading_cost || 0)));
+        rows.push({
+          date: x.expense_date || x.payment_date,
+          type: "Expense",
+          description: x.description || x.expense_type || "Business expense",
+          person: x.paid_by,
+          amount,
+          direction: "out",
+        });
+      });
+
+    return rows.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 100);
+  }, [data, mode]);
+
   return (
     <AdminShell
       title="Accounts & Finance"
-      subtitle="Finance workspace for PET and Plastic. Detailed finance workflows will be added here."
+      subtitle={`Company and individual money tracking for ${mode}`}
+      actions={
+        <button className="ad-btn ad-btn-ghost" onClick={() => void load()} disabled={loading}>
+          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+          Refresh
+        </button>
+      }
     >
-      <div className="ad-card p-6">
-        <h2 className="text-lg font-semibold">Accounts & Finance</h2>
-        <p className="ad-muted mt-2 text-sm">
-          This section is ready for the finance views and reports. Existing
-          inventory, sales, expenses, purchases and opening-balance workflows
-          remain unchanged.
-        </p>
+      <div className="mb-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+        <div className="ad-card p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="ad-muted text-xs">Opening Balance</p>
+              <p className="mt-1 text-2xl font-bold">{money(openingBalance)}</p>
+              <p className="ad-muted mt-1 text-xs">Starting {mode} company cash</p>
+            </div>
+            <WalletCards size={20} className="text-[var(--ad-accent)]" />
+          </div>
+          <div className="mt-4 flex gap-2">
+            <input
+              className="ad-input min-w-0"
+              type="number"
+              min="0"
+              value={opening}
+              onChange={(e) => setOpening(e.target.value)}
+              placeholder="Opening balance"
+            />
+            <button className="ad-btn ad-btn-primary" onClick={saveOpeningBalance} disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+
+        <div className="ad-card p-4">
+          <p className="ad-muted text-xs">Company Account</p>
+          <p className="mt-1 text-3xl font-bold">{money(companyBalance)}</p>
+          <p className="ad-muted mt-1 text-xs">
+            Consolidated company cash after receipts, payments, borrowings, repayments and expenses.
+          </p>
+        </div>
+      </div>
+
+      <div className="mb-5 grid gap-3 md:grid-cols-3">
+        {accounts.map((account) => (
+          <div key={account.person} className="ad-card p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold">{account.person} Account</p>
+                <p className="ad-muted text-xs">Money handled on behalf of the company</p>
+              </div>
+              <p className="text-xl font-bold">{money(account.balance)}</p>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-lg border border-[var(--ad-border)] p-2">
+                <p className="ad-muted">Received by {account.person}</p>
+                <p className="mt-1 font-semibold">{money(account.received)}</p>
+              </div>
+              <div className="rounded-lg border border-[var(--ad-border)] p-2">
+                <p className="ad-muted">Paid by {account.person}</p>
+                <p className="mt-1 font-semibold">{money(account.paid)}</p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="ad-card p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="font-semibold">Account Transactions</h2>
+            <p className="ad-muted text-xs">Every receipt/payment is attributed to the person recorded as Received By or Paid By.</p>
+          </div>
+          <span className="ad-muted text-xs">{transactions.length} recent entries</span>
+        </div>
+
+        {loading ? (
+          <p className="ad-muted py-8 text-center text-sm">Loading account transactions…</p>
+        ) : transactions.length === 0 ? (
+          <p className="ad-muted py-8 text-center text-sm">No person-attributed transactions found for {mode}.</p>
+        ) : (
+          <div className="ad-table-wrap">
+            <table className="ad-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th>Description</th>
+                  <th>Person</th>
+                  <th>Impact</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transactions.map((tx, index) => (
+                  <tr key={index}>
+                    <td>{tx.date || "—"}</td>
+                    <td>{tx.type}</td>
+                    <td>{tx.description}</td>
+                    <td>{tx.person}</td>
+                    <td className="font-semibold">
+                      <span className="inline-flex items-center gap-1">
+                        {tx.direction === "in" ? <ArrowDownLeft size={13} /> : <ArrowUpRight size={13} />}
+                        {tx.direction === "in" ? "+" : "−"}{money(tx.amount)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </AdminShell>
   );

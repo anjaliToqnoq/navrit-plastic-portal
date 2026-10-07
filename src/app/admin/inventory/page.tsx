@@ -160,9 +160,29 @@ export default function InventoryPage() {
 
   return <AdminShell title={mode + " Inventory & Finance"} subtitle={"Internal " + mode + " inventory, purchases, supplier credit and borrowed funds"}>
     <div>
-    <div className="mb-5 flex flex-wrap items-center gap-2">
-      <span className="ml-2 text-xs text-[var(--ad-muted)]">Current stock: <b>{currentKg.toFixed(2)} kg</b></span>
-      {message && <span className="text-xs text-[var(--ad-accent)]">{message}</span>}
+    <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="ml-2 text-xs text-[var(--ad-muted)]">Current stock: <b>{currentKg.toFixed(2)} kg</b></span>
+        {message && <span className="text-xs text-[var(--ad-accent)]">{message}</span>}
+      </div>
+      <details className="ad-card w-full sm:w-auto sm:min-w-[300px]">
+        <summary className="cursor-pointer list-none p-3">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold">Opening Balance</p>
+              <p className="mt-0.5 text-[11px] text-[var(--ad-muted)]">One-time initial setup · {mode}</p>
+            </div>
+            <p className="text-sm font-bold">₹{Number(data.openingBalance?.[mode]||0).toFixed(2)}</p>
+          </div>
+        </summary>
+        <div className="border-t border-[var(--ad-border)] p-3">
+          <p className="mb-2 text-[11px] text-[var(--ad-muted)]">Use this only for the company cash balance that existed before tracking started. After setup, manage normal transactions from the relevant tabs.</p>
+          <div className="flex gap-2">
+            <input className="ad-input" type="number" min="0" placeholder="Initial company balance" value={openingBalance} onChange={e=>setOpeningBalance(e.target.value)}/>
+            <button className="ad-btn ad-btn-ghost" onClick={saveOpeningBalance}>Save</button>
+          </div>
+        </div>
+      </details>
     </div>
 
     <div className="mb-5 grid gap-3 sm:grid-cols-3">
@@ -213,10 +233,6 @@ export default function InventoryPage() {
         <div className="ad-card p-4"><p className="ad-muted text-xs">Total Sales</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.total_amount||0),0).toFixed(2)}</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Received</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.received_amount||0),0).toFixed(2)}</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Pending</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.credit_amount||0),0).toFixed(2)}</p></div>
-      </div>
-      <div className="ad-card p-4">
-        <h2 className="mb-3 font-semibold">Company Opening Balance</h2>
-        <div className="flex gap-2 max-w-xl"><input className="ad-input" type="number" min="0" placeholder="Opening company balance" value={openingBalance} onChange={e=>setOpeningBalance(e.target.value)}/><button className="ad-btn ad-btn-ghost" onClick={saveOpeningBalance}>Save Balance</button></div>
       </div>
       <div className="ad-card p-4">
         <h2 className="mb-3 font-semibold">{editingSale ? `Edit Sale #${editingSale}` : "Add Sale — One Go / Full Truck"}</h2>

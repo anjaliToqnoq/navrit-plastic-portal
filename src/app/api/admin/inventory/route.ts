@@ -23,7 +23,23 @@ export async function GET() {
 
   const materials = listMaterials(true);
   const suppliers = sqlite.prepare("SELECT * FROM suppliers ORDER BY name").all();
-  const vendorPayments = sqlite.prepare(`SELECT vp.*, s.name as supplierName, s.phone as supplierPhone, s.location as supplierLocation, p.material_name as materialName FROM vendor_payments vp JOIN suppliers s ON s.id=vp.supplier_id LEFT JOIN purchases p ON p.id=vp.purchase_id ORDER BY vp.payment_date DESC, vp.id DESC LIMIT 500`).all();
+  const vendorPayments = sqlite.prepare(`
+    SELECT vp.*,
+           s.name as supplierName,
+           s.phone as supplierPhone,
+           s.location as supplierLocation,
+           p.material_name as materialName,
+           CASE
+             WHEN COALESCE(vp.paid_by, '') <> '' THEN vp.paid_by
+             WHEN vp.purchase_id IS NOT NULL THEN COALESCE(p.paid_by, '')
+             ELSE ''
+           END as paid_by
+    FROM vendor_payments vp
+    JOIN suppliers s ON s.id=vp.supplier_id
+    LEFT JOIN purchases p ON p.id=vp.purchase_id
+    ORDER BY vp.payment_date DESC, vp.id DESC
+    LIMIT 500
+  `).all();
   const lenders = sqlite.prepare("SELECT * FROM lenders ORDER BY name").all();
   const sales = sqlite.prepare("SELECT * FROM sales ORDER BY sale_date DESC, id DESC LIMIT 200").all();
   const saleItems = sqlite.prepare("SELECT * FROM sale_items ORDER BY sale_id, id").all();
@@ -273,7 +289,7 @@ export async function POST(req: NextRequest) {
         s.purchaseDate, s.notes, s.paidBy ?? "", 0, 0, 0, "", nowIso(), nowIso()
       );
       const purchaseId = Number(r.lastInsertRowid);
-      if(cashPaid>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"PURCHASE",cashPaid,s.purchaseDate,"Cash",s.notes,nowIso());
+      if(cashPaid>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"PURCHASE",cashPaid,s.purchaseDate,"Cash",s.notes,s.paidBy ?? "",nowIso());
       if(advanceApplied>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"CREDIT_SETTLEMENT",advanceApplied,s.purchaseDate,"Advance","Advance applied to purchase #"+purchaseId,nowIso());
 
       sqlite.prepare(`
@@ -308,12 +324,12 @@ export async function POST(req: NextRequest) {
         .run(s.materialId ?? null, s.materialName, s.supplierId ?? null, s.purchaseType, s.quantityKg, s.ratePerKg, total, credit, s.purchaseDate, s.paidBy ?? "", s.notes, nowIso(), s.purchaseId, s.mode);
       sqlite.prepare("UPDATE inventory_transactions SET material_id=?, material_name=?, quantity_kg=?, amount=?, transaction_date=?, notes=? WHERE purchase_id=? AND transaction_type='PURCHASE'")
         .run(s.materialId ?? null, s.materialName, s.quantityKg, total, s.purchaseDate, s.notes, s.purchaseId);
-      sqlite.prepare("UPDATE vendor_payments SET payment_date=? WHERE purchase_id=?").run(s.purchaseDate, s.purchaseId);
+      sqlite.prepare("UPDATE vendor_payments SET payment_date=?, paid_by=? WHERE purchase_id=?").run(s.purchaseDate, s.paidBy ?? "", s.purchaseId);
       return json({ ok: true, total, paid: existing.paid_amount, credit });
     }
 
     if (body.action === "payVendor") {
-      const s=z.object({mode:modeSchema,supplierId:z.number().int().positive(),amount:z.number().positive(),paymentDate:dateSchema.optional().default(todayStr()),paymentMode:z.string().trim().min(1).default("Cash"),notes:z.string().trim().optional().default("")}).parse(body);
+      const s=z.object({mode:modeSchema,supplierId:z.number().int().positive(),amount:z.number().positive(),paymentDate:dateSchema.optional().default(todayStr()),paymentMode:z.string().trim().min(1).default("Cash"),paidBy:z.enum(["Rahul","Devesh","Nitin"]).optional(),notes:z.string().trim().optional().default("")}).parse(body);
       const purchases=sqlite.prepare("SELECT id,credit_amount FROM purchases WHERE mode=? AND supplier_id=? AND credit_amount>0 ORDER BY purchase_date ASC,id ASC").all(s.mode,s.supplierId) as Array<{id:number;credit_amount:number}>;
       if(s.amount > purchases.reduce((n,p)=>n+p.credit_amount,0)+0.005) return NextResponse.json({error:"Payment exceeds vendor outstanding balance"},{status:400});
       let rem = s.amount;
@@ -323,7 +339,7 @@ export async function POST(req: NextRequest) {
         sqlite.prepare("UPDATE purchases SET paid_amount=paid_amount+?,credit_amount=credit_amount-?,updated_at=? WHERE id=?").run(use, use, nowIso(), p.id);
         rem -= use;
       }
-      sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?)`).run(s.mode, s.supplierId, "CREDIT_SETTLEMENT", s.amount, s.paymentDate, s.paymentMode, s.notes, nowIso());
+      sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(s.mode, s.supplierId, "CREDIT_SETTLEMENT", s.amount, s.paymentDate, s.paymentMode, s.notes, s.paidBy ?? "", nowIso());
       return json({ok:true});
     }
 
@@ -331,13 +347,14 @@ export async function POST(req: NextRequest) {
       const s = z.object({
         purchaseId: z.number().int().positive(),
         amount: z.number().positive(),
+        paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
       }).parse(body);
       const p = sqlite.prepare("SELECT credit_amount, mode, supplier_id FROM purchases WHERE id=?").get(s.purchaseId) as { credit_amount:number; mode:string; supplier_id:number } | undefined;
       if (!p) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
       if (s.amount > p.credit_amount + 0.005) return NextResponse.json({ error: "Payment exceeds outstanding credit" }, { status: 400 });
       sqlite.prepare("UPDATE purchases SET paid_amount=paid_amount+?, credit_amount=credit_amount-?, updated_at=? WHERE id=?")
         .run(s.amount, s.amount, nowIso(), s.purchaseId);
-      sqlite.prepare("INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(p.mode,p.supplier_id,s.purchaseId,"CREDIT_SETTLEMENT",s.amount,todayStr(),"Cash","Purchase credit payment",nowIso());
+      sqlite.prepare("INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)").run(p.mode,p.supplier_id,s.purchaseId,"CREDIT_SETTLEMENT",s.amount,todayStr(),"Cash","Purchase credit payment",s.paidBy ?? "",nowIso());
       return json({ ok: true });
     }
 

@@ -6,6 +6,16 @@ import { useBusinessMode } from "@/components/business-mode-provider";
 import { ArrowDownLeft, ArrowUpRight, RefreshCw, WalletCards } from "lucide-react";
 
 type Person = "Rahul" | "Nitin" | "Devesh";
+type Row = { [key: string]: string | number | null | undefined };
+type AccountsData = {
+  openingBalance?: Record<string, number>;
+  cashBalance?: Record<string, number>;
+  salePayments?: Row[];
+  purchases?: Row[];
+  otherExpenses?: Row[];
+  processingExpenses?: Row[];
+  saleProcessingCosts?: Row[];
+};
 
 const people: Person[] = ["Rahul", "Nitin", "Devesh"];
 
@@ -16,7 +26,7 @@ function money(value: number) {
   })}`;
 }
 
-function sumBy(rows: any[], field: string, person: Person, mode: string, amountField = "amount") {
+function sumBy(rows: Row[] | undefined, field: string, person: Person, mode: string, amountField = "amount") {
   return (rows || [])
     .filter((row) => row.mode === mode && String(row[field] || "") === person)
     .reduce((total, row) => total + Number(row[amountField] ?? row.amount ?? 0), 0);
@@ -24,7 +34,7 @@ function sumBy(rows: any[], field: string, person: Person, mode: string, amountF
 
 export default function AccountsPage() {
   const { mode } = useBusinessMode();
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<AccountsData | null>(null);
   const [opening, setOpening] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -75,8 +85,8 @@ export default function AccountsPage() {
       const expensesPaid = sumBy(data?.otherExpenses, "paid_by", person, mode);
       const processingPaid = sumBy(data?.processingExpenses, "paid_by", person, mode);
       const saleProcessingPaid = (data?.saleProcessingCosts || [])
-        .filter((row: any) => row.mode === mode && String(row.paid_by || "") === person)
-        .reduce((total: number, row: any) => total + Number(row.labour_cost || 0) + Number(row.loading_cost || 0), 0);
+        .filter((row) => row.mode === mode && String(row.paid_by || "") === person)
+        .reduce((total, row) => total + Number(row.labour_cost || 0) + Number(row.loading_cost || 0), 0);
       const paid = purchasesPaid + expensesPaid + processingPaid + saleProcessingPaid;
       return {
         person,
@@ -93,8 +103,8 @@ export default function AccountsPage() {
     const rows: Array<{ date: string; type: string; description: string; person: string; amount: number; direction: "in" | "out" }> = [];
 
     (data?.salePayments || [])
-      .filter((x: any) => x.mode === mode && x.received_by)
-      .forEach((x: any) => rows.push({
+      .filter((x) => x.mode === mode && x.received_by)
+      .forEach((x) => rows.push({
         date: x.payment_date,
         type: "Sale receipt",
         description: x.customerName ? `Sale from ${x.customerName}` : `Sale #${x.sale_id}`,
@@ -104,8 +114,8 @@ export default function AccountsPage() {
       }));
 
     (data?.purchases || [])
-      .filter((x: any) => x.mode === mode && x.paid_by && Number(x.paid_amount) > 0)
-      .forEach((x: any) => rows.push({
+      .filter((x) => x.mode === mode && x.paid_by && Number(x.paid_amount) > 0)
+      .forEach((x) => rows.push({
         date: x.purchase_date,
         type: "Purchase payment",
         description: `Purchase #${x.id} — ${x.material_name}`,
@@ -115,8 +125,8 @@ export default function AccountsPage() {
       }));
 
     [...(data?.otherExpenses || []), ...(data?.processingExpenses || []), ...(data?.saleProcessingCosts || [])]
-      .filter((x: any) => x.mode === mode && x.paid_by && Number(x.amount ?? x.labour_cost ?? x.loading_cost) > 0)
-      .forEach((x: any) => {
+      .filter((x) => x.mode === mode && x.paid_by && Number(x.amount ?? x.labour_cost ?? x.loading_cost) > 0)
+      .forEach((x) => {
         const amount = Number(x.amount ?? ((x.labour_cost || 0) + (x.loading_cost || 0)));
         rows.push({
           date: x.expense_date || x.payment_date,

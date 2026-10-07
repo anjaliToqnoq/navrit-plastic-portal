@@ -30,7 +30,7 @@ const navByMode = {
     { href: "/admin", label: "PET Dashboard", icon: LayoutDashboard },
     { href: "/admin/inventory", label: "PET Inventory & Finance", icon: Package },
     { href: "/admin/vendors", label: "Vendors & Management", icon: Users },
-    { href: "/admin/analytics", label: "PET Analytics", icon: BarChart3 },
+    { href: "/admin/analytics", label: "PET Analytics", icon: BarChart3 },\n    { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
     { href: "/admin/reports", label: "PET Reports", icon: Download },
     { href: "/admin/report-analysis", label: "PET Month Analysis", icon: LineChart },
     { href: "/admin/backup", label: "Backup", icon: HardDrive },
@@ -38,7 +38,7 @@ const navByMode = {
   PLASTIC: [
     { href: "/admin", label: "Plastic Dashboard", icon: LayoutDashboard },
     { href: "/admin/inventory", label: "Plastic Inventory & Finance", icon: Package },
-    { href: "/admin/analytics", label: "Plastic Analytics", icon: BarChart3 },
+    { href: "/admin/analytics", label: "Plastic Analytics", icon: BarChart3 },\n    { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
     { href: "/admin/reports", label: "Plastic Reports", icon: Download },
     { href: "/admin/report-analysis", label: "Plastic Month Analysis", icon: LineChart },
     { href: "/admin/backup", label: "Backup", icon: HardDrive },

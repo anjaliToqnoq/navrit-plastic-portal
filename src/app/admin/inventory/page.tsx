@@ -102,7 +102,7 @@ export default function InventoryPage() {
   async function addExpense() {
     const amount=Number(expense.amount||0);
     if(amount<=0) { setMessage("Enter a valid expense amount"); return; }
-    const ok=await post("addOtherExpense",{mode,expenseType:expense.expenseType,description:expense.description,amount,expenseDate:expense.expenseDate,billingMonth:expense.expenseType==="Electricity"?expense.billingMonth:"",billingStartDate:expense.expenseType==="Electricity"?expense.billingStartDate:"",billingEndDate:expense.expenseType==="Electricity"?expense.billingEndDate:"",paidBy:expense.paidBy||undefined});
+    const ok=await post("addOtherExpense",{mode,expenseType:expense.expenseType,description:expense.description,amount,expenseDate:expense.expenseDate,...(expense.expenseType==="Electricity"?{billingMonth:expense.billingMonth,billingStartDate:expense.billingStartDate,billingEndDate:expense.billingEndDate}:{}),paidBy:expense.paidBy||undefined});
     if(ok) setExpense({expenseType:"Electricity",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),billingMonth:new Date().toISOString().slice(0,7),billingStartDate:"",billingEndDate:"",paidBy:""});
   }
 

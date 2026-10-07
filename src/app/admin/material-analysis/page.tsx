@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { AdminShell, adminToast } from "@/components/admin-shell";
 import { useBusinessMode } from "@/components/business-mode-provider";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";

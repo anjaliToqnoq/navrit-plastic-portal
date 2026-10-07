@@ -170,9 +170,9 @@ export async function POST(req: NextRequest) {
         description: z.string().trim().optional().default(""),
         amount: z.number().positive(),
         expenseDate: dateSchema.optional().default(todayStr()),
-        billingMonth: z.string().regex(/^\d{4}-\d{2}$/).optional().default(""),
-        billingStartDate: dateSchema.optional().default(""),
-        billingEndDate: dateSchema.optional().default(""),
+        billingMonth: z.string().optional(),
+        billingStartDate: dateSchema.optional(),
+        billingEndDate: dateSchema.optional(),
         paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional()
       }).parse(body);
       if (x.expenseType === "Electricity" && ((x.billingStartDate && !x.billingEndDate) || (!x.billingStartDate && x.billingEndDate))) {

@@ -32,6 +32,7 @@ export async function GET() {
   const processingBatchItems = sqlite.prepare("SELECT * FROM processing_batch_items ORDER BY batch_id, id").all();
   const processingExpenses = sqlite.prepare("SELECT * FROM processing_expenses ORDER BY expense_date DESC, id DESC LIMIT 500").all();
   const saleProcessingCosts = sqlite.prepare("SELECT * FROM sale_processing_costs ORDER BY payment_date DESC, id DESC LIMIT 500").all();
+  const otherExpenses = sqlite.prepare("SELECT * FROM other_expenses WHERE mode IN ('PET','PLASTIC') ORDER BY expense_date DESC, id DESC LIMIT 500").all();
 
   const inventory = sqlite.prepare(`
     SELECT mode, material_id as materialId, material_name as materialName,
@@ -112,11 +113,12 @@ export async function GET() {
     const borrowed = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM borrowings WHERE mode=?").get(m) as any)?.n || 0);
     const repaid = Number((sqlite.prepare("SELECT COALESCE(SUM(br.amount),0) as n FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id WHERE b.mode=?").get(m) as any)?.n || 0);
     const monthlyProcessing = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=?").get(m) as any)?.n || 0);
-    return Math.round((opening + received - paidVendors + borrowed - repaid - monthlyProcessing) * 100) / 100;
+    const otherExpenses = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=?").get(m) as any)?.n || 0);
+    return Math.round((opening + received - paidVendors + borrowed - repaid - monthlyProcessing - otherExpenses) * 100) / 100;
   };
   const openingBalance = { PET: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PET'").get() as any)?.n || 0), PLASTIC: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PLASTIC'").get() as any)?.n || 0) };
 
-  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, saleItems, salePayments, processingBatches, processingBatchItems, processingExpenses, saleProcessingCosts, totals, openingBalance, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });
+  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, saleItems, salePayments, processingBatches, processingBatchItems, processingExpenses, saleProcessingCosts, otherExpenses, totals, openingBalance, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });
 }
 
 export async function POST(req: NextRequest) {
@@ -162,12 +164,16 @@ export async function POST(req: NextRequest) {
 
     if (body.action === "addOtherExpense") {
       const x = z.object({
-        mode: modeSchema, purchaseId: z.number().int().positive().optional(), expenseType: z.string().trim().min(1),
-        description: z.string().trim().optional().default(""), amount: z.number().nonnegative(),
-        expenseDate: dateSchema.optional().default(todayStr())
+        mode: modeSchema,
+        expenseType: z.enum(["Electricity","Thread","GST / Admin","Infrastructure / Maintenance","Other"]),
+        expenseFrequency: z.enum(["MONTHLY","ONE_TIME"]).default("ONE_TIME"),
+        description: z.string().trim().optional().default(""),
+        amount: z.number().positive(),
+        expenseDate: dateSchema.optional().default(todayStr()),
+        paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional()
       }).parse(body);
-      sqlite.prepare(`INSERT INTO other_expenses (mode,purchase_id,expense_type,description,amount,expense_date,created_at) VALUES (?,?,?,?,?,?,?)`)
-        .run(x.mode,x.purchaseId??null,x.expenseType,x.description,x.amount,x.expenseDate,nowIso());
+      sqlite.prepare(`INSERT INTO other_expenses (mode,purchase_id,expense_type,description,amount,expense_date,expense_frequency,paid_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)`)
+        .run(x.mode,null,x.expenseType,x.description,x.amount,x.expenseDate,x.expenseFrequency,x.paidBy??"",nowIso());
       return json({ok:true});
     }
 

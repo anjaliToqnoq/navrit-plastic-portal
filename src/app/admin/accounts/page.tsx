@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminShell } from "@/components/admin-shell";
 import { useBusinessMode } from "@/components/business-mode-provider";
 import { ArrowDownLeft, ArrowUpRight, RefreshCw, WalletCards } from "lucide-react";
@@ -16,10 +16,10 @@ function money(value: number) {
   })}`;
 }
 
-function sumBy(rows: any[], field: string, person: Person, mode: string) {
+function sumBy(rows: any[], field: string, person: Person, mode: string, amountField = "amount") {
   return (rows || [])
     .filter((row) => row.mode === mode && String(row[field] || "") === person)
-    .reduce((total, row) => total + Number(row.amount ?? row.paid_amount ?? row.received_amount ?? 0), 0);
+    .reduce((total, row) => total + Number(row[amountField] ?? row.amount ?? 0), 0);
 }
 
 export default function AccountsPage() {
@@ -29,7 +29,7 @@ export default function AccountsPage() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch("/api/admin/inventory", { cache: "no-store" });
@@ -42,11 +42,11 @@ export default function AccountsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [mode]);
 
   useEffect(() => {
     void load();
-  }, [mode]);
+  }, [load]);
 
   async function saveOpeningBalance() {
     const amount = Number(opening);
@@ -74,7 +74,9 @@ export default function AccountsPage() {
       const purchasesPaid = sumBy(data?.purchases, "paid_by", person, mode);
       const expensesPaid = sumBy(data?.otherExpenses, "paid_by", person, mode);
       const processingPaid = sumBy(data?.processingExpenses, "paid_by", person, mode);
-      const saleProcessingPaid = sumBy(data?.saleProcessingCosts, "paid_by", person, mode);
+      const saleProcessingPaid = (data?.saleProcessingCosts || [])
+        .filter((row: any) => row.mode === mode && String(row.paid_by || "") === person)
+        .reduce((total: number, row: any) => total + Number(row.labour_cost || 0) + Number(row.loading_cost || 0), 0);
       const paid = purchasesPaid + expensesPaid + processingPaid + saleProcessingPaid;
       return {
         person,

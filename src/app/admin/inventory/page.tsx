@@ -229,7 +229,6 @@ export default function InventoryPage() {
     {tab==="sales" && <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="ad-card p-4"><p className="ad-muted text-xs">Company Balance</p><p className="mt-1 text-2xl font-bold">₹{Number(data.cashBalance?.[mode]||0).toFixed(2)}</p></div>
-        <div className="ad-card p-4"><p className="ad-muted text-xs">Opening Balance</p><p className="mt-1 text-2xl font-bold">₹{Number(data.openingBalance?.[mode]||0).toFixed(2)}</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Total Sales</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.total_amount||0),0).toFixed(2)}</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Received</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.received_amount||0),0).toFixed(2)}</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Pending</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.credit_amount||0),0).toFixed(2)}</p></div>

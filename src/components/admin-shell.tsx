@@ -22,15 +22,17 @@ import {
   HardDrive,
   LineChart,
   Users,
+  WalletCards,
 } from "lucide-react";
 import "@/app/admin-theme.css";
 
 const navByMode = {
   PET: [
     { href: "/admin", label: "PET Dashboard", icon: LayoutDashboard },
-    { href: "/admin/inventory", label: "PET Inventory & Finance", icon: Package },
+    { href: "/admin/inventory", label: "PET Inventory", icon: Package },
     { href: "/admin/vendors", label: "Vendors & Management", icon: Users },
     { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
+    { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
   ],
   PLASTIC: [
     { href: "/admin", label: "Plastic Dashboard", icon: LayoutDashboard },
@@ -40,6 +42,7 @@ const navByMode = {
     { href: "/admin/reports", label: "Plastic Reports", icon: Download },
     { href: "/admin/report-analysis", label: "Plastic Month Analysis", icon: LineChart },
     { href: "/admin/backup", label: "Backup", icon: HardDrive },
+    { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
   ],
 } as const;
 
@@ -133,7 +136,6 @@ export function AdminShell({
   return (
     <div className={clsx("admin-app", !dark && "admin-light")}>
       <div className="flex min-h-screen">
-        {/* Sidebar desktop */}
         <aside className="ad-sidebar sticky top-0 hidden h-screen w-60 shrink-0 flex-col lg:flex">
           <div className="flex items-center gap-2.5 px-4 py-5">
             <span className="flex size-8 items-center justify-center rounded-lg bg-[var(--ad-accent)] text-sm font-bold text-[#052e16]">
@@ -165,7 +167,6 @@ export function AdminShell({
           </div>
         </aside>
 
-        {/* Mobile drawer */}
         {sidebarOpen && (
           <div className="fixed inset-0 z-50 lg:hidden">
             <button
@@ -296,7 +297,6 @@ export function AdminShell({
         </div>
       </div>
 
-      {/* Command palette */}
       {cmdOpen && (
         <div className="ad-cmd" onClick={() => setCmdOpen(false)}>
           <div className="ad-cmd-panel" onClick={(e) => e.stopPropagation()}>

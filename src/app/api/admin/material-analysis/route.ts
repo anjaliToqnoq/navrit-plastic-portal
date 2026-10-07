@@ -55,9 +55,15 @@ export async function GET(req: NextRequest) {
   `).all(mode,from,to) as any[];
 
   const otherExpenses = sqlite.prepare(`
-    SELECT * FROM other_expenses WHERE mode=? AND expense_date BETWEEN ? AND ?
-    ORDER BY expense_date DESC, id DESC
-  `).all(mode,from,to) as any[];
+    SELECT * FROM other_expenses
+    WHERE mode=?
+      AND (
+        (expense_type='Electricity' AND billing_month BETWEEN substr(?,1,7) AND substr(?,1,7))
+        OR
+        (expense_type!='Electricity' AND expense_date BETWEEN ? AND ?)
+      )
+    ORDER BY COALESCE(NULLIF(billing_month,''), substr(expense_date,1,7)) DESC, id DESC
+  `).all(mode,from,to,from,to) as any[];
 
   const inventory = sqlite.prepare(`
     SELECT material_name, ROUND(SUM(quantity_kg),3) quantity_kg, ROUND(SUM(amount),2) value

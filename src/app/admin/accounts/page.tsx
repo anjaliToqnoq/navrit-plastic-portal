@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminShell } from "@/components/admin-shell";
 import { useBusinessMode } from "@/components/business-mode-provider";
+import { ACCOUNT_PERSONS, type AccountPerson } from "@/lib/account-persons";
 import { ArrowDownLeft, ArrowUpRight, RefreshCw, WalletCards } from "lucide-react";
 
-type Person = "Rahul" | "Nitin" | "Devesh";
+type Person = AccountPerson;
 type Row = Record<string, unknown>;
 type AccountsData = {
   openingBalance?: Record<string, number>;
-  personAccountTotals?: Record<string, Record<string, { received:number; purchasesPaid:number; expensesPaid:number; processingPaid:number; saleProcessingPaid:number; paid:number; balance:number }>>;
+  personAccountTotals?: Record<string, Record<string, { received:number; purchasesPaid:number; expensesPaid:number; processingPaid:number; saleProcessingPaid:number; labourPaid?:number; paid:number; balance:number }>>;
   cashBalance?: Record<string, number>;
   salePayments?: Row[];
   purchases?: Row[];
@@ -17,9 +18,10 @@ type AccountsData = {
   otherExpenses?: Row[];
   processingExpenses?: Row[];
   saleProcessingCosts?: Row[];
+  manualLabour?: Row[];
 };
 
-const people: Person[] = ["Rahul", "Nitin", "Devesh"];
+const people: Person[] = [...ACCOUNT_PERSONS];
 
 function money(value: number) {
   return `₹${Number(value || 0).toLocaleString("en-IN", {
@@ -90,7 +92,11 @@ export default function AccountsPage() {
           paid: Number(serverTotals.paid || 0),
           balance: Number(serverTotals.balance || 0),
           purchasesPaid: Number(serverTotals.purchasesPaid || 0),
-          expensesPaid: Number(serverTotals.expensesPaid || 0) + Number(serverTotals.processingPaid || 0) + Number(serverTotals.saleProcessingPaid || 0),
+          expensesPaid:
+            Number(serverTotals.expensesPaid || 0) +
+            Number(serverTotals.processingPaid || 0) +
+            Number(serverTotals.saleProcessingPaid || 0) +
+            Number(serverTotals.labourPaid || 0),
         };
       }
 
@@ -108,14 +114,15 @@ export default function AccountsPage() {
       const saleProcessingPaid = (data?.saleProcessingCosts || [])
         .filter((row) => row.mode === mode && String(row.paid_by || "") === person)
         .reduce((total, row) => total + Number(row.labour_cost || 0) + Number(row.loading_cost || 0), 0);
-      const paid = purchasesPaid + expensesPaid + processingPaid + saleProcessingPaid;
+      const labourPaid = sumBy(data?.manualLabour, "paid_by", person, mode);
+      const paid = purchasesPaid + expensesPaid + processingPaid + saleProcessingPaid + labourPaid;
       return {
         person,
         received,
         paid,
         balance: received - paid,
         purchasesPaid,
-        expensesPaid: expensesPaid + processingPaid + saleProcessingPaid,
+        expensesPaid: expensesPaid + processingPaid + saleProcessingPaid + labourPaid,
       };
     });
   }, [data, mode]);
@@ -160,6 +167,17 @@ export default function AccountsPage() {
           direction: "out",
         });
       });
+
+    (data?.manualLabour || [])
+      .filter((x) => x.mode === mode && x.paid_by && Number(x.amount) > 0)
+      .forEach((x) => rows.push({
+        date: String(x.payment_date ?? ""),
+        type: "Labour wage",
+        description: `${x.workerName || "Worker"} — ${x.task_type || "Labour"}`,
+        person: String(x.paid_by ?? ""),
+        amount: Number(x.amount || 0),
+        direction: "out",
+      }));
 
     return rows.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 100);
   }, [data, mode]);
@@ -221,11 +239,11 @@ export default function AccountsPage() {
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
               <div className="rounded-lg border border-[var(--ad-border)] p-2">
-                <p className="ad-muted">Received by {account.person}</p>
+                <p className="ad-muted">Received by</p>
                 <p className="mt-1 font-semibold">{money(account.received)}</p>
               </div>
               <div className="rounded-lg border border-[var(--ad-border)] p-2">
-                <p className="ad-muted">Paid by {account.person}</p>
+                <p className="ad-muted">Payment done by</p>
                 <p className="mt-1 font-semibold">{money(account.paid)}</p>
               </div>
             </div>
@@ -237,7 +255,7 @@ export default function AccountsPage() {
         <div className="mb-3 flex items-center justify-between">
           <div>
             <h2 className="font-semibold">Account Transactions</h2>
-            <p className="ad-muted text-xs">Every receipt/payment is attributed to the person recorded as Received By or Paid By.</p>
+            <p className="ad-muted text-xs">Every receipt/payment uses the same person list as inventory & labour (Received by / Payment done by).</p>
           </div>
           <span className="ad-muted text-xs">{transactions.length} recent entries</span>
         </div>

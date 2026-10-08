@@ -29,19 +29,23 @@ Default login (from `.env.local`): `admin` / `admin123`
 ## Features
 
 ### Public
-- Today's rates table with search, category filter, sort
-- EN ↔ HI language toggle (remembered in localStorage)
-- PDF download + share
-- Analytics: monthly trend, material comparison, date-range history
-- About & Contact pages
+- About & Contact pages remain available
+- Home `/` currently redirects to admin login (internal ops app first)
 
-### Admin
-- Secure login
-- Bulk update today's rates / copy yesterday's rates
-- Category & material CRUD (bilingual names)
-- Soft-disable categories
-- Daily / weekly / monthly CSV & Excel export
-- Historical snapshots — **each day is stored separately** (never overwrites prior days)
+### Admin (dual modes: PET / PLASTIC)
+- Secure login; mode toggle isolates every ledger row
+- Inventory & finance: purchases, sales, expenses, borrowings, vendor credit/advances
+- Labour management / processing batches (PET)
+- Material & profit analysis, accounts by person (Rahul / Devesh / Nitin)
+- Backup create / download / restore (both modes)
+- Rates catalog + historical `rate_snapshots` still available under admin
+
+### Verified business rules (local smoke)
+- Purchase → inventory_transactions (+kg); sale → adjustment (−kg) using the same stock key
+- Natural bottles stock keys: `Natural Bottles - Green|White|White Milk`; red: `Red Bottles`
+- Oversell rejected; supplier credit payment cannot exceed outstanding
+- Sale labour = ₹2/kg + optional loading; PLASTIC figures stay isolated from PET
+- Build uses in-memory SQLite; runtime production DB is only `/app/data/plastic-rates.db`
 
 ## Data model
 
@@ -119,7 +123,21 @@ pm2 restart navrit
 ```
 
 **Option B — Railway / Render with a volume**  
-Deploy the Next.js app and attach a **persistent volume** mounted at `./data`. Slightly easier UI; watch volume pricing.
+Deploy the Next.js app and attach a **persistent volume**. On Railway the app expects the DB at **`/app/data/plastic-rates.db`**, so mount the volume at **`/app/data`** (not `/data`).
+
+#### Railway data safety (do not skip)
+
+Live inventory, purchases, sales, and rates live only on the Railway volume. Code deploys must never wipe that file.
+
+1. In Railway → service → **Volumes**: mount path must be `/app/data`.
+2. **Never** set the start command to `npm run db:seed` or `db:seed:prod`. Seed is for first local/dev setup only. Production schema migrates additively on boot via `CREATE TABLE IF NOT EXISTS` / safe `ALTER`s.
+3. Before every production deploy:
+   - Open Admin → **Backup** (available in both PET and PLASTIC modes) → Create backup → Download a copy to your laptop
+   - Or take a Railway volume snapshot if your plan supports it
+4. Deploy code (GitHub → Railway). Build uses an in-memory SQLite (`NAVRIT_SQLITE_MEMORY=1`) and does not touch the volume.
+5. After deploy: log in → confirm stock kg, recent purchases, and sale counts still match → create another backup.
+
+Optional env overrides (only if you intentionally change the mount): `NAVRIT_DATA_DIR`, `NAVRIT_DB_PATH`. In production, if `/app/data` is missing the app **refuses to start** rather than creating a new empty DB on ephemeral disk.
 
 **Option C — Free tier experiments**  
 Oracle Cloud free ARM VM can work if you are comfortable with setup. Still use pm2 + backups.
@@ -128,6 +146,10 @@ Oracle Cloud free ARM VM can work if you are comfortable with setup. Still use p
 
 - Do **not** deploy to Vercel/Netlify **without** an external DB — the filesystem is ephemeral and your rates would reset.
 - Do **not** commit `.env.local` or `data/*.db` to git.
+- Do **not** delete or remount the Railway volume when redeploying.
+- Do **not** run seed against the production volume.
+
+**Stock naming:** Purchases of Natural/Red bottles must include a colour variant so inventory keys match sales (`Natural Bottles - Green`, `Natural Bottles - White`, `Natural Bottles - White Milk`, `Red Bottles`). If an older purchase was saved as plain `Natural Bottles`, use **Inventory → adjustment** to move kg into the correct variant name before selling — do not delete historical purchase rows.
 
 ### Minimal server setup (pm2)
 

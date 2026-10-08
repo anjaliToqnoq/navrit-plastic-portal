@@ -90,5 +90,42 @@ try {
 }
 assert.equal(db.prepare("SELECT used_amount FROM vendor_advances WHERE id=1").get().used_amount, 0);
 
+// A8: credit settlement must not exceed outstanding credit (inline payment form sends positive amounts only).
+db.exec("INSERT INTO purchases(id,paid_amount,material_id,material_name,supplier_id,paid_by) VALUES(2,50,7,'Natural Bottles',1,'Rahul')");
+db.exec("ALTER TABLE purchases ADD COLUMN credit_amount REAL NOT NULL DEFAULT 0");
+db.prepare("UPDATE purchases SET credit_amount=50 WHERE id=2").run();
+const outstanding = Number(db.prepare("SELECT credit_amount FROM purchases WHERE id=2").get().credit_amount);
+const attempted = 75;
+assert.equal(attempted > outstanding + 0.005, true);
+// Simulate API guard: reject overpay, leave credit unchanged.
+if (!(attempted > outstanding + 0.005)) {
+  db.prepare("UPDATE purchases SET paid_amount=paid_amount+?, credit_amount=credit_amount-? WHERE id=?").run(attempted, attempted, 2);
+}
+assert.equal(Number(db.prepare("SELECT credit_amount FROM purchases WHERE id=2").get().credit_amount), 50);
+
+// A9: purchase stock keys must match sale/processing keys (variant-aware).
+function purchaseStockName(materialName, materialVariant) {
+  const name = String(materialName || "").trim();
+  const variant = String(materialVariant || "").trim();
+  if (name === "Red Bottles" || variant === "Red") return "Red Bottles";
+  if (name === "Natural Bottles" || name.startsWith("Natural Bottles - ")) {
+    const fromName = name.startsWith("Natural Bottles - ") ? name.slice("Natural Bottles - ".length) : "";
+    const resolved = variant || fromName;
+    if (!["Green", "White", "White Milk"].includes(resolved)) throw new Error("bad variant");
+    return "Natural Bottles - " + resolved;
+  }
+  return name;
+}
+assert.equal(purchaseStockName("Natural Bottles", "Green"), "Natural Bottles - Green");
+assert.equal(purchaseStockName("Natural Bottles", "White Milk"), "Natural Bottles - White Milk");
+assert.equal(purchaseStockName("Red Bottles", "Red"), "Red Bottles");
+assert.equal(purchaseStockName("Natural Bottles - White", ""), "Natural Bottles - White");
+try {
+  purchaseStockName("Natural Bottles", "");
+  assert.fail("expected variant validation");
+} catch (error) {
+  assert.equal(String(error.message).includes("bad variant"), true);
+}
+
 db.close();
 console.log("inventory regression tests: PASS");

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getSession } from "@/lib/auth";
 import { sqlite } from "@/db";
 import { listMaterials, nowIso, todayStr } from "@/lib/rates";
+import { ACCOUNT_PERSONS, optionalAccountPersonSchema } from "@/lib/account-persons";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,28 @@ function withTransaction<T>(fn: () => T): T {
 
 function saleMaterialName(materialCategory: string, materialVariant: string) {
   return materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + materialVariant;
+}
+
+/** Normalize purchase category + variant into the same stock key sales/processing use. */
+function purchaseStockName(materialName: string, materialVariant: string) {
+  const name = materialName.trim();
+  const variant = materialVariant.trim();
+  if (name === "Red Bottles" || variant === "Red") {
+    if (variant && variant !== "Red") {
+      throw new Error("Red Bottles must use the Red variant");
+    }
+    return "Red Bottles";
+  }
+  if (name === "Natural Bottles" || name.startsWith("Natural Bottles - ")) {
+    const fromName = name.startsWith("Natural Bottles - ") ? name.slice("Natural Bottles - ".length) : "";
+    const resolved = variant || fromName;
+    if (!["Green", "White", "White Milk"].includes(resolved)) {
+      throw new Error("Natural Bottles require Green, White, or White Milk variant");
+    }
+    return "Natural Bottles - " + resolved;
+  }
+  // Legacy free-text materials keep their purchased name as the stock key.
+  return name;
 }
 
 function getAvailableStock(mode: string, materialName: string, date: string, excludeSaleId?: number) {
@@ -184,17 +207,18 @@ export async function GET() {
   const openingBalance = { PET: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PET'").get() as any)?.n || 0), PLASTIC: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PLASTIC'").get() as any)?.n || 0) };
 
   const personAccountTotals: Record<string, Record<string, {
-    received:number; purchasesPaid:number; expensesPaid:number; processingPaid:number; saleProcessingPaid:number; paid:number; balance:number;
+    received:number; purchasesPaid:number; expensesPaid:number; processingPaid:number; saleProcessingPaid:number; labourPaid:number; paid:number; balance:number;
   }>> = { PET: {}, PLASTIC: {} };
   for (const mode of ["PET","PLASTIC"]) {
-    for (const person of ["Rahul","Nitin","Devesh"]) {
+    for (const person of ACCOUNT_PERSONS) {
       const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=? AND received_by=?").get(mode,person) as any)?.n || 0);
       const purchasesPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(vp.amount),0) as n FROM vendor_payments vp LEFT JOIN purchases p ON p.id=vp.purchase_id WHERE vp.mode=? AND COALESCE(NULLIF(vp.paid_by,''), p.paid_by, '')=? AND vp.payment_type<>'ADVANCE' AND COALESCE(vp.payment_mode,'')<>'Advance'").get(mode,person) as any)?.n || 0);
       const expensesPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
       const processingPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
       const saleProcessingPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
-      const paid = purchasesPaid + expensesPaid + processingPaid + saleProcessingPaid;
-      personAccountTotals[mode][person] = { received, purchasesPaid, expensesPaid, processingPaid, saleProcessingPaid, paid, balance: received - paid };
+      const labourPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
+      const paid = purchasesPaid + expensesPaid + processingPaid + saleProcessingPaid + labourPaid;
+      personAccountTotals[mode][person] = { received, purchasesPaid, expensesPaid, processingPaid, saleProcessingPaid, labourPaid, paid, balance: received - paid };
     }
   }
 
@@ -253,7 +277,7 @@ export async function POST(req: NextRequest) {
         billingMonth: z.string().optional(),
         billingStartDate: z.union([dateSchema, z.literal("")]).optional(),
         billingEndDate: z.union([dateSchema, z.literal("")]).optional(),
-        paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional()
+        paidBy: optionalAccountPersonSchema
       }).parse(body);
       const billingMonth = x.expenseType === "Electricity" ? (x.billingMonth ?? "") : "";
       const billingStartDate = x.expenseType === "Electricity" ? (x.billingStartDate ?? "") : "";
@@ -311,12 +335,13 @@ export async function POST(req: NextRequest) {
         mode: modeSchema,
         materialId: z.number().int().positive().optional(),
         materialName: z.string().trim().min(1),
+        materialVariant: z.string().trim().optional().default(""),
         supplierId: z.number().int().positive().optional(),
         purchaseType: z.enum(["NORMAL", "SUPPLIER_CREDIT", "BORROWED_FUND"]),
         quantityKg: z.number().positive(),
         ratePerKg: z.number().nonnegative(),
         paidAmount: z.number().nonnegative().optional(),
-        paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
+        paidBy: optionalAccountPersonSchema,
         lenderId: z.number().int().positive().optional(),
         borrowingId: z.number().int().positive().optional(),
         purchaseDate: dateSchema.optional().default(todayStr()),
@@ -333,6 +358,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Borrowing account is required for borrowed-fund purchase" }, { status: 400 });
       }
 
+      let stockName: string;
+      try {
+        stockName = purchaseStockName(s.materialName, s.materialVariant);
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid material variant" }, { status: 400 });
+      }
+      const variant = stockName === "Red Bottles" ? "Red" : stockName.startsWith("Natural Bottles - ") ? stockName.slice("Natural Bottles - ".length) : s.materialVariant;
+
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
       let cashPaid = s.paidAmount ?? 0;
       if (cashPaid > total) cashPaid = total;
@@ -347,9 +380,9 @@ export async function POST(req: NextRequest) {
          total_amount, paid_amount, credit_amount, lender_id, borrowing_id, purchase_date, notes, paid_by, transport_charges, weight_charges, labour_charges, material_variant, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        s.mode, s.materialId ?? null, s.materialName, s.supplierId ?? null, s.purchaseType,
+        s.mode, s.materialId ?? null, stockName, s.supplierId ?? null, s.purchaseType,
         s.quantityKg, s.ratePerKg, total, paid, credit, s.lenderId ?? null, s.borrowingId ?? null,
-        s.purchaseDate, s.notes, s.paidBy ?? "", 0, 0, 0, "", nowIso(), nowIso()
+        s.purchaseDate, s.notes, s.paidBy ?? "", 0, 0, 0, variant, nowIso(), nowIso()
       );
       const purchaseId = Number(r.lastInsertRowid);
       if(cashPaid>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"PURCHASE",cashPaid,s.purchaseDate,"Cash",s.notes,s.paidBy ?? "",nowIso());
@@ -359,9 +392,9 @@ export async function POST(req: NextRequest) {
         INSERT INTO inventory_transactions
         (mode, material_id, material_name, transaction_type, quantity_kg, amount, purchase_id, transaction_date, notes, created_at)
         VALUES (?, ?, ?, 'PURCHASE', ?, ?, ?, ?, ?, ?)
-      `).run(s.mode, s.materialId ?? null, s.materialName, s.quantityKg, total, purchaseId, s.purchaseDate, s.notes, nowIso());
+      `).run(s.mode, s.materialId ?? null, stockName, s.quantityKg, total, purchaseId, s.purchaseDate, s.notes, nowIso());
 
-      return json({ ok: true, id: purchaseId, total, paid, credit });
+      return json({ ok: true, id: purchaseId, total, paid, credit, materialName: stockName });
     }
 
     if (body.action === "updatePurchase") {
@@ -370,34 +403,42 @@ export async function POST(req: NextRequest) {
         mode: modeSchema,
         materialId: z.number().int().positive().optional(),
         materialName: z.string().trim().min(1),
+        materialVariant: z.string().trim().optional().default(""),
         supplierId: z.number().int().positive(),
         purchaseType: z.enum(["NORMAL", "SUPPLIER_CREDIT", "BORROWED_FUND"]),
         quantityKg: z.number().positive(),
         ratePerKg: z.number().nonnegative(),
         purchaseDate: dateSchema,
-        paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
+        paidBy: optionalAccountPersonSchema,
         notes: z.string().trim().optional().default(""),
       }).parse(body);
       const existing = sqlite.prepare("SELECT id, paid_amount, material_id, material_name as existing_material_name, supplier_id as existing_supplier_id FROM purchases WHERE id=? AND mode=?").get(s.purchaseId, s.mode) as {id:number;paid_amount:number;material_id:number|null;existing_material_name:string;existing_supplier_id:number|null} | undefined;
       if (!existing) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
+      let stockName: string;
+      try {
+        stockName = purchaseStockName(s.materialName, s.materialVariant);
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid material variant" }, { status: 400 });
+      }
+      const variant = stockName === "Red Bottles" ? "Red" : stockName.startsWith("Natural Bottles - ") ? stockName.slice("Natural Bottles - ".length) : s.materialVariant;
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
       if (existing.paid_amount > total + 0.005) return NextResponse.json({ error: "Purchase total cannot be less than amount already paid" }, { status: 400 });
       const credit = Math.round((total - existing.paid_amount) * 100) / 100;
       if (!s.supplierId) return NextResponse.json({ error: "Vendor is required for every purchase" }, { status: 400 });
       const materialId = s.materialId ?? existing.material_id ?? null;
-      sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, credit_amount=?, purchase_date=?, paid_by=?, notes=?, updated_at=? WHERE id=? AND mode=?`)
-        .run(materialId, s.materialName, s.supplierId, s.purchaseType, s.quantityKg, s.ratePerKg, total, credit, s.purchaseDate, s.paidBy ?? "", s.notes, nowIso(), s.purchaseId, s.mode);
+      sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, credit_amount=?, purchase_date=?, paid_by=?, notes=?, material_variant=?, updated_at=? WHERE id=? AND mode=?`)
+        .run(materialId, stockName, s.supplierId, s.purchaseType, s.quantityKg, s.ratePerKg, total, credit, s.purchaseDate, s.paidBy ?? "", s.notes, variant, nowIso(), s.purchaseId, s.mode);
       sqlite.prepare("UPDATE inventory_transactions SET material_id=?, material_name=?, quantity_kg=?, amount=?, transaction_date=?, notes=? WHERE purchase_id=? AND transaction_type='PURCHASE'")
-        .run(materialId, s.materialName, s.quantityKg, total, s.purchaseDate, s.notes, s.purchaseId);
+        .run(materialId, stockName, s.quantityKg, total, s.purchaseDate, s.notes, s.purchaseId);
       if (s.supplierId !== existing.existing_supplier_id) {
         sqlite.prepare("UPDATE vendor_payments SET supplier_id=? WHERE purchase_id=?").run(s.supplierId, s.purchaseId);
       }
-      assertNoNegativeStock(s.mode, [existing.existing_material_name, s.materialName]);
-      return json({ ok: true, total, paid: existing.paid_amount, credit });
+      assertNoNegativeStock(s.mode, [existing.existing_material_name, stockName]);
+      return json({ ok: true, total, paid: existing.paid_amount, credit, materialName: stockName });
     }
 
     if (body.action === "payVendor") {
-      const s=z.object({mode:modeSchema,supplierId:z.number().int().positive(),amount:z.number().positive(),paymentDate:dateSchema.optional().default(todayStr()),paymentMode:z.string().trim().min(1).default("Cash"),paidBy:z.enum(["Rahul","Devesh","Nitin"]).optional(),notes:z.string().trim().optional().default("")}).parse(body);
+      const s=z.object({mode:modeSchema,supplierId:z.number().int().positive(),amount:z.number().positive(),paymentDate:dateSchema.optional().default(todayStr()),paymentMode:z.string().trim().min(1).default("Cash"),paidBy:optionalAccountPersonSchema,notes:z.string().trim().optional().default("")}).parse(body);
       const purchases=sqlite.prepare("SELECT id,credit_amount FROM purchases WHERE mode=? AND supplier_id=? AND credit_amount>0 ORDER BY purchase_date ASC,id ASC").all(s.mode,s.supplierId) as Array<{id:number;credit_amount:number}>;
       if(s.amount > purchases.reduce((n,p)=>n+p.credit_amount,0)+0.005) return NextResponse.json({error:"Payment exceeds vendor outstanding balance"},{status:400});
       let rem = s.amount;
@@ -415,7 +456,7 @@ export async function POST(req: NextRequest) {
       const s = z.object({
         purchaseId: z.number().int().positive(),
         amount: z.number().positive(),
-        paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
+        paidBy: optionalAccountPersonSchema,
       }).parse(body);
       const p = sqlite.prepare("SELECT credit_amount, mode, supplier_id FROM purchases WHERE id=?").get(s.purchaseId) as { credit_amount:number; mode:string; supplier_id:number } | undefined;
       if (!p) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
@@ -454,9 +495,10 @@ export async function POST(req: NextRequest) {
         taskType: z.enum(["Cap Removal","Sorting","Other"]),
         amountPerWorker: z.number().positive(),
         paymentDate: dateSchema.optional(),
-        paidBy: z.string().trim().max(100).optional().default(""),
+        paidBy: optionalAccountPersonSchema,
         notes: z.string().trim().max(500).optional().default("")
       }).parse(body);
+      if (!s.paidBy) return NextResponse.json({error:"Payment done by is required"},{status:400});
       const ids=[...new Set(s.workerIds)];
       const placeholders=ids.map(()=>"?").join(",");
       const workers=sqlite.prepare("SELECT id,name FROM manual_labour_workers WHERE active=1 AND id IN ("+placeholders+")");
@@ -548,7 +590,7 @@ export async function POST(req: NextRequest) {
         description: z.string().trim().optional().default(""),
         amount: z.number().positive(),
         expenseDate: dateSchema.optional().default(todayStr()),
-        paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional()
+        paidBy: optionalAccountPersonSchema
       }).parse(body);
       sqlite.prepare("INSERT INTO processing_expenses (mode,expense_type,description,amount,expense_date,paid_by,created_at) VALUES (?,?,?,?,?,?,?)").run(s.mode,s.expenseType,s.description,s.amount,s.expenseDate,s.paidBy??"",nowIso());
       return json({ok:true});
@@ -565,7 +607,7 @@ export async function POST(req: NextRequest) {
           ratePerKg: z.number().nonnegative()
         })).min(1),
         receivedAmount: z.number().nonnegative().optional(),
-        saleDate: dateSchema.optional().default(todayStr()), receivedBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
+        saleDate: dateSchema.optional().default(todayStr()), receivedBy: optionalAccountPersonSchema,
         paymentMode: z.string().trim().min(1).optional().default("Cash"),
         loadingCharges: z.number().nonnegative().optional().default(0),
         notes: z.string().trim().optional().default("")
@@ -632,7 +674,7 @@ export async function POST(req: NextRequest) {
         })).min(1),
         saleDate: dateSchema,
         loadingCharges: z.number().nonnegative().default(0),
-        receivedBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
+        receivedBy: optionalAccountPersonSchema,
         paymentMode: z.string().trim().min(1).optional(),
         notes: z.string().trim().optional().default("")
       }).parse(body);
@@ -695,7 +737,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (body.action === "receiveSalePayment") {
-      const s = z.object({mode:modeSchema,saleId:z.number().int().positive(),amount:z.number().positive(),paymentDate:dateSchema.optional().default(todayStr()),paymentMode:z.string().trim().min(1).default("Cash"),receivedBy:z.enum(["Rahul","Devesh","Nitin"]).optional(),notes:z.string().trim().optional().default("")}).parse(body);
+      const s = z.object({mode:modeSchema,saleId:z.number().int().positive(),amount:z.number().positive(),paymentDate:dateSchema.optional().default(todayStr()),paymentMode:z.string().trim().min(1).default("Cash"),receivedBy:optionalAccountPersonSchema,notes:z.string().trim().optional().default("")}).parse(body);
       const sale = sqlite.prepare("SELECT credit_amount FROM sales WHERE id=? AND mode=?").get(s.saleId,s.mode) as any;
       if (!sale) return NextResponse.json({error:"Sale not found"},{status:404});
       if (s.amount > Number(sale.credit_amount) + 0.005) return NextResponse.json({error:"Payment exceeds pending amount"},{status:400});

@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { AdminShell } from "@/components/admin-shell";
-import { useBusinessMode } from "@/components/business-mode";
+import { useBusinessMode } from "@/components/business-mode-provider";
 
 type Worker={id:number;name:string;active:number};
 type Batch={id:number;mode:string;batch_date:string;total_input_kg:number;status:string};

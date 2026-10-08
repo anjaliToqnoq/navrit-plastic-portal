@@ -353,7 +353,30 @@ function createDb() {
       updated_at TEXT NOT NULL
     );
   `);
-  // Labour attendance does not require a processing batch. Make batch_id nullable while preserving legacy rows.\n  try {\n    const info = sqlite.prepare("PRAGMA table_info(processing_manual_labour)").all() as Array<{name:string;notnull:number}>;\n    const batchCol = info.find((col) => col.name === "batch_id");\n    if (batchCol?.notnull) {\n      sqlite.exec("PRAGMA foreign_keys=OFF");\n      sqlite.exec("BEGIN");\n      sqlite.exec(\`CREATE TABLE processing_manual_labour_new (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),\n        batch_id INTEGER REFERENCES processing_batches(id) ON DELETE CASCADE,\n        worker_id INTEGER NOT NULL REFERENCES manual_labour_workers(id),\n        amount REAL NOT NULL CHECK(amount > 0),\n        payment_date TEXT NOT NULL,\n        paid_by TEXT NOT NULL DEFAULT '',\n        notes TEXT NOT NULL DEFAULT '',\n        created_at TEXT NOT NULL,\n        task_type TEXT NOT NULL DEFAULT 'Manual Labour'\n      )\`);\n      sqlite.exec("INSERT INTO processing_manual_labour_new (id,mode,batch_id,worker_id,amount,payment_date,paid_by,notes,created_at,task_type) SELECT id,mode,batch_id,worker_id,amount,payment_date,paid_by,notes,created_at,COALESCE(task_type,'Manual Labour') FROM processing_manual_labour");\n      sqlite.exec("DROP TABLE processing_manual_labour");\n      sqlite.exec("ALTER TABLE processing_manual_labour_new RENAME TO processing_manual_labour");\n      sqlite.exec("CREATE INDEX IF NOT EXISTS processing_manual_labour_batch_idx ON processing_manual_labour(batch_id, payment_date)");\n      sqlite.exec("COMMIT");\n      sqlite.exec("PRAGMA foreign_keys=ON");\n    }\n  } catch (error) {\n    try { sqlite.exec("ROLLBACK"); } catch {}\n    try { sqlite.exec("PRAGMA foreign_keys=ON"); } catch {}\n    throw error;\n  }\n  for (const migration of [
+  // Labour attendance does not require a processing batch. Existing databases may still have batch_id as NOT NULL.
+  try {
+    sqlite.exec("ALTER TABLE processing_manual_labour ADD COLUMN task_type TEXT NOT NULL DEFAULT 'Manual Labour'");
+  } catch { /* task_type already exists */ }
+  try {
+    const info = sqlite.prepare("PRAGMA table_info(processing_manual_labour)").all() as Array<{ name: string; notnull: number }>;
+    const batchColumn = info.find((column) => column.name === "batch_id");
+    if (batchColumn?.notnull) {
+      sqlite.exec("PRAGMA foreign_keys=OFF");
+      sqlite.exec("BEGIN");
+      sqlite.exec("CREATE TABLE processing_manual_labour_new (id INTEGER PRIMARY KEY AUTOINCREMENT, mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')), batch_id INTEGER REFERENCES processing_batches(id) ON DELETE CASCADE, worker_id INTEGER NOT NULL REFERENCES manual_labour_workers(id), amount REAL NOT NULL CHECK(amount > 0), payment_date TEXT NOT NULL, paid_by TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, task_type TEXT NOT NULL DEFAULT 'Manual Labour')");
+      sqlite.exec("INSERT INTO processing_manual_labour_new (id,mode,batch_id,worker_id,amount,payment_date,paid_by,notes,created_at,task_type) SELECT id,mode,batch_id,worker_id,amount,payment_date,paid_by,notes,created_at,COALESCE(task_type,'Manual Labour') FROM processing_manual_labour");
+      sqlite.exec("DROP TABLE processing_manual_labour");
+      sqlite.exec("ALTER TABLE processing_manual_labour_new RENAME TO processing_manual_labour");
+      sqlite.exec("CREATE INDEX IF NOT EXISTS processing_manual_labour_batch_idx ON processing_manual_labour(batch_id, payment_date)");
+      sqlite.exec("COMMIT");
+      sqlite.exec("PRAGMA foreign_keys=ON");
+    }
+  } catch (error) {
+    try { sqlite.exec("ROLLBACK"); } catch {}
+    try { sqlite.exec("PRAGMA foreign_keys=ON"); } catch {}
+    throw error;
+  }
+  for (const migration of [
     "ALTER TABLE processing_batches ADD COLUMN total_output_kg REAL NOT NULL DEFAULT 0",
     "ALTER TABLE processing_batches ADD COLUMN waste_kg REAL NOT NULL DEFAULT 0",
     "ALTER TABLE processing_batches ADD COLUMN processing_cost REAL NOT NULL DEFAULT 0",

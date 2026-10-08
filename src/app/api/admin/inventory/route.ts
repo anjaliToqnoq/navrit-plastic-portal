@@ -426,6 +426,52 @@ export async function POST(req: NextRequest) {
       return json({ ok: true });
     }
 
+    if (body.action === "addLabourWorker") {
+      const s = z.object({ name: z.string().trim().min(2).max(100) }).parse(body);
+      const existing = sqlite.prepare("SELECT * FROM manual_labour_workers WHERE lower(name)=lower(?)").get(s.name) as any;
+      if (existing) {
+        if (!existing.active) {
+          sqlite.prepare("UPDATE manual_labour_workers SET active=1, updated_at=? WHERE id=?").run(nowIso(), existing.id);
+          return json({ ok: true, id: existing.id, reactivated: true });
+        }
+        return NextResponse.json({ error: "Worker already exists" }, { status: 400 });
+      }
+      const r = sqlite.prepare("INSERT INTO manual_labour_workers (name,active,created_at,updated_at) VALUES (?,1,?,?)").run(s.name,nowIso(),nowIso());
+      return json({ ok: true, id: Number(r.lastInsertRowid) });
+    }
+
+    if (body.action === "setLabourWorkerStatus") {
+      const s = z.object({ workerId: z.number().int().positive(), active: z.boolean() }).parse(body);
+      const r = sqlite.prepare("UPDATE manual_labour_workers SET active=?, updated_at=? WHERE id=?").run(s.active ? 1 : 0,nowIso(),s.workerId);
+      if (!r.changes) return NextResponse.json({ error: "Worker not found" }, { status: 404 });
+      return json({ ok: true });
+    }
+
+    if (body.action === "addManualLabour") {
+      const s = z.object({
+        mode: modeSchema,
+        batchId: z.number().int().positive(),
+        workerIds: z.array(z.number().int().positive()).min(1),
+        taskType: z.enum(["Cap Removal","Sorting","Other"]),
+        amountPerWorker: z.number().positive(),
+        paymentDate: dateSchema.optional(),
+        paidBy: z.string().trim().max(100).optional().default(""),
+        notes: z.string().trim().max(500).optional().default("")
+      }).parse(body);
+      const batch = sqlite.prepare("SELECT * FROM processing_batches WHERE id=? AND mode=?").get(s.batchId,s.mode) as any;
+      if (!batch) return NextResponse.json({error:"Processing batch not found"},{status:404});
+      if (batch.status === "CANCELLED") return NextResponse.json({error:"Cannot add labour to a cancelled batch"},{status:400});
+      const ids=[...new Set(s.workerIds)];
+      const placeholders=ids.map(()=>"?").join(",");
+      const workers=sqlite.prepare("SELECT id,name FROM manual_labour_workers WHERE active=1 AND id IN ("+placeholders+")");
+      const found=workers.all(...ids) as any[];
+      if (found.length !== ids.length) return NextResponse.json({error:"One or more selected workers are inactive or missing"},{status:400});
+      const existing=sqlite.prepare("SELECT worker_id FROM processing_manual_labour WHERE batch_id=? AND task_type=? AND worker_id IN ("+placeholders+")").all(s.batchId,s.taskType,...ids) as any[];
+      if (existing.length) return NextResponse.json({error:"Labour already recorded for one or more selected workers for this task and batch"},{status:400});
+      for (const id of ids) sqlite.prepare("INSERT INTO processing_manual_labour (mode,batch_id,worker_id,amount,payment_date,paid_by,notes,task_type,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(s.mode,s.batchId,id,s.amountPerWorker,s.paymentDate ?? batch.batch_date,s.paidBy,s.notes,s.taskType,nowIso());
+      return json({ok:true,totalAmount:Math.round(ids.length*s.amountPerWorker*100)/100,count:ids.length});
+    }
+
     if (body.action === "addProcessingBatch") {
       const s = z.object({
         mode: modeSchema,

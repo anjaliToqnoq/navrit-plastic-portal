@@ -7,7 +7,7 @@ import { Plus, WalletCards, X } from "lucide-react";
 
 type Worker = { id: number; name: string; active: number };
 type Labour = { id: number; batch_id: number | null; worker_id: number; workerName: string; amount: number; payment_date: string; paid_by: string; task_type: string; mode: string; notes?: string };
-type ApiResponse = { ok?: boolean; error?: string; labourWorkers?: Worker[]; processingBatches?: Batch[]; manualLabour?: Labour[] };
+type ApiResponse = { ok?: boolean; error?: string; labourWorkers?: Worker[]; manualLabour?: Labour[] };
 type PostBody = Record<string, string | number | boolean | number[] | undefined>;
 
 export default function ProcessingPage() {

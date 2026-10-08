@@ -75,14 +75,14 @@ export default function InventoryPage() {
 
   async function editSale() {
     if(editingSale===null) return;
-    const ok=await post("updateSale",{saleId:editingSale,mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),loadingCharges:Number(sale.loadingCharges||0),saleDate:sale.saleDate,notes:sale.notes});
+    const ok=await post("updateSale",{saleId:editingSale,mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),loadingCharges:Number(sale.loadingCharges||0),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
     if(ok) resetSaleForm();
   }
 
   function startEditSale(s:any) {
     const items=(data.saleItems||[]).filter((x:any)=>x.sale_id===s.id);
     const payments=(data.salePayments||[]).filter((x:any)=>x.sale_id===s.id);
-    const latestPayment=payments[payments.length-1];
+    const latestPayment=payments[0];
     setEditingSale(s.id);
     setSale({
       customerName:s.customer_name||"",

@@ -308,12 +308,15 @@ function createDb() {
       quantity_kg REAL NOT NULL,
       amount REAL NOT NULL DEFAULT 0,
       purchase_id INTEGER REFERENCES purchases(id),
+      sale_id INTEGER REFERENCES sales(id) ON DELETE CASCADE,
       transaction_date TEXT NOT NULL,
       notes TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS inventory_mode_material_idx
       ON inventory_transactions(mode, material_id, transaction_date);
+    CREATE INDEX IF NOT EXISTS inventory_sale_idx
+      ON inventory_transactions(sale_id);
     CREATE TABLE IF NOT EXISTS articles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       slug TEXT NOT NULL UNIQUE,
@@ -351,6 +354,12 @@ function createDb() {
   ]) {
     try { sqlite.exec(migration); } catch { /* column already exists */ }
   }
+  // Backfill sale links for historical sale inventory rows created before sale_id existed.
+  try {
+    sqlite.exec(`UPDATE inventory_transactions
+      SET sale_id = CAST(substr(notes, 7) AS INTEGER)
+      WHERE sale_id IS NULL AND transaction_type = 'ADJUSTMENT' AND notes LIKE 'SALE #%'`);
+  } catch { /* legacy rows may not exist */ }
   seedSiteContent(sqlite);
   return sqlite;
 }

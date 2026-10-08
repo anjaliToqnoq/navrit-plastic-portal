@@ -12,7 +12,6 @@ import { useBusinessMode, type BusinessMode } from "@/components/business-mode-p
 type Mode = BusinessMode;
 type Material = { id:number; name_en:string; name_hi:string; category_en:string };
 type Supplier = { id:number; name:string; phone:string; notes:string };
-type Lender = { id:number; name:string; phone:string; notes:string; lender_kind?:string };
 type Purchase = {
   id:number; mode:Mode; material_name:string; purchase_type:string; quantity_kg:number;
   rate_per_kg:number; total_amount:number; paid_amount:number; credit_amount:number;
@@ -20,9 +19,11 @@ type Purchase = {
   supplierName?:string; lenderName?:string; purchase_date:string; paid_by?:string;
 };
 type Borrowing = {
-  id:number; mode:Mode; lenderName:string; lenderKind?:string; amount:number;
-  interest_rate_percent?:number; interest_amount?:number; outstanding_amount:number;
-  borrowing_date:string; due_date?:string; purpose:string; status?:string;
+  id:number; mode:Mode; lenderName:string; amount:number; outstanding_amount:number;
+  borrowing_date:string; purpose:string;
+};
+type PreStock = {
+  id:number; mode:Mode; materialName:string; quantityKg:number; amount:number; stockDate:string; notes?:string;
 };
 
 export default function InventoryPage() {
@@ -38,12 +39,11 @@ export default function InventoryPage() {
   const emptyPurchase = { materialId:"", materialName:"", materialVariant:"Green", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", fundingSource:"COMPANY" as FundingSource, borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), notes:"",  };
   const [purchase,setPurchase] = useState(emptyPurchase);
   const [editingPurchase,setEditingPurchase] = useState<number|null>(null);
-  const [borrowing,setBorrowing] = useState({lenderId:"",amount:"",interestRatePercent:"",dueDate:"",borrowingDate:new Date().toISOString().slice(0,10),purpose:"",notes:""});
-  const [lenderForm,setLenderForm] = useState({name:"",phone:"",notes:"",lenderKind:"EXTERNAL"});
+  const [preStock,setPreStock] = useState({materialName:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:"",stockDate:"2026-09-30",notes:""});
+  const [showPreStock,setShowPreStock] = useState(false);
   const [adjust,setAdjust] = useState({materialId:"",materialName:"",quantityKg:"",amount:"",notes:""});
   const [creditPay,setCreditPay] = useState<{purchaseId:number; amount:string; paidBy:string; fundingSource:FundingSource} | null>(null);
   const [salePay,setSalePay] = useState<{saleId:number; amount:string; receivedBy:string; paymentMode:string} | null>(null);
-  const [repayForm,setRepayForm] = useState<{borrowingId:number; amount:string; paidBy:string} | null>(null);
 
   async function load() {
     const r=await fetch("/api/admin/inventory");
@@ -156,21 +156,6 @@ export default function InventoryPage() {
     if(ok) setCreditPay(null);
   }
 
-  function openRepayment(b:Borrowing) {
-    setRepayForm({borrowingId:b.id, amount:String(b.outstanding_amount??""), paidBy:""});
-  }
-
-  async function submitRepayment() {
-    if(!repayForm) return;
-    const amount=Number(repayForm.amount);
-    if(!(amount>0)) { setMessage("Enter a valid repayment amount"); return; }
-    if(repayForm.paidBy && !isAccountPerson(repayForm.paidBy)) {
-      setMessage("Invalid payment person"); return;
-    }
-    const ok=await post("repayBorrowing",{borrowingId:repayForm.borrowingId, amount, paidBy:repayForm.paidBy||undefined});
-    if(ok) setRepayForm(null);
-  }
-
   function purchaseCategoryAndVariant(materialName:string, materialVariant?:string) {
     if (materialName === "Red Bottles" || materialVariant === "Red") {
       return { materialName: "Red Bottles", materialVariant: "Red" };
@@ -217,29 +202,24 @@ export default function InventoryPage() {
     window.scrollTo({top:0,behavior:"smooth"});
   }
 
-  async function addBorrowing() {
-    if(await post("addBorrowing",{
+  async function addPreStock() {
+    const quantityKg=Number(preStock.quantityKg);
+    const ratePerKg=Number(preStock.ratePerKg);
+    if(!(quantityKg>0)) { setMessage("Enter pre-stock weight (kg)"); return; }
+    if(!(ratePerKg>=0) || preStock.ratePerKg==="") { setMessage("Enter pre-stock rate / kg"); return; }
+    const ok=await post("addPreStock",{
       mode,
-      lenderId:Number(borrowing.lenderId),
-      amount:Number(borrowing.amount),
-      interestRatePercent:Number(borrowing.interestRatePercent||0),
-      borrowingDate:borrowing.borrowingDate,
-      dueDate:borrowing.dueDate||"",
-      purpose:borrowing.purpose,
-      notes:borrowing.notes,
-    }))
-      setBorrowing({lenderId:"",amount:"",interestRatePercent:"",dueDate:"",borrowingDate:new Date().toISOString().slice(0,10),purpose:"",notes:""});
-  }
-
-  async function addLender() {
-    if(!lenderForm.name.trim()) { setMessage("Lender name is required"); return; }
-    if(await post("addLender",{
-      name:lenderForm.name.trim(),
-      phone:lenderForm.phone,
-      notes:lenderForm.notes,
-      lenderKind:lenderForm.lenderKind,
-    }))
-      setLenderForm({name:"",phone:"",notes:"",lenderKind:"EXTERNAL"});
+      materialName:preStock.materialName,
+      materialVariant:preStock.materialVariant,
+      quantityKg,
+      ratePerKg,
+      stockDate:preStock.stockDate||"2026-09-30",
+      notes:preStock.notes,
+    });
+    if(ok) {
+      setPreStock({materialName:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:"",stockDate:"2026-09-30",notes:""});
+      setShowPreStock(false);
+    }
   }
 
   async function adjustInventory() {
@@ -247,9 +227,18 @@ export default function InventoryPage() {
       setAdjust({materialId:"",materialName:"",quantityKg:"",amount:"",notes:""});
   }
 
+  const filteredPreStock=(data?.preStock||[]).filter((x:PreStock)=>x.mode===mode);
+  const preStockKg=filteredPreStock.reduce((n:number,x:PreStock)=>n+Number(x.quantityKg||0),0);
+
   if(!data) return <AdminShell title="Inventory & Finance"><div className="ad-card p-6">Loading…</div></AdminShell>;
 
-  return <AdminShell title={mode + " Inventory & Finance"} subtitle={"Internal " + mode + " inventory, purchases, supplier credit and borrowed funds"}>
+  return <AdminShell title={mode + " Inventory & Finance"} subtitle={"Internal " + mode + " inventory, purchases and supplier credit. Borrowings live under Accounts."}
+    actions={
+      <button className="ad-btn ad-btn-primary" onClick={()=>setShowPreStock((v)=>!v)}>
+        {showPreStock ? "Close pre stock" : "Add pre stock"}
+      </button>
+    }
+  >
     <div>
     <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -258,14 +247,65 @@ export default function InventoryPage() {
       </div>
     </div>
 
+    {showPreStock && (
+      <div className="mb-5 ad-card border border-[var(--ad-accent)] p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h2 className="font-semibold">Add pre stock (before audit)</h2>
+            <p className="ad-muted text-xs">Physical stock already present before 30 Sept — material, weight and rate only. No vendor or payment.</p>
+          </div>
+        </div>
+        <div className="grid gap-2 md:grid-cols-6">
+          <select className="ad-input" value={preStock.materialName} onChange={e=>{
+            const materialName=e.target.value;
+            setPreStock({...preStock,materialName,materialVariant:materialName==="Red Bottles"?"Red":materialName==="Natural Bottles"?(preStock.materialVariant==="Red"?"Green":preStock.materialVariant||"Green"):""});
+          }}>
+            <option value="Natural Bottles">Natural Bottles</option>
+            <option value="Red Bottles">Red Bottles</option>
+          </select>
+          <select className="ad-input" value={preStock.materialVariant} onChange={e=>setPreStock({...preStock,materialVariant:e.target.value})}>
+            {preStock.materialName==="Red Bottles"
+              ? <option value="Red">Red</option>
+              : <><option value="Green">Green</option><option value="White">White</option><option value="White Milk">White Milk</option></>}
+          </select>
+          <input className="ad-input" type="number" min="0" placeholder="Weight (kg)" value={preStock.quantityKg} onChange={e=>setPreStock({...preStock,quantityKg:e.target.value})}/>
+          <input className="ad-input" type="number" min="0" placeholder="Rate / kg" value={preStock.ratePerKg} onChange={e=>setPreStock({...preStock,ratePerKg:e.target.value})}/>
+          <input className="ad-input" type="date" value={preStock.stockDate} onChange={e=>setPreStock({...preStock,stockDate:e.target.value})}/>
+          <button className="ad-btn ad-btn-primary" onClick={addPreStock}>Save pre stock</button>
+        </div>
+        <p className="mt-2 text-xs ad-muted">
+          Value: ₹{((Number(preStock.quantityKg)||0)*(Number(preStock.ratePerKg)||0)).toFixed(2)}
+          {filteredPreStock.length>0 ? ` · ${filteredPreStock.length} pre-stock rows · ${preStockKg.toFixed(2)} kg recorded` : ""}
+        </p>
+        {filteredPreStock.length>0 && (
+          <div className="ad-table-wrap mt-3">
+            <table className="ad-table">
+              <thead><tr><th>Date</th><th>Material</th><th>Weight</th><th>Value</th><th>Notes</th></tr></thead>
+              <tbody>
+                {filteredPreStock.map((row:PreStock)=>(
+                  <tr key={row.id}>
+                    <td>{row.stockDate}</td>
+                    <td>{row.materialName}</td>
+                    <td>{Number(row.quantityKg).toFixed(2)} kg</td>
+                    <td>₹{Number(row.amount).toFixed(2)}</td>
+                    <td>{row.notes||"—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    )}
+
     <div className="mb-5 grid gap-3 sm:grid-cols-3">
       <div className="ad-card p-4"><p className="ad-muted text-xs">Current {mode} stock</p><p className="mt-1 text-2xl font-bold">{currentKg.toFixed(2)} kg</p></div>
-      <div className="ad-card p-4"><p className="ad-muted text-xs">Outstanding borrowed</p><p className="mt-1 text-2xl font-bold">₹{openBorrowings.reduce((n:any,x:any)=>n+Number(x.outstanding_amount),0).toFixed(2)}</p></div>
+      <div className="ad-card p-4"><p className="ad-muted text-xs">Pre stock recorded</p><p className="mt-1 text-2xl font-bold">{preStockKg.toFixed(2)} kg</p></div>
       <div className="ad-card p-4"><p className="ad-muted text-xs">Supplier credit</p><p className="mt-1 text-2xl font-bold">₹{filteredPurchases.reduce((n:any,x:any)=>n+Number(x.credit_amount),0).toFixed(2)}</p></div>
     </div>
 
     <div className="mb-4 flex flex-wrap gap-2">
-      {[["purchases","Purchases"],["sales","Sales"],["inventory","Inventory"],["expenses","Expenses"],["borrowings","Borrowings"]].map(([value,label])=><button key={value} onClick={()=>setTab(value)} className={tab===value?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{label}</button>)}
+      {[["purchases","Purchases"],["sales","Sales"],["inventory","Inventory"],["expenses","Expenses"]].map(([value,label])=><button key={value} onClick={()=>setTab(value)} className={tab===value?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{label}</button>)}
     </div>
 
     {tab==="purchases" && <div className="space-y-5">
@@ -412,60 +452,6 @@ export default function InventoryPage() {
       <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Payment Date</th><th>Category</th><th>Billing Period</th><th>Description</th><th>Amount</th><th>Payment done by</th><th>Paid from</th></tr></thead><tbody>
         {(data.otherExpenses||[]).filter((x:any)=>x.mode===mode).map((x:any)=><tr key={x.id}><td>{x.expense_date}</td><td>{x.expense_type}</td><td>{x.expense_type==="Electricity" ? (x.billing_start_date&&x.billing_end_date ? `${x.billing_start_date} → ${x.billing_end_date}` : x.billing_month||"—") : "Expense date month"}</td><td>{x.description||"—"}</td><td>₹{Number(x.amount).toFixed(2)}</td><td>{x.paid_by||"—"}</td><td>{x.funding_source==="OWN_POCKET"?"Own pocket":"Company cash"}</td></tr>)}
       </tbody></table></div>
-    </div>}
-
-    {tab==="borrowings" && <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="ad-card p-4"><p className="ad-muted text-xs">External loans outstanding</p><p className="mt-1 text-2xl font-bold">₹{Number(data.externalLoanOutstanding?.[mode]||0).toFixed(2)}</p></div>
-        <div className="ad-card p-4"><p className="ad-muted text-xs">All open borrowings</p><p className="mt-1 text-2xl font-bold">₹{openBorrowings.reduce((n:number,x:Borrowing)=>n+Number(x.outstanding_amount),0).toFixed(2)}</p></div>
-        <div className="ad-card p-4"><p className="ad-muted text-xs">Interest booked (open)</p><p className="mt-1 text-2xl font-bold">₹{openBorrowings.reduce((n:number,x:Borrowing)=>n+Number(x.interest_amount||0),0).toFixed(2)}</p></div>
-      </div>
-      <div className="ad-card p-4">
-        <h2 className="mb-3 font-semibold">Add lender</h2>
-        <div className="grid gap-2 md:grid-cols-5">
-          <input className="ad-input" placeholder="Lender name" value={lenderForm.name} onChange={e=>setLenderForm({...lenderForm,name:e.target.value})}/>
-          <input className="ad-input" placeholder="Phone" value={lenderForm.phone} onChange={e=>setLenderForm({...lenderForm,phone:e.target.value})}/>
-          <select className="ad-input" value={lenderForm.lenderKind} onChange={e=>setLenderForm({...lenderForm,lenderKind:e.target.value})}>
-            <option value="EXTERNAL">External lender</option>
-            <option value="PARTNER">Partner advance</option>
-          </select>
-          <input className="ad-input" placeholder="Notes" value={lenderForm.notes} onChange={e=>setLenderForm({...lenderForm,notes:e.target.value})}/>
-          <button className="ad-btn ad-btn-primary" onClick={addLender}>Save lender</button>
-        </div>
-      </div>
-      <div className="ad-card p-4">
-        <h2 className="mb-3 font-semibold">Borrow funds for {mode}</h2>
-        <p className="mb-3 text-xs ad-muted">Interest is a flat % of principal stored at entry (principal + interest = starting outstanding).</p>
-        <div className="grid gap-2 md:grid-cols-4">
-          <select className="ad-input" value={borrowing.lenderId} onChange={e=>setBorrowing({...borrowing,lenderId:e.target.value})}>
-            <option value="">Lender</option>
-            {(data.lenders||[]).map((l:Lender)=><option key={l.id} value={l.id}>{l.name}{l.lender_kind==="PARTNER"?" (Partner)":""}</option>)}
-          </select>
-          <input className="ad-input" type="number" min="0" placeholder="Principal amount" value={borrowing.amount} onChange={e=>setBorrowing({...borrowing,amount:e.target.value})}/>
-          <input className="ad-input" type="number" min="0" step="0.01" placeholder="Interest % (flat)" value={borrowing.interestRatePercent} onChange={e=>setBorrowing({...borrowing,interestRatePercent:e.target.value})}/>
-          <input className="ad-input" type="date" value={borrowing.borrowingDate} onChange={e=>setBorrowing({...borrowing,borrowingDate:e.target.value})}/>
-          <input className="ad-input" type="date" value={borrowing.dueDate} onChange={e=>setBorrowing({...borrowing,dueDate:e.target.value})} title="Due date"/>
-          <input className="ad-input" placeholder="Purpose" value={borrowing.purpose} onChange={e=>setBorrowing({...borrowing,purpose:e.target.value})}/>
-          <input className="ad-input" placeholder="Notes" value={borrowing.notes} onChange={e=>setBorrowing({...borrowing,notes:e.target.value})}/>
-          <button className="ad-btn ad-btn-primary" onClick={addBorrowing}>Add borrowing</button>
-        </div>
-        {Number(borrowing.amount)>0 && (
-          <p className="mt-2 text-xs ad-muted">
-            Interest ₹{(Number(borrowing.amount)*(Number(borrowing.interestRatePercent||0)/100)).toFixed(2)} · Outstanding will start at ₹{(Number(borrowing.amount)+Number(borrowing.amount)*(Number(borrowing.interestRatePercent||0)/100)).toFixed(2)}
-          </p>
-        )}
-      </div>
-      {repayForm && <div className="ad-card p-4 border border-[var(--ad-accent)]">
-        <h3 className="mb-3 text-sm font-semibold">Repay borrowing #{repayForm.borrowingId}</h3>
-        <div className="grid gap-2 md:grid-cols-4">
-          <input className="ad-input" type="number" min="0" placeholder="Repayment amount" value={repayForm.amount} onChange={e=>setRepayForm({...repayForm,amount:e.target.value})}/>
-          <PersonSelect value={repayForm.paidBy} onChange={(v)=>setRepayForm({...repayForm,paidBy:v})} />
-          <button className="ad-btn ad-btn-primary" onClick={submitRepayment}>Save repayment</button>
-          <button className="ad-btn ad-btn-ghost" onClick={()=>setRepayForm(null)}>Cancel</button>
-        </div>
-      </div>}
-
-      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Lender</th><th>Kind</th><th>Principal</th><th>Interest</th><th>Outstanding</th><th>Due</th><th>Status</th><th>Action</th></tr></thead><tbody>{filteredBorrowings.map((b:Borrowing)=><tr key={b.id}><td>{b.borrowing_date}</td><td>{b.lenderName}</td><td>{b.lenderKind==="PARTNER"?"Partner":"External"}</td><td>₹{Number(b.amount).toFixed(2)}</td><td>₹{Number(b.interest_amount||0).toFixed(2)}{Number(b.interest_rate_percent||0)>0?` (${b.interest_rate_percent}%)`:""}</td><td>₹{Number(b.outstanding_amount).toFixed(2)}</td><td>{b.due_date||"—"}</td><td>{b.status||"—"}</td><td>{b.outstanding_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={()=>openRepayment(b)}>Repay</button>}</td></tr>)}</tbody></table></div>
     </div>}
 
     </div>

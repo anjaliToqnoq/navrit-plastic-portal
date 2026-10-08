@@ -133,6 +133,14 @@ export async function GET() {
     ORDER BY mode, materialName
   `).all();
 
+  const preStock = sqlite.prepare(`
+    SELECT id, mode, material_name as materialName, quantity_kg as quantityKg, amount, transaction_date as stockDate, notes
+    FROM inventory_transactions
+    WHERE notes LIKE 'PRE-STOCK%'
+    ORDER BY transaction_date DESC, id DESC
+    LIMIT 100
+  `).all();
+
   const purchases = sqlite.prepare(`
     SELECT p.*, s.name as supplierName, l.name as lenderName,
            ROUND(p.total_amount / NULLIF(p.quantity_kg,0), 2) as effective_cost
@@ -277,7 +285,7 @@ export async function GET() {
   };
 
   return json({
-    materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments,
+    materials, suppliers, lenders, inventory, preStock, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments,
     sales, saleItems, salePayments, processingBatches, processingBatchItems, processingBatchOutputs, processingExpenses,
     saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, partnerSettlements, borrowingRepayments, totals,
     openingBalance, personAccountTotals, externalLoanOutstanding, reconciliation,
@@ -864,6 +872,35 @@ export async function POST(req: NextRequest) {
         VALUES (?, ?, ?, 'ADJUSTMENT', ?, ?, ?, ?, ?)
       `).run(s.mode, s.materialId ?? null, s.materialName, s.quantityKg, s.amount, s.transactionDate, s.notes, nowIso());
       return json({ ok: true });
+    }
+
+    // Opening physical stock before audit start — weight + rate only, no vendor/payment.
+    if (body.action === "addPreStock") {
+      const s = z.object({
+        mode: modeSchema,
+        materialName: z.string().trim().min(1),
+        materialVariant: z.string().trim().optional().default(""),
+        quantityKg: z.number().positive(),
+        ratePerKg: z.number().nonnegative(),
+        stockDate: dateSchema.optional().default("2026-09-30"),
+        notes: z.string().trim().optional().default(""),
+      }).parse(body);
+      let stockName: string;
+      try {
+        stockName = purchaseStockName(s.materialName, s.materialVariant);
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid material" }, { status: 400 });
+      }
+      const amount = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
+      const note = s.notes
+        ? `PRE-STOCK — ${s.notes}`
+        : `PRE-STOCK — opening stock before audit @ ₹${s.ratePerKg}/kg`;
+      sqlite.prepare(`
+        INSERT INTO inventory_transactions
+        (mode, material_id, material_name, transaction_type, quantity_kg, amount, transaction_date, notes, created_at)
+        VALUES (?, ?, ?, 'ADJUSTMENT', ?, ?, ?, ?, ?)
+      `).run(s.mode, null, stockName, s.quantityKg, amount, s.stockDate, note, nowIso());
+      return json({ ok: true, materialName: stockName, quantityKg: s.quantityKg, amount });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

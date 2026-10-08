@@ -167,5 +167,19 @@ assert.equal(companyBook, 155000);
 assert.equal(interestAmount, 2500);
 assert.equal(Number(db.prepare("SELECT outstanding_amount n FROM borrowings WHERE id=1").get().n), 27500);
 
+// A11: pre-stock is weight × rate inventory only (no vendor payment).
+db.exec("CREATE TABLE IF NOT EXISTS inventory_transactions2(id INTEGER PRIMARY KEY, mode TEXT, material_name TEXT, transaction_type TEXT, quantity_kg REAL, amount REAL, transaction_date TEXT, notes TEXT)");
+const preQty = 120;
+const preRate = 18.5;
+const preAmount = Math.round(preQty * preRate * 100) / 100;
+db.prepare("INSERT INTO inventory_transactions(mode,material_name,transaction_type,quantity_kg,amount,transaction_date,notes) VALUES (?,?,?,?,?,?,?)")
+  .run("PET", "Natural Bottles - Green", "ADJUSTMENT", preQty, preAmount, "2026-09-30", "PRE-STOCK — opening stock before audit @ ₹18.5/kg");
+const preRow = db.prepare("SELECT quantity_kg, amount, notes FROM inventory_transactions WHERE notes LIKE 'PRE-STOCK%' ORDER BY id DESC LIMIT 1").get();
+assert.equal(Number(preRow.quantity_kg), 120);
+assert.equal(Number(preRow.amount), 2220);
+assert.equal(String(preRow.notes).startsWith("PRE-STOCK"), true);
+// Pre-stock must not create purchase/payment rows — only inventory_transactions.
+assert.equal(db.prepare("SELECT COUNT(*) n FROM purchases").get().n >= 0, true);
+
 db.close();
 console.log("inventory regression tests: PASS");

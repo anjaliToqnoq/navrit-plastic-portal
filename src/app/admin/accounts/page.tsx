@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminShell } from "@/components/admin-shell";
 import { useBusinessMode } from "@/components/business-mode-provider";
-import { ACCOUNT_PERSONS, type AccountPerson } from "@/lib/account-persons";
+import { ACCOUNT_PERSONS, isAccountPerson, type AccountPerson } from "@/lib/account-persons";
 import { PersonSelect } from "@/components/person-select";
 import { ArrowDownLeft, ArrowUpRight, RefreshCw, WalletCards } from "lucide-react";
 
@@ -30,6 +30,21 @@ type Reconciliation = {
   dueToPartners: number;
   externalLoanOutstanding: number;
 };
+type Lender = { id: number; name: string; phone?: string; notes?: string; lender_kind?: string };
+type Borrowing = {
+  id: number;
+  mode: string;
+  lenderName: string;
+  lenderKind?: string;
+  amount: number;
+  interest_rate_percent?: number;
+  interest_amount?: number;
+  outstanding_amount: number;
+  borrowing_date: string;
+  due_date?: string;
+  purpose?: string;
+  status?: string;
+};
 type AccountsData = {
   openingBalance?: Record<string, number>;
   personAccountTotals?: Record<string, Record<string, PersonTotals>>;
@@ -44,6 +59,8 @@ type AccountsData = {
   processingExpenses?: Row[];
   saleProcessingCosts?: Row[];
   manualLabour?: Row[];
+  lenders?: Lender[];
+  borrowings?: Borrowing[];
 };
 
 const people: Person[] = [...ACCOUNT_PERSONS];
@@ -64,12 +81,24 @@ function sumBy(rows: Row[] | undefined, field: string, person: Person, mode: str
 export default function AccountsPage() {
   const { mode } = useBusinessMode();
   const [data, setData] = useState<AccountsData | null>(null);
+  const [tab, setTab] = useState<"overview" | "borrowings">("overview");
   const [opening, setOpening] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [settle, setSettle] = useState({ person: "" as string, amount: "", settlementDate: new Date().toISOString().slice(0, 10), notes: "" });
   const [settleBusy, setSettleBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [borrowing, setBorrowing] = useState({
+    lenderId: "",
+    amount: "",
+    interestRatePercent: "",
+    dueDate: "",
+    borrowingDate: new Date().toISOString().slice(0, 10),
+    purpose: "",
+    notes: "",
+  });
+  const [lenderForm, setLenderForm] = useState({ name: "", phone: "", notes: "", lenderKind: "EXTERNAL" });
+  const [repayForm, setRepayForm] = useState<{ borrowingId: number; amount: string; paidBy: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -90,18 +119,26 @@ export default function AccountsPage() {
     void load();
   }, [load]);
 
+  async function postAction(action: string, body: Record<string, unknown>) {
+    const res = await fetch("/api/admin/inventory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...body }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json?.error || "Operation failed");
+    await load();
+    return json;
+  }
+
   async function saveOpeningBalance() {
     const amount = Number(opening);
     if (!Number.isFinite(amount) || amount < 0) return;
     setSaving(true);
     try {
-      const res = await fetch("/api/admin/inventory", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "setOpeningBalance", mode, amount }),
-      });
-      if (!res.ok) throw new Error((await res.json())?.error || "Failed to save opening balance");
-      await load();
+      await postAction("setOpeningBalance", { mode, amount });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to save opening balance");
     } finally {
       setSaving(false);
     }
@@ -116,23 +153,15 @@ export default function AccountsPage() {
     setSettleBusy(true);
     setMessage("");
     try {
-      const res = await fetch("/api/admin/inventory", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "settlePartner",
-          mode,
-          person: settle.person,
-          amount,
-          settlementDate: settle.settlementDate,
-          notes: settle.notes,
-        }),
+      await postAction("settlePartner", {
+        mode,
+        person: settle.person,
+        amount,
+        settlementDate: settle.settlementDate,
+        notes: settle.notes,
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Settlement failed");
       setSettle({ person: "", amount: "", settlementDate: new Date().toISOString().slice(0, 10), notes: "" });
       setMessage("Partner settlement saved");
-      await load();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Settlement failed");
     } finally {
@@ -140,10 +169,86 @@ export default function AccountsPage() {
     }
   }
 
+  async function addLender() {
+    if (!lenderForm.name.trim()) {
+      setMessage("Lender name is required");
+      return;
+    }
+    try {
+      await postAction("addLender", {
+        name: lenderForm.name.trim(),
+        phone: lenderForm.phone,
+        notes: lenderForm.notes,
+        lenderKind: lenderForm.lenderKind,
+      });
+      setLenderForm({ name: "", phone: "", notes: "", lenderKind: "EXTERNAL" });
+      setMessage("Lender saved");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to save lender");
+    }
+  }
+
+  async function addBorrowing() {
+    if (!borrowing.lenderId || !(Number(borrowing.amount) > 0)) {
+      setMessage("Select a lender and enter principal amount");
+      return;
+    }
+    try {
+      await postAction("addBorrowing", {
+        mode,
+        lenderId: Number(borrowing.lenderId),
+        amount: Number(borrowing.amount),
+        interestRatePercent: Number(borrowing.interestRatePercent || 0),
+        borrowingDate: borrowing.borrowingDate,
+        dueDate: borrowing.dueDate || "",
+        purpose: borrowing.purpose,
+        notes: borrowing.notes,
+      });
+      setBorrowing({
+        lenderId: "",
+        amount: "",
+        interestRatePercent: "",
+        dueDate: "",
+        borrowingDate: new Date().toISOString().slice(0, 10),
+        purpose: "",
+        notes: "",
+      });
+      setMessage("Borrowing saved");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to save borrowing");
+    }
+  }
+
+  async function submitRepayment() {
+    if (!repayForm) return;
+    const amount = Number(repayForm.amount);
+    if (!(amount > 0)) {
+      setMessage("Enter a valid repayment amount");
+      return;
+    }
+    if (repayForm.paidBy && !isAccountPerson(repayForm.paidBy)) {
+      setMessage("Invalid payment person");
+      return;
+    }
+    try {
+      await postAction("repayBorrowing", {
+        borrowingId: repayForm.borrowingId,
+        amount,
+        paidBy: repayForm.paidBy || undefined,
+      });
+      setRepayForm(null);
+      setMessage("Repayment saved");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to save repayment");
+    }
+  }
+
   const companyBalance = Number(data?.cashBalance?.[mode] || 0);
   const openingBalance = Number(data?.openingBalance?.[mode] || 0);
   const recon = data?.reconciliation?.[mode];
   const externalLoans = Number(data?.externalLoanOutstanding?.[mode] || recon?.externalLoanOutstanding || 0);
+  const filteredBorrowings = (data?.borrowings || []).filter((b) => b.mode === mode);
+  const openBorrowings = filteredBorrowings.filter((b) => Number(b.outstanding_amount) > 0);
 
   const accounts = useMemo(() => {
     return people.map((person) => {
@@ -274,7 +379,7 @@ export default function AccountsPage() {
   return (
     <AdminShell
       title="Accounts & Finance"
-      subtitle={`Company book, partner cash holdings, and dues for ${mode}`}
+      subtitle={`Company book, partner cash holdings, borrowings and dues for ${mode}`}
       actions={
         <button className="ad-btn ad-btn-ghost" onClick={() => void load()} disabled={loading}>
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
@@ -284,6 +389,16 @@ export default function AccountsPage() {
     >
       {message && <p className="mb-3 text-xs text-[var(--ad-accent)]">{message}</p>}
 
+      <div className="mb-4 flex flex-wrap gap-2">
+        <button className={tab === "overview" ? "ad-btn ad-btn-primary" : "ad-btn ad-btn-ghost"} onClick={() => setTab("overview")}>
+          Overview
+        </button>
+        <button className={tab === "borrowings" ? "ad-btn ad-btn-primary" : "ad-btn ad-btn-ghost"} onClick={() => setTab("borrowings")}>
+          Borrowings
+        </button>
+      </div>
+
+      {tab === "overview" && <>
       <div className="mb-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
         <div className="ad-card p-4">
           <div className="flex items-start justify-between gap-3">
@@ -447,6 +562,122 @@ export default function AccountsPage() {
           </div>
         )}
       </div>
+      </>}
+
+      {tab === "borrowings" && (
+        <div className="space-y-5">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="ad-card p-4">
+              <p className="ad-muted text-xs">External loans outstanding</p>
+              <p className="mt-1 text-2xl font-bold">{money(externalLoans)}</p>
+            </div>
+            <div className="ad-card p-4">
+              <p className="ad-muted text-xs">All open borrowings</p>
+              <p className="mt-1 text-2xl font-bold">{money(openBorrowings.reduce((n, x) => n + Number(x.outstanding_amount), 0))}</p>
+            </div>
+            <div className="ad-card p-4">
+              <p className="ad-muted text-xs">Interest booked (open)</p>
+              <p className="mt-1 text-2xl font-bold">{money(openBorrowings.reduce((n, x) => n + Number(x.interest_amount || 0), 0))}</p>
+            </div>
+          </div>
+
+          <div className="ad-card p-4">
+            <h2 className="mb-3 font-semibold">Add lender</h2>
+            <div className="grid gap-2 md:grid-cols-5">
+              <input className="ad-input" placeholder="Lender name" value={lenderForm.name} onChange={(e) => setLenderForm({ ...lenderForm, name: e.target.value })} />
+              <input className="ad-input" placeholder="Phone" value={lenderForm.phone} onChange={(e) => setLenderForm({ ...lenderForm, phone: e.target.value })} />
+              <select className="ad-input" value={lenderForm.lenderKind} onChange={(e) => setLenderForm({ ...lenderForm, lenderKind: e.target.value })}>
+                <option value="EXTERNAL">External lender</option>
+                <option value="PARTNER">Partner advance</option>
+              </select>
+              <input className="ad-input" placeholder="Notes" value={lenderForm.notes} onChange={(e) => setLenderForm({ ...lenderForm, notes: e.target.value })} />
+              <button className="ad-btn ad-btn-primary" onClick={() => void addLender()}>Save lender</button>
+            </div>
+          </div>
+
+          <div className="ad-card p-4">
+            <h2 className="mb-3 font-semibold">Borrow funds for {mode}</h2>
+            <p className="mb-3 text-xs ad-muted">Interest is a flat % of principal stored at entry (principal + interest = starting outstanding).</p>
+            <div className="grid gap-2 md:grid-cols-4">
+              <select className="ad-input" value={borrowing.lenderId} onChange={(e) => setBorrowing({ ...borrowing, lenderId: e.target.value })}>
+                <option value="">Lender</option>
+                {(data?.lenders || []).map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}{l.lender_kind === "PARTNER" ? " (Partner)" : ""}</option>
+                ))}
+              </select>
+              <input className="ad-input" type="number" min="0" placeholder="Principal amount" value={borrowing.amount} onChange={(e) => setBorrowing({ ...borrowing, amount: e.target.value })} />
+              <input className="ad-input" type="number" min="0" step="0.01" placeholder="Interest % (flat)" value={borrowing.interestRatePercent} onChange={(e) => setBorrowing({ ...borrowing, interestRatePercent: e.target.value })} />
+              <input className="ad-input" type="date" value={borrowing.borrowingDate} onChange={(e) => setBorrowing({ ...borrowing, borrowingDate: e.target.value })} />
+              <input className="ad-input" type="date" value={borrowing.dueDate} onChange={(e) => setBorrowing({ ...borrowing, dueDate: e.target.value })} title="Due date" />
+              <input className="ad-input" placeholder="Purpose" value={borrowing.purpose} onChange={(e) => setBorrowing({ ...borrowing, purpose: e.target.value })} />
+              <input className="ad-input" placeholder="Notes" value={borrowing.notes} onChange={(e) => setBorrowing({ ...borrowing, notes: e.target.value })} />
+              <button className="ad-btn ad-btn-primary" onClick={() => void addBorrowing()}>Add borrowing</button>
+            </div>
+            {Number(borrowing.amount) > 0 && (
+              <p className="mt-2 text-xs ad-muted">
+                Interest ₹{(Number(borrowing.amount) * (Number(borrowing.interestRatePercent || 0) / 100)).toFixed(2)} · Outstanding will start at ₹{(Number(borrowing.amount) + Number(borrowing.amount) * (Number(borrowing.interestRatePercent || 0) / 100)).toFixed(2)}
+              </p>
+            )}
+          </div>
+
+          {repayForm && (
+            <div className="ad-card border border-[var(--ad-accent)] p-4">
+              <h3 className="mb-3 text-sm font-semibold">Repay borrowing #{repayForm.borrowingId}</h3>
+              <div className="grid gap-2 md:grid-cols-4">
+                <input className="ad-input" type="number" min="0" placeholder="Repayment amount" value={repayForm.amount} onChange={(e) => setRepayForm({ ...repayForm, amount: e.target.value })} />
+                <PersonSelect value={repayForm.paidBy} onChange={(v) => setRepayForm({ ...repayForm, paidBy: v })} />
+                <button className="ad-btn ad-btn-primary" onClick={() => void submitRepayment()}>Save repayment</button>
+                <button className="ad-btn ad-btn-ghost" onClick={() => setRepayForm(null)}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          <div className="ad-table-wrap">
+            <table className="ad-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Lender</th>
+                  <th>Kind</th>
+                  <th>Principal</th>
+                  <th>Interest</th>
+                  <th>Outstanding</th>
+                  <th>Due</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredBorrowings.map((b) => (
+                  <tr key={b.id}>
+                    <td>{b.borrowing_date}</td>
+                    <td>{b.lenderName}</td>
+                    <td>{b.lenderKind === "PARTNER" ? "Partner" : "External"}</td>
+                    <td>{money(Number(b.amount))}</td>
+                    <td>{money(Number(b.interest_amount || 0))}{Number(b.interest_rate_percent || 0) > 0 ? ` (${b.interest_rate_percent}%)` : ""}</td>
+                    <td>{money(Number(b.outstanding_amount))}</td>
+                    <td>{b.due_date || "—"}</td>
+                    <td>{b.status || "—"}</td>
+                    <td>
+                      {Number(b.outstanding_amount) > 0 && (
+                        <button
+                          className="text-xs font-semibold text-[var(--ad-accent)]"
+                          onClick={() => setRepayForm({ borrowingId: b.id, amount: String(b.outstanding_amount ?? ""), paidBy: "" })}
+                        >
+                          Repay
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {filteredBorrowings.length === 0 && (
+                  <tr><td colSpan={9} className="ad-muted py-6 text-center text-sm">No borrowings for {mode} yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </AdminShell>
   );
 }

@@ -399,6 +399,13 @@ function getDb() {
   return globalForDb.__plasticDb;
 }
 
+export function closeDb() {
+  const db = globalForDb.__plasticDb;
+  if (!db) return;
+  db.close();
+  delete globalForDb.__plasticDb;
+}
+
 export const sqlite = new Proxy({} as DatabaseSync, {
   get(_target, prop) {
     const db = getDb();

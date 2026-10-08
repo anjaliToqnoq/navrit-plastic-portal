@@ -11,13 +11,14 @@ type Labour={id:number;batch_id:number;workerName:string;amount:number;payment_d
 export default function ProcessingPage(){
  const {mode}=useBusinessMode();
  const [workers,setWorkers]=useState<Worker[]>([]),[batches,setBatches]=useState<Batch[]>([]),[labour,setLabour]=useState<Labour[]>([]);
- const [name,setName]=useState(""),[batchId,setBatchId]=useState(""),[taskType,setTaskType]=useState("Cap Removal"),[amount,setAmount]=useState(""),[paidBy,setPaidBy]=useState(""),[selected,setSelected]=useState<number[]>([]),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
+ const today=new Date().toISOString().slice(0,10);
+ const [name,setName]=useState(""),[batchId,setBatchId]=useState(""),[taskType,setTaskType]=useState("Cap Removal"),[amount,setAmount]=useState(""),[paymentDate,setPaymentDate]=useState(today),[paidBy,setPaidBy]=useState(""),[notes,setNotes]=useState(""),[selected,setSelected]=useState<number[]>([]),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
  async function load(){const r=await fetch("/api/admin/inventory?mode="+mode,{cache:"no-store"});const j=await r.json();setWorkers(j.labourWorkers||[]);setBatches((j.processingBatches||[]).filter((b:Batch)=>b.mode===mode&&b.status!=="CANCELLED"));setLabour((j.manualLabour||[]).filter((x:Labour)=>x.mode===mode))}
  useEffect(()=>{load()},[mode]);
  const active=workers.filter(w=>w.active), total=useMemo(()=>selected.length*Number(amount||0),[selected,amount]);
  async function post(body:any){setBusy(true);setMessage("");try{const r=await fetch("/api/admin/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw new Error(j.error||"Something went wrong");await load();setMessage("Saved successfully.");return true}catch(e:any){setMessage(e.message);return false}finally{setBusy(false)}}
  async function addWorker(e:FormEvent){e.preventDefault();if(await post({action:"addLabourWorker",name}))setName("")}
- async function save(e:FormEvent){e.preventDefault();if(!batchId||!selected.length||Number(amount)<=0){setMessage("Select a batch, workers and amount.");return}if(await post({action:"addManualLabour",mode,batchId:Number(batchId),workerIds:selected,taskType,amountPerWorker:Number(amount),paidBy})){setSelected([]);setAmount("");setBatchId("")}}
+ async function save(e:FormEvent){e.preventDefault();if(!batchId||!selected.length||Number(amount)<=0){setMessage("Select a batch, workers and amount.");return}if(await post({action:"addManualLabour",mode,batchId:Number(batchId),workerIds:selected,taskType,amountPerWorker:Number(amount),paymentDate,paidBy,notes})){setSelected([]);setAmount("");setBatchId("");setPaymentDate(today);setPaidBy("");setNotes("")}}
  return <AdminShell title="Processing" subtitle="Processing and manual labour management">
   <div className="grid gap-5 lg:grid-cols-2">
    <section className="ad-card p-5"><h2 className="text-lg font-semibold">Labour Management</h2><p className="ad-muted mt-1 text-sm">Add workers once and disable them when they leave.</p>
@@ -28,7 +29,8 @@ export default function ProcessingPage(){
     <form onSubmit={save} className="mt-4 space-y-3">
      <select className="ad-input w-full" value={batchId} onChange={e=>setBatchId(e.target.value)}><option value="">Select processing batch</option>{batches.map(b=><option key={b.id} value={b.id}>#{b.id} · {b.batch_date} · {b.total_input_kg} kg</option>)}</select>
      <div className="grid grid-cols-2 gap-3"><select className="ad-input" value={taskType} onChange={e=>setTaskType(e.target.value)}><option>Cap Removal</option><option>Sorting</option><option>Other</option></select><input className="ad-input" type="number" min="0.01" step="0.01" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="₹ / worker"/></div>
-     <input className="ad-input w-full" value={paidBy} onChange={e=>setPaidBy(e.target.value)} placeholder="Paid by"/>
+     <div className="grid grid-cols-2 gap-3"><input className="ad-input" type="date" value={paymentDate} onChange={e=>setPaymentDate(e.target.value)}/><input className="ad-input" value={paidBy} onChange={e=>setPaidBy(e.target.value)} placeholder="Paid by"/></div>
+     <input className="ad-input w-full" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Notes (optional)"/>
      <div className="rounded-lg border border-[var(--ad-border)] p-3"><div className="mb-2 flex justify-between text-sm font-medium"><span>Select workers</span><span>{selected.length} selected</span></div><div className="grid gap-2 sm:grid-cols-2">{active.map(w=><label key={w.id} className="flex items-center gap-2 rounded-md p-2"><input type="checkbox" checked={selected.includes(w.id)} onChange={e=>setSelected(e.target.checked?[...selected,w.id]:selected.filter(id=>id!==w.id))}/><span>{w.name}</span></label>)}</div></div>
      <div className="flex justify-between text-sm"><span>Total manual labour</span><strong>₹{total.toFixed(2)}</strong></div><button className="ad-btn w-full" disabled={busy||!batchId||!selected.length||Number(amount)<=0}>Save Attendance & Labour</button>
     </form>

@@ -18,6 +18,44 @@ function json<T>(value: T) {
   return NextResponse.json(JSON.parse(JSON.stringify(value)));
 }
 
+function withTransaction<T>(fn: () => T): T {
+  sqlite.exec("BEGIN IMMEDIATE");
+  try {
+    const result = fn();
+    sqlite.exec("COMMIT");
+    return result;
+  } catch (error) {
+    try { sqlite.exec("ROLLBACK"); } catch { /* ignore rollback errors */ }
+    throw error;
+  }
+}
+
+function saleMaterialName(materialCategory: string, materialVariant: string) {
+  return materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + materialVariant;
+}
+
+function getAvailableStock(mode: string, materialName: string, date: string, excludeSaleId?: number) {
+  const row = excludeSaleId === undefined
+    ? sqlite.prepare("SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions WHERE mode=? AND transaction_date<=? AND material_name=?").get(mode,date,materialName) as any
+    : sqlite.prepare("SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions WHERE mode=? AND transaction_date<=? AND material_name=? AND COALESCE(sale_id,0)<>?").get(mode,date,materialName,excludeSaleId) as any;
+  return Number(row?.kg || 0);
+}
+
+function assertNoNegativeStock(mode: string, materialNames: string[]) {
+  for (const materialName of [...new Set(materialNames)]) {
+    const rows = sqlite.prepare(
+      "SELECT quantity_kg FROM inventory_transactions WHERE mode=? AND material_name=? ORDER BY transaction_date ASC, id ASC"
+    ).all(mode,materialName) as Array<{quantity_kg:number}>;
+    let balance = 0;
+    for (const row of rows) {
+      balance += Number(row.quantity_kg || 0);
+      if (balance < -0.005) {
+        throw new Error("Stock cannot go negative for " + materialName + ". Resulting balance: " + balance.toFixed(3) + " kg");
+      }
+    }
+  }
+}
+
 export async function GET() {
   if (!(await guard())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -145,6 +183,7 @@ export async function POST(req: NextRequest) {
   if (!body?.action) return NextResponse.json({ error: "Missing action" }, { status: 400 });
 
   try {
+    return withTransaction(() => {
     if (body.action === "setOpeningBalance") {
       const x = z.object({ mode: modeSchema, amount: z.number().nonnegative() }).parse(body);
       sqlite.prepare("INSERT INTO company_balances(mode,opening_balance,updated_at) VALUES(?,?,?) ON CONFLICT(mode) DO UPDATE SET opening_balance=excluded.opening_balance,updated_at=excluded.updated_at").run(x.mode,x.amount,nowIso());
@@ -260,14 +299,6 @@ export async function POST(req: NextRequest) {
         notes: z.string().trim().optional().default(""),
       }).parse(body);
 
-      const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
-      let cashPaid = s.paidAmount ?? 0;
-      if (cashPaid > total) cashPaid = total;
-      let advanceApplied=0;
-      if(s.supplierId){ const rows=sqlite.prepare("SELECT id,amount,used_amount FROM vendor_advances WHERE mode=? AND supplier_id=? AND amount-used_amount>0.005 ORDER BY advance_date ASC,id ASC").all(s.mode,s.supplierId) as Array<{id:number;amount:number;used_amount:number}>; let rem=Math.max(0,total-cashPaid); for(const a of rows){ if(rem<=0) break; const use=Math.min(a.amount-a.used_amount,rem); if(use>0){sqlite.prepare("UPDATE vendor_advances SET used_amount=used_amount+?,updated_at=? WHERE id=?").run(use,nowIso(),a.id); advanceApplied+=use; rem-=use;}} }
-      const paid=Math.round((cashPaid+advanceApplied)*100)/100;
-      const credit=Math.round((total-paid)*100)/100;
-
       if (!s.supplierId) {
         return NextResponse.json({ error: "Vendor is required for every purchase" }, { status: 400 });
       }
@@ -277,6 +308,14 @@ export async function POST(req: NextRequest) {
       if (s.purchaseType === "BORROWED_FUND" && !s.borrowingId) {
         return NextResponse.json({ error: "Borrowing account is required for borrowed-fund purchase" }, { status: 400 });
       }
+
+      const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
+      let cashPaid = s.paidAmount ?? 0;
+      if (cashPaid > total) cashPaid = total;
+      let advanceApplied=0;
+      if(s.supplierId){ const rows=sqlite.prepare("SELECT id,amount,used_amount FROM vendor_advances WHERE mode=? AND supplier_id=? AND amount-used_amount>0.005 ORDER BY advance_date ASC,id ASC").all(s.mode,s.supplierId) as Array<{id:number;amount:number;used_amount:number}>; let rem=Math.max(0,total-cashPaid); for(const a of rows){ if(rem<=0) break; const use=Math.min(a.amount-a.used_amount,rem); if(use>0){sqlite.prepare("UPDATE vendor_advances SET used_amount=used_amount+?,updated_at=? WHERE id=?").run(use,nowIso(),a.id); advanceApplied+=use; rem-=use;}} }
+      const paid=Math.round((cashPaid+advanceApplied)*100)/100;
+      const credit=Math.round((total-paid)*100)/100;
 
       const r = sqlite.prepare(`
         INSERT INTO purchases
@@ -414,11 +453,9 @@ export async function POST(req: NextRequest) {
         if (!allowed.includes(item.materialVariant)) return NextResponse.json({error:"Invalid output material for this mode"}, {status:400});
       }
 
-      sqlite.exec("BEGIN");
-      try {
         for (const item of inputItems) {
           const materialName = item.material_variant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.material_variant;
-          sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+          sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,purchase_id,sale_id,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
             .run(s.mode,null,materialName,"ADJUSTMENT",-Number(item.quantity_kg),0,batch.batch_date,"PROCESSING INPUT #"+s.batchId,nowIso());
         }
         for (const item of s.outputs) {
@@ -430,11 +467,6 @@ export async function POST(req: NextRequest) {
         }
         sqlite.prepare("UPDATE processing_batches SET total_output_kg=?, waste_kg=?, processing_cost=?, status='SOLD' WHERE id=?")
           .run(outputKg,Math.max(0,wasteKg),s.processingCost,s.batchId);
-        sqlite.exec("COMMIT");
-      } catch (e) {
-        sqlite.exec("ROLLBACK");
-        throw e;
-      }
       return json({ok:true,batchId:s.batchId,inputKg,outputKg,wasteKg:Math.max(0,wasteKg)});
     }
 
@@ -483,12 +515,15 @@ export async function POST(req: NextRequest) {
       const labourCharges = Math.round(totalWeight * 2 * 100) / 100;
       const loadingCharges = s.loadingCharges;
       const total = Math.round(Math.max(0, grossAmount - labourCharges - loadingCharges) * 100) / 100;
-      for (let i = 0; i < s.items.length; i++) {
-        const item = s.items[i];
-        const materialName = item.materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.materialVariant;
-        const available = Number((sqlite.prepare("SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions WHERE mode=? AND transaction_date<=? AND (material_name=? OR material_name LIKE 'Natural Bottles - %' OR material_name='Natural Bottles')").get(s.mode,s.saleDate,materialName) as any)?.kg || 0);
-        if (item.quantityKg > available + 0.005) {
-          return NextResponse.json({ error: "Insufficient stock for " + item.materialVariant + ". Available up to " + s.saleDate + ": " + available.toFixed(2) + " kg" }, { status: 400 });
+      const requiredByMaterial = new Map<string, number>();
+      for (const item of s.items) {
+        const materialName = saleMaterialName(item.materialCategory,item.materialVariant);
+        requiredByMaterial.set(materialName,(requiredByMaterial.get(materialName)||0)+item.quantityKg);
+      }
+      for (const [materialName,requiredKg] of requiredByMaterial) {
+        const available = getAvailableStock(s.mode,materialName,s.saleDate);
+        if (requiredKg > available + 0.005) {
+          return NextResponse.json({ error: "Insufficient stock for " + materialName + ". Available up to " + s.saleDate + ": " + available.toFixed(2) + " kg" }, {status:400});
         }
       }
 
@@ -505,7 +540,7 @@ export async function POST(req: NextRequest) {
           .run(saleId,item.materialCategory,item.materialVariant,item.quantityKg,item.ratePerKg,lineTotals[i]);
         const materialName = item.materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.materialVariant;
         sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
-          .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],s.saleDate,"SALE #"+saleId+(s.notes ? " - "+s.notes : ""),nowIso());
+          .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],null,saleId,s.saleDate,"SALE #"+saleId+(s.notes ? " - "+s.notes : ""),nowIso());
       }
       if (received > 0) sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,saleId,received,s.saleDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
       return json({ok:true,id:saleId,grossAmount,labourCharges,loadingCharges,total,received,credit});
@@ -527,7 +562,7 @@ export async function POST(req: NextRequest) {
         saleDate: dateSchema,
         loadingCharges: z.number().nonnegative().default(0),
         receivedBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
-        paymentMode: z.string().trim().min(1).default("Cash"),
+        paymentMode: z.string().trim().min(1).optional(),
         notes: z.string().trim().optional().default("")
       }).parse(body);
 
@@ -553,13 +588,15 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({error:"Final sale amount cannot be less than payment already received"},{status:400});
       }
 
+      const requiredByMaterial = new Map<string, number>();
       for (const item of s.items) {
-        const materialName = item.materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.materialVariant;
-        const available = Number((sqlite.prepare(
-          "SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions WHERE mode=? AND transaction_date<=? AND notes NOT LIKE ? AND (material_name=? OR material_name LIKE 'Natural Bottles - %' OR material_name='Natural Bottles')"
-        ).get(s.mode,s.saleDate,"SALE #"+s.saleId+"%",materialName) as any)?.kg || 0);
-        if (item.quantityKg > available + 0.005) {
-          return NextResponse.json({error:"Insufficient stock for "+item.materialVariant+". Available up to "+s.saleDate+": "+available.toFixed(2)+" kg"},{status:400});
+        const materialName = saleMaterialName(item.materialCategory,item.materialVariant);
+        requiredByMaterial.set(materialName,(requiredByMaterial.get(materialName)||0)+item.quantityKg);
+      }
+      for (const [materialName,requiredKg] of requiredByMaterial) {
+        const available = getAvailableStock(s.mode,materialName,s.saleDate,s.saleId);
+        if (requiredKg > available + 0.005) {
+          return NextResponse.json({error:"Insufficient stock for "+materialName+". Available up to "+s.saleDate+": "+available.toFixed(2)+" kg"},{status:400});
         }
       }
 
@@ -569,7 +606,7 @@ export async function POST(req: NextRequest) {
           .run(s.customerName,s.phone,s.location,s.items[0].materialCategory,s.items.length===1?s.items[0].materialVariant:"MIXED",totalWeight,0,grossAmount,labourCharges,loadingCharges,total,Math.round((total-Number(existing.received_amount))*100)/100,s.saleDate,s.notes,nowIso(),s.saleId,s.mode);
 
         sqlite.prepare("DELETE FROM sale_items WHERE sale_id=?").run(s.saleId);
-        sqlite.prepare("DELETE FROM inventory_transactions WHERE mode=? AND transaction_type='ADJUSTMENT' AND notes LIKE ?").run(s.mode,"SALE #"+s.saleId+"%");
+        sqlite.prepare("DELETE FROM inventory_transactions WHERE sale_id=? AND transaction_type='ADJUSTMENT'").run(s.saleId);
 
         for (let i=0;i<s.items.length;i++) {
           const item=s.items[i];
@@ -577,12 +614,12 @@ export async function POST(req: NextRequest) {
             .run(s.saleId,item.materialCategory,item.materialVariant,item.quantityKg,item.ratePerKg,lineTotals[i]);
           const materialName=item.materialVariant==="Red" ? "Red Bottles" : "Natural Bottles - "+item.materialVariant;
           sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
-            .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],s.saleDate,"SALE #"+s.saleId+(s.notes ? " - "+s.notes : ""),nowIso());
+            .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],null,s.saleId,s.saleDate,"SALE #"+s.saleId+(s.notes ? " - "+s.notes : ""),nowIso());
         }
 
-        if (s.receivedBy || s.paymentMode) {
-          sqlite.prepare("UPDATE sale_payments SET received_by=?,payment_mode=? WHERE id=(SELECT id FROM sale_payments WHERE sale_id=? ORDER BY id DESC LIMIT 1)")
-            .run(s.receivedBy ?? "",s.paymentMode,s.saleId);
+        if (s.receivedBy !== undefined || s.paymentMode !== undefined) {
+          sqlite.prepare("UPDATE sale_payments SET received_by=COALESCE(?,received_by),payment_mode=COALESCE(?,payment_mode) WHERE id=(SELECT id FROM sale_payments WHERE sale_id=? ORDER BY id DESC LIMIT 1)")
+            .run(s.receivedBy ?? null,s.paymentMode ?? null,s.saleId);
         }
         sqlite.exec("COMMIT");
       } catch (e) {
@@ -621,6 +658,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+    });
   } catch (e) {
     if (e instanceof z.ZodError) return NextResponse.json({ error: e.issues[0]?.message || "Invalid data" }, { status: 400 });
     return NextResponse.json({ error: e instanceof Error ? e.message : "Operation failed" }, { status: 500 });

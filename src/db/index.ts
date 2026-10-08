@@ -122,8 +122,7 @@ function createDb() {
       payment_date TEXT NOT NULL,
       payment_mode TEXT NOT NULL DEFAULT 'Cash',
       notes TEXT NOT NULL DEFAULT '',
-      task_type TEXT NOT NULL DEFAULT 'Manual Labour',
-      created_at TEXT NOT NULL
+            created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS vendor_payments_supplier_idx
       ON vendor_payments(supplier_id, mode, payment_date);
@@ -394,9 +393,7 @@ function createDb() {
     "ALTER TABLE other_expenses ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE other_expenses ADD COLUMN billing_month TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE other_expenses ADD COLUMN billing_start_date TEXT NOT NULL DEFAULT ''",
-    "ALTER TABLE other_expenses ADD COLUMN billing_end_date TEXT NOT NULL DEFAULT ''",
-    "ALTER TABLE processing_manual_labour ADD COLUMN task_type TEXT NOT NULL DEFAULT 'Manual Labour'",
-  ]) {
+    "ALTER TABLE other_expenses ADD COLUMN billing_end_date TEXT NOT NULL DEFAULT ''",  ]) {
     try { sqlite.exec(migration); } catch { /* column already exists */ }
   }
   // Create the sale index only after the sale_id migration has run. Existing

@@ -6,7 +6,6 @@ import { useBusinessMode } from "@/components/business-mode-provider";
 import { Plus, WalletCards, X } from "lucide-react";
 
 type Worker = { id: number; name: string; active: number };
-type Batch = { id: number; mode: string; batch_date: string; total_input_kg: number; status: string };
 type Labour = { id: number; batch_id: number; worker_id: number; workerName: string; amount: number; payment_date: string; paid_by: string; task_type: string; mode: string; notes?: string };
 type ApiResponse = { ok?: boolean; error?: string; labourWorkers?: Worker[]; processingBatches?: Batch[]; manualLabour?: Labour[] };
 type PostBody = Record<string, string | number | boolean | number[] | undefined>;
@@ -14,14 +13,12 @@ type PostBody = Record<string, string | number | boolean | number[] | undefined>
 export default function ProcessingPage() {
   const { mode } = useBusinessMode();
   const [workers, setWorkers] = useState<Worker[]>([]);
-  const [batches, setBatches] = useState<Batch[]>([]);
   const [labour, setLabour] = useState<Labour[]>([]);
   const today = new Date().toISOString().slice(0, 10);
 
   const [showAdd, setShowAdd] = useState(false);
   const [name, setName] = useState("");
   const [selectedWorkerId, setSelectedWorkerId] = useState<number | null>(null);
-  const [batchId, setBatchId] = useState("");
   const [taskType, setTaskType] = useState("Cap Removal");
   const [amount, setAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(today);
@@ -36,7 +33,6 @@ export default function ProcessingPage() {
     const data: ApiResponse = await response.json();
     if (!response.ok) throw new Error(data.error || "Unable to load labour data.");
     setWorkers(data.labourWorkers ?? []);
-    setBatches((data.processingBatches ?? []).filter((batch) => batch.mode === mode && batch.status !== "CANCELLED"));
     setLabour((data.manualLabour ?? []).filter((entry) => entry.mode === mode));
   }, [mode]);
 
@@ -98,15 +94,14 @@ export default function ProcessingPage() {
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!batchId || !selected.length || Number(amount) <= 0) {
-      setMessage("Select a processing batch, workers and a valid wage.");
+    if (!selected.length || Number(amount) <= 0) {
+      setMessage("Select at least one labourer and enter a valid wage.");
       return;
     }
 
     const ok = await post({
       action: "addManualLabour",
       mode,
-      batchId: Number(batchId),
       workerIds: selected,
       taskType,
       amountPerWorker: Number(amount),
@@ -118,7 +113,6 @@ export default function ProcessingPage() {
     if (ok) {
       setSelected([]);
       setAmount("");
-      setBatchId("");
       setPaymentDate(today);
       setPaidBy("");
       setNotes("");
@@ -260,20 +254,7 @@ export default function ProcessingPage() {
             </div>
 
             <form onSubmit={save} className="space-y-3">
-              <select className="ad-input w-full" value={batchId} onChange={(event) => setBatchId(event.target.value)}>
-                <option value="">Select processing batch</option>
-                {batches.map((batch) => (
-                  <option key={batch.id} value={batch.id}>
-                    #{batch.id} · {batch.batch_date} · {batch.total_input_kg} kg · {batch.status}
-                  </option>
-                ))}
-              </select>
-
-              {!batches.length && (
-                <p className="rounded-lg border border-[var(--ad-border)] bg-[var(--ad-input)] p-3 text-xs ad-muted">
-                  No processing batches are available for {mode}. Create a batch from Material & Profit Analysis first.
-                </p>
-              )}
+              <p className="rounded-lg border border-[var(--ad-border)] bg-[var(--ad-input)] p-3 text-xs ad-muted">Record labour for cap removal or sorting directly. A processing batch is not required.</p>
 
               <div className="grid grid-cols-2 gap-3">
                 <select className="ad-input" value={taskType} onChange={(event) => setTaskType(event.target.value)}>
@@ -330,7 +311,7 @@ export default function ProcessingPage() {
                 <strong>₹{total.toFixed(2)}</strong>
               </div>
 
-              <button className="ad-btn ad-btn-primary w-full" disabled={busy || !batchId || !selected.length || Number(amount) <= 0}>
+              <button className="ad-btn ad-btn-primary w-full" disabled={busy || !selected.length || Number(amount) <= 0}>
                 Save Attendance & Labour
               </button>
             </form>

@@ -6,7 +6,7 @@ import { useBusinessMode } from "@/components/business-mode-provider";
 import { Plus, WalletCards, X } from "lucide-react";
 
 type Worker = { id: number; name: string; active: number };
-type Labour = { id: number; batch_id: number; worker_id: number; workerName: string; amount: number; payment_date: string; paid_by: string; task_type: string; mode: string; notes?: string };
+type Labour = { id: number; batch_id: number | null; worker_id: number; workerName: string; amount: number; payment_date: string; paid_by: string; task_type: string; mode: string; notes?: string };
 type ApiResponse = { ok?: boolean; error?: string; labourWorkers?: Worker[]; processingBatches?: Batch[]; manualLabour?: Labour[] };
 type PostBody = Record<string, string | number | boolean | number[] | undefined>;
 
@@ -228,7 +228,7 @@ export default function ProcessingPage() {
                     {labour.filter((entry) => entry.worker_id === selectedWorker.id).map((entry) => (
                       <tr key={entry.id}>
                         <td>{entry.payment_date}</td>
-                        <td>#{entry.batch_id}</td>
+                        <td>{entry.batch_id ? `#${entry.batch_id}` : "Direct Labour"}</td>
                         <td>{entry.task_type || "Manual Labour"}</td>
                         <td>₹{Number(entry.amount).toFixed(2)}</td>
                         <td>{entry.paid_by || "—"}</td>

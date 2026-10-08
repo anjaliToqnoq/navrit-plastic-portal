@@ -9,6 +9,7 @@ type Person = "Rahul" | "Nitin" | "Devesh";
 type Row = Record<string, unknown>;
 type AccountsData = {
   openingBalance?: Record<string, number>;
+  personAccountTotals?: Record<string, Record<string, { received:number; purchasesPaid:number; expensesPaid:number; processingPaid:number; saleProcessingPaid:number; paid:number; balance:number }>>;
   cashBalance?: Record<string, number>;
   salePayments?: Row[];
   purchases?: Row[];
@@ -81,10 +82,19 @@ export default function AccountsPage() {
 
   const accounts = useMemo(() => {
     return people.map((person) => {
+      const serverTotals = data?.personAccountTotals?.[mode]?.[person];
+      if (serverTotals) {
+        return {
+          person,
+          received: Number(serverTotals.received || 0),
+          paid: Number(serverTotals.paid || 0),
+          balance: Number(serverTotals.balance || 0),
+          purchasesPaid: Number(serverTotals.purchasesPaid || 0),
+          expensesPaid: Number(serverTotals.expensesPaid || 0) + Number(serverTotals.processingPaid || 0) + Number(serverTotals.saleProcessingPaid || 0),
+        };
+      }
+
       const received = sumBy(data?.salePayments, "received_by", person, mode);
-      // Use actual vendor cash-payment records, not purchases.paid_amount.
-      // paid_amount can include supplier advances, which are not a new cash outflow
-      // at purchase time and therefore must not reduce the person's account again.
       const purchasesPaid = (data?.vendorPayments || [])
         .filter((row) =>
           row.mode === mode &&
@@ -124,14 +134,14 @@ export default function AccountsPage() {
         direction: "in",
       }));
 
-    (data?.purchases || [])
-      .filter((x) => x.mode === mode && x.paid_by && Number(x.paid_amount) > 0)
+    (data?.vendorPayments || [])
+      .filter((x) => x.mode === mode && x.paid_by && String(x.payment_type || "") !== "ADVANCE" && String(x.payment_mode || "") !== "Advance" && Number(x.amount) > 0)
       .forEach((x) => rows.push({
-        date: String(x.purchase_date ?? ""),
+        date: String(x.payment_date ?? ""),
         type: "Purchase payment",
-        description: `Purchase #${x.id} — ${x.material_name}`,
+        description: x.purchase_id ? `Purchase #${x.purchase_id} — ${x.materialName || "Vendor payment"}` : "Vendor payment",
         person: String(x.paid_by ?? ""),
-        amount: Number(x.paid_amount || 0),
+        amount: Number(x.amount || 0),
         direction: "out",
       }));
 

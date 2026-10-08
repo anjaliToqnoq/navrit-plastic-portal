@@ -254,6 +254,26 @@ function createDb() {
       quantity_kg REAL NOT NULL CHECK(quantity_kg > 0),
       bale_count INTEGER NOT NULL DEFAULT 0 CHECK(bale_count >= 0)
     );
+    CREATE TABLE IF NOT EXISTS manual_labour_workers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS processing_manual_labour (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      batch_id INTEGER NOT NULL REFERENCES processing_batches(id) ON DELETE CASCADE,
+      worker_id INTEGER NOT NULL REFERENCES manual_labour_workers(id),
+      amount REAL NOT NULL CHECK(amount > 0),
+      payment_date TEXT NOT NULL,
+      paid_by TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS processing_manual_labour_batch_idx
+      ON processing_manual_labour(batch_id, payment_date);
     CREATE TABLE IF NOT EXISTS processing_expenses (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),

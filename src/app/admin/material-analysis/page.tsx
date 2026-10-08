@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AdminShell, adminToast } from "@/components/admin-shell";
 import { useBusinessMode } from "@/components/business-mode-provider";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
@@ -36,7 +36,9 @@ export default function MaterialAnalysisPage() {
     } catch(e) { adminToast(e instanceof Error?e.message:"Analysis failed"); }
     finally { setBusy(false); }
   }
-  // The filters are the intended trigger for reloading analysis data.\n  // eslint-disable-next-line react-hooks/exhaustive-deps\n  useEffect(()=>{load();},[mode,from,to]);
+  // The filters are the intended trigger for reloading analysis data.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(()=>{load();},[mode,from,to]);
 
   async function post(action:string,payload:any) {
     const r=await fetch("/api/admin/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...payload})});

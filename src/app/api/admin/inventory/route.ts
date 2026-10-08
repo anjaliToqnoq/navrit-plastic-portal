@@ -346,7 +346,7 @@ export async function POST(req: NextRequest) {
         mode: modeSchema,
         materialId: z.number().int().positive().optional(),
         materialName: z.string().trim().min(1),
-        supplierId: z.number().int().positive().optional(),
+        supplierId: z.number().int().positive(),
         purchaseType: z.enum(["NORMAL", "SUPPLIER_CREDIT", "BORROWED_FUND"]),
         quantityKg: z.number().positive(),
         ratePerKg: z.number().nonnegative(),
@@ -360,7 +360,6 @@ export async function POST(req: NextRequest) {
       if (existing.paid_amount > total + 0.005) return NextResponse.json({ error: "Purchase total cannot be less than amount already paid" }, { status: 400 });
       const credit = Math.round((total - existing.paid_amount) * 100) / 100;
       if (!s.supplierId) return NextResponse.json({ error: "Vendor is required for every purchase" }, { status: 400 });
-      const materialId = s.materialId ?? existing.material_id ?? null;
       const materialId = s.materialId ?? existing.material_id ?? null;
       sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, credit_amount=?, purchase_date=?, paid_by=?, notes=?, updated_at=? WHERE id=? AND mode=?`)
         .run(materialId, s.materialName, s.supplierId, s.purchaseType, s.quantityKg, s.ratePerKg, total, credit, s.purchaseDate, s.paidBy ?? "", s.notes, nowIso(), s.purchaseId, s.mode);

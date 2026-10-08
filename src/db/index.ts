@@ -250,7 +250,7 @@ function createDb() {
     );
     CREATE TABLE IF NOT EXISTS processing_batch_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      batch_id INTEGER NOT NULL REFERENCES processing_batches(id) ON DELETE CASCADE,
+      batch_id INTEGER REFERENCES processing_batches(id) ON DELETE CASCADE,
       material_variant TEXT NOT NULL CHECK(material_variant IN ('Green','White','White Milk','Red')),
       quantity_kg REAL NOT NULL CHECK(quantity_kg > 0),
       bale_count INTEGER NOT NULL DEFAULT 0 CHECK(bale_count >= 0)

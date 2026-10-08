@@ -346,12 +346,10 @@ export default function AccountsPage() {
         {accounts.map((account) => {
           const cashWith = account.cashWithPartner;
           const owes = account.companyOwesPartner;
-          const primaryLabel = cashWith >= owes
-            ? (cashWith >= 0 ? `Company cash with ${account.person}` : `Company owes ${account.person}`)
+          const primaryLabel = account.balance >= 0
+            ? `Company cash with ${account.person}`
             : `Company owes ${account.person}`;
-          const primaryValue = cashWith >= owes
-            ? (cashWith >= 0 ? cashWith : Math.abs(cashWith))
-            : Math.max(0, owes);
+          const primaryValue = Math.abs(account.balance);
           return (
             <div key={account.person} className="ad-card p-4">
               <div className="flex items-start justify-between gap-2">

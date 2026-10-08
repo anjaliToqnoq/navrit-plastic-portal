@@ -65,13 +65,18 @@ db.exec("INSERT INTO vendor_payments(id,supplier_id,purchase_id,payment_type,amo
 db.exec("CREATE TABLE sale_payments(id INTEGER PRIMARY KEY,sale_id INTEGER,received_by TEXT,payment_mode TEXT)");
 db.exec("INSERT INTO sale_payments(id,sale_id,received_by,payment_mode) VALUES(1,1,'Devesh','UPI')");
 db.prepare("UPDATE sale_payments SET received_by=COALESCE(?,received_by),payment_mode=COALESCE(?,payment_mode) WHERE id=(SELECT id FROM sale_payments WHERE sale_id=? ORDER BY id DESC LIMIT 1)").run(null,null,1);
-assert.deepEqual(db.prepare("SELECT received_by,payment_mode FROM sale_payments WHERE id=1").get(), {received_by:"Devesh",payment_mode:"UPI"});
+const preservedPayment = db.prepare("SELECT received_by,payment_mode FROM sale_payments WHERE id=1").get();
+assert.equal(preservedPayment.received_by,"Devesh");
+assert.equal(preservedPayment.payment_mode,"UPI");
 
 // A6: purchase edits preserve payment date/payer while allowing supplier to move.
 db.exec("INSERT INTO purchases(id,paid_amount,material_id,material_name,supplier_id,paid_by) VALUES(1,100,7,'Natural Bottles',1,'Rahul')");
 db.exec("INSERT INTO vendor_payments(id,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,paid_by) VALUES(2,1,1,'PURCHASE',100,'2026-10-01','Cash','Rahul')");
 db.prepare("UPDATE vendor_payments SET supplier_id=? WHERE purchase_id=?").run(2,1);
-assert.deepEqual(db.prepare("SELECT supplier_id,payment_date,paid_by FROM vendor_payments WHERE id=2").get(), {supplier_id:2,payment_date:"2026-10-01",paid_by:"Rahul"});
+const preservedVendorPayment = db.prepare("SELECT supplier_id,payment_date,paid_by FROM vendor_payments WHERE id=2").get();
+assert.equal(preservedVendorPayment.supplier_id,2);
+assert.equal(preservedVendorPayment.payment_date,"2026-10-01");
+assert.equal(preservedVendorPayment.paid_by,"Rahul");
 
 // A7: atomic validation principle — a write made before a later failure must roll back.
 db.exec("CREATE TABLE vendor_advances(id INTEGER PRIMARY KEY, amount REAL, used_amount REAL)");

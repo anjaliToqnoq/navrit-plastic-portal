@@ -361,6 +361,7 @@ export async function POST(req: NextRequest) {
       const credit = Math.round((total - existing.paid_amount) * 100) / 100;
       if (!s.supplierId) return NextResponse.json({ error: "Vendor is required for every purchase" }, { status: 400 });
       const materialId = s.materialId ?? existing.material_id ?? null;
+      const materialId = s.materialId ?? existing.material_id ?? null;
       sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, credit_amount=?, purchase_date=?, paid_by=?, notes=?, updated_at=? WHERE id=? AND mode=?`)
         .run(materialId, s.materialName, s.supplierId, s.purchaseType, s.quantityKg, s.ratePerKg, total, credit, s.purchaseDate, s.paidBy ?? "", s.notes, nowIso(), s.purchaseId, s.mode);
       sqlite.prepare("UPDATE inventory_transactions SET material_id=?, material_name=?, quantity_kg=?, amount=?, transaction_date=?, notes=? WHERE purchase_id=? AND transaction_type='PURCHASE'")

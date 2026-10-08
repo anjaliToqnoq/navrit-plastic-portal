@@ -346,6 +346,7 @@ function createDb() {
     "ALTER TABLE purchases ADD COLUMN weight_charges REAL NOT NULL DEFAULT 0",
     "ALTER TABLE purchases ADD COLUMN labour_charges REAL NOT NULL DEFAULT 0",
     "ALTER TABLE vendor_payments ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE inventory_transactions ADD COLUMN sale_id INTEGER REFERENCES sales(id) ON DELETE CASCADE",
     "ALTER TABLE other_expenses ADD COLUMN expense_frequency TEXT NOT NULL DEFAULT 'ONE_TIME'",
     "ALTER TABLE other_expenses ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE other_expenses ADD COLUMN billing_month TEXT NOT NULL DEFAULT ''",

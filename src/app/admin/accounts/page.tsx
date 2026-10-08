@@ -4,14 +4,39 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminShell } from "@/components/admin-shell";
 import { useBusinessMode } from "@/components/business-mode-provider";
 import { ACCOUNT_PERSONS, type AccountPerson } from "@/lib/account-persons";
+import { PersonSelect } from "@/components/person-select";
 import { ArrowDownLeft, ArrowUpRight, RefreshCw, WalletCards } from "lucide-react";
 
 type Person = AccountPerson;
 type Row = Record<string, unknown>;
+type PersonTotals = {
+  received: number;
+  purchasesPaid: number;
+  expensesPaid: number;
+  processingPaid: number;
+  saleProcessingPaid: number;
+  labourPaid?: number;
+  companyPaid?: number;
+  ownPocketPaid?: number;
+  settled?: number;
+  cashWithPartner?: number;
+  companyOwesPartner?: number;
+  paid: number;
+  balance: number;
+};
+type Reconciliation = {
+  companyBook: number;
+  cashWithPartners: number;
+  dueToPartners: number;
+  externalLoanOutstanding: number;
+};
 type AccountsData = {
   openingBalance?: Record<string, number>;
-  personAccountTotals?: Record<string, Record<string, { received:number; purchasesPaid:number; expensesPaid:number; processingPaid:number; saleProcessingPaid:number; labourPaid?:number; paid:number; balance:number }>>;
+  personAccountTotals?: Record<string, Record<string, PersonTotals>>;
   cashBalance?: Record<string, number>;
+  reconciliation?: Record<string, Reconciliation>;
+  externalLoanOutstanding?: Record<string, number>;
+  partnerSettlements?: Row[];
   salePayments?: Row[];
   purchases?: Row[];
   vendorPayments?: Row[];
@@ -42,6 +67,9 @@ export default function AccountsPage() {
   const [opening, setOpening] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [settle, setSettle] = useState({ person: "" as string, amount: "", settlementDate: new Date().toISOString().slice(0, 10), notes: "" });
+  const [settleBusy, setSettleBusy] = useState(false);
+  const [message, setMessage] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -79,8 +107,43 @@ export default function AccountsPage() {
     }
   }
 
+  async function settlePartner() {
+    const amount = Number(settle.amount);
+    if (!settle.person || !(amount > 0)) {
+      setMessage("Choose a partner and enter a settlement amount");
+      return;
+    }
+    setSettleBusy(true);
+    setMessage("");
+    try {
+      const res = await fetch("/api/admin/inventory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "settlePartner",
+          mode,
+          person: settle.person,
+          amount,
+          settlementDate: settle.settlementDate,
+          notes: settle.notes,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Settlement failed");
+      setSettle({ person: "", amount: "", settlementDate: new Date().toISOString().slice(0, 10), notes: "" });
+      setMessage("Partner settlement saved");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Settlement failed");
+    } finally {
+      setSettleBusy(false);
+    }
+  }
+
   const companyBalance = Number(data?.cashBalance?.[mode] || 0);
   const openingBalance = Number(data?.openingBalance?.[mode] || 0);
+  const recon = data?.reconciliation?.[mode];
+  const externalLoans = Number(data?.externalLoanOutstanding?.[mode] || recon?.externalLoanOutstanding || 0);
 
   const accounts = useMemo(() => {
     return people.map((person) => {
@@ -97,6 +160,11 @@ export default function AccountsPage() {
             Number(serverTotals.processingPaid || 0) +
             Number(serverTotals.saleProcessingPaid || 0) +
             Number(serverTotals.labourPaid || 0),
+          companyPaid: Number(serverTotals.companyPaid || 0),
+          ownPocketPaid: Number(serverTotals.ownPocketPaid || 0),
+          settled: Number(serverTotals.settled || 0),
+          cashWithPartner: Number(serverTotals.cashWithPartner ?? serverTotals.balance ?? 0),
+          companyOwesPartner: Number(serverTotals.companyOwesPartner || 0),
         };
       }
 
@@ -116,19 +184,25 @@ export default function AccountsPage() {
         .reduce((total, row) => total + Number(row.labour_cost || 0) + Number(row.loading_cost || 0), 0);
       const labourPaid = sumBy(data?.manualLabour, "paid_by", person, mode);
       const paid = purchasesPaid + expensesPaid + processingPaid + saleProcessingPaid + labourPaid;
+      const cashWithPartner = received - paid;
       return {
         person,
         received,
         paid,
-        balance: received - paid,
+        balance: cashWithPartner,
         purchasesPaid,
         expensesPaid: expensesPaid + processingPaid + saleProcessingPaid + labourPaid,
+        companyPaid: paid,
+        ownPocketPaid: 0,
+        settled: 0,
+        cashWithPartner,
+        companyOwesPartner: 0,
       };
     });
   }, [data, mode]);
 
   const transactions = useMemo(() => {
-    const rows: Array<{ date: string; type: string; description: string; person: string; amount: number; direction: "in" | "out" }> = [];
+    const rows: Array<{ date: string; type: string; description: string; person: string; amount: number; direction: "in" | "out"; funding?: string }> = [];
 
     (data?.salePayments || [])
       .filter((x) => x.mode === mode && x.received_by)
@@ -150,6 +224,7 @@ export default function AccountsPage() {
         person: String(x.paid_by ?? ""),
         amount: Number(x.amount || 0),
         direction: "out",
+        funding: String(x.funding_source || "COMPANY") === "OWN_POCKET" ? "Own pocket" : "Company cash",
       }));
 
     [...(data?.otherExpenses || []), ...(data?.processingExpenses || []), ...(data?.saleProcessingCosts || [])]
@@ -165,6 +240,7 @@ export default function AccountsPage() {
           person: String(x.paid_by ?? ""),
           amount,
           direction: "out",
+          funding: String(x.funding_source || "COMPANY") === "OWN_POCKET" ? "Own pocket" : "Company cash",
         });
       });
 
@@ -177,6 +253,19 @@ export default function AccountsPage() {
         person: String(x.paid_by ?? ""),
         amount: Number(x.amount || 0),
         direction: "out",
+        funding: String(x.funding_source || "COMPANY") === "OWN_POCKET" ? "Own pocket" : "Company cash",
+      }));
+
+    (data?.partnerSettlements || [])
+      .filter((x) => x.mode === mode)
+      .forEach((x) => rows.push({
+        date: String(x.settlement_date ?? ""),
+        type: "Partner settlement",
+        description: x.notes ? String(x.notes) : "Company repaid partner own-pocket advance",
+        person: String(x.person ?? ""),
+        amount: Number(x.amount || 0),
+        direction: "out",
+        funding: "Company cash",
       }));
 
     return rows.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 100);
@@ -185,7 +274,7 @@ export default function AccountsPage() {
   return (
     <AdminShell
       title="Accounts & Finance"
-      subtitle={`Company and individual money tracking for ${mode}`}
+      subtitle={`Company book, partner cash holdings, and dues for ${mode}`}
       actions={
         <button className="ad-btn ad-btn-ghost" onClick={() => void load()} disabled={loading}>
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
@@ -193,6 +282,8 @@ export default function AccountsPage() {
         </button>
       }
     >
+      {message && <p className="mb-3 text-xs text-[var(--ad-accent)]">{message}</p>}
+
       <div className="mb-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
         <div className="ad-card p-4">
           <div className="flex items-start justify-between gap-3">
@@ -219,43 +310,103 @@ export default function AccountsPage() {
         </div>
 
         <div className="ad-card p-4">
-          <p className="ad-muted text-xs">Company Account</p>
+          <p className="ad-muted text-xs">Company Account (book)</p>
           <p className="mt-1 text-3xl font-bold">{money(companyBalance)}</p>
-          <p className="ad-muted mt-1 text-xs">
-            Consolidated company cash after receipts, payments, borrowings, repayments and expenses.
+          <p className="ad-muted mt-2 text-xs leading-relaxed">
+            Opening + Sales − Company-funded payments − Expenses + Loans − Loan repayments − Partner settlements.
+            Own-pocket payments do not drain this balance again — they increase “due to partner” instead.
           </p>
         </div>
       </div>
 
-      <div className="mb-5 grid gap-3 md:grid-cols-3">
-        {accounts.map((account) => (
-          <div key={account.person} className="ad-card p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-semibold">{account.person} Account</p>
-                <p className="ad-muted text-xs">Money handled on behalf of the company</p>
-              </div>
-              <p className="text-xl font-bold">{money(account.balance)}</p>
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-              <div className="rounded-lg border border-[var(--ad-border)] p-2">
-                <p className="ad-muted">Received by</p>
-                <p className="mt-1 font-semibold">{money(account.received)}</p>
-              </div>
-              <div className="rounded-lg border border-[var(--ad-border)] p-2">
-                <p className="ad-muted">Payment done by</p>
-                <p className="mt-1 font-semibold">{money(account.paid)}</p>
-              </div>
-            </div>
+      <div className="mb-5 ad-card p-4">
+        <h2 className="font-semibold">Reconciliation</h2>
+        <p className="ad-muted mt-1 text-xs">Why company book and partner cards can look different</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-lg border border-[var(--ad-border)] p-3">
+            <p className="ad-muted text-xs">Company book</p>
+            <p className="mt-1 text-lg font-bold">{money(recon?.companyBook ?? companyBalance)}</p>
           </div>
-        ))}
+          <div className="rounded-lg border border-[var(--ad-border)] p-3">
+            <p className="ad-muted text-xs">Cash with partners</p>
+            <p className="mt-1 text-lg font-bold">{money(recon?.cashWithPartners ?? accounts.reduce((n, a) => n + a.cashWithPartner, 0))}</p>
+          </div>
+          <div className="rounded-lg border border-[var(--ad-border)] p-3">
+            <p className="ad-muted text-xs">Due to partners (own pocket)</p>
+            <p className="mt-1 text-lg font-bold">{money(recon?.dueToPartners ?? accounts.reduce((n, a) => n + Math.max(0, a.companyOwesPartner), 0))}</p>
+          </div>
+          <div className="rounded-lg border border-[var(--ad-border)] p-3">
+            <p className="ad-muted text-xs">External loans outstanding</p>
+            <p className="mt-1 text-lg font-bold">{money(externalLoans)}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-5 grid gap-3 md:grid-cols-3">
+        {accounts.map((account) => {
+          const cashWith = account.cashWithPartner;
+          const owes = account.companyOwesPartner;
+          const primaryLabel = cashWith >= owes
+            ? (cashWith >= 0 ? `Company cash with ${account.person}` : `Company owes ${account.person}`)
+            : `Company owes ${account.person}`;
+          const primaryValue = cashWith >= owes
+            ? (cashWith >= 0 ? cashWith : Math.abs(cashWith))
+            : Math.max(0, owes);
+          return (
+            <div key={account.person} className="ad-card p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="font-semibold">{account.person}</p>
+                  <p className="ad-muted text-xs">{primaryLabel}</p>
+                </div>
+                <p className="text-xl font-bold">{money(primaryValue)}</p>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-lg border border-[var(--ad-border)] p-2">
+                  <p className="ad-muted">Received</p>
+                  <p className="mt-1 font-semibold">{money(account.received)}</p>
+                </div>
+                <div className="rounded-lg border border-[var(--ad-border)] p-2">
+                  <p className="ad-muted">Paid (company cash)</p>
+                  <p className="mt-1 font-semibold">{money(account.companyPaid)}</p>
+                </div>
+                <div className="rounded-lg border border-[var(--ad-border)] p-2">
+                  <p className="ad-muted">Own-pocket advances</p>
+                  <p className="mt-1 font-semibold">{money(account.ownPocketPaid)}</p>
+                </div>
+                <div className="rounded-lg border border-[var(--ad-border)] p-2">
+                  <p className="ad-muted">Settled</p>
+                  <p className="mt-1 font-semibold">{money(account.settled)}</p>
+                </div>
+              </div>
+              <div className="mt-3 space-y-1 text-xs">
+                <p>Cash with {account.person}: <span className="font-semibold">{money(cashWith)}</span></p>
+                <p>Company owes {account.person}: <span className="font-semibold">{money(Math.max(0, owes))}</span></p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mb-5 ad-card p-4">
+        <h2 className="mb-1 font-semibold">Settle partner (company pays back)</h2>
+        <p className="ad-muted mb-3 text-xs">Reduces “Company owes partner” when the company returns own-pocket money.</p>
+        <div className="grid gap-2 md:grid-cols-5">
+          <PersonSelect value={settle.person} onChange={(v) => setSettle({ ...settle, person: v })} />
+          <input className="ad-input" type="number" min="0" placeholder="Amount" value={settle.amount} onChange={(e) => setSettle({ ...settle, amount: e.target.value })} />
+          <input className="ad-input" type="date" value={settle.settlementDate} onChange={(e) => setSettle({ ...settle, settlementDate: e.target.value })} />
+          <input className="ad-input" placeholder="Notes" value={settle.notes} onChange={(e) => setSettle({ ...settle, notes: e.target.value })} />
+          <button className="ad-btn ad-btn-primary" onClick={() => void settlePartner()} disabled={settleBusy}>
+            {settleBusy ? "Saving…" : "Record settlement"}
+          </button>
+        </div>
       </div>
 
       <div className="ad-card p-4">
         <div className="mb-3 flex items-center justify-between">
           <div>
             <h2 className="font-semibold">Account Transactions</h2>
-            <p className="ad-muted text-xs">Every receipt/payment uses the same person list as inventory & labour (Received by / Payment done by).</p>
+            <p className="ad-muted text-xs">Receipts, company-funded and own-pocket payments, and partner settlements.</p>
           </div>
           <span className="ad-muted text-xs">{transactions.length} recent entries</span>
         </div>
@@ -273,6 +424,7 @@ export default function AccountsPage() {
                   <th>Type</th>
                   <th>Description</th>
                   <th>Person</th>
+                  <th>Paid from</th>
                   <th>Impact</th>
                 </tr>
               </thead>
@@ -283,6 +435,7 @@ export default function AccountsPage() {
                     <td>{tx.type}</td>
                     <td>{tx.description}</td>
                     <td>{tx.person}</td>
+                    <td>{tx.funding || (tx.direction === "in" ? "—" : "Company cash")}</td>
                     <td className="font-semibold">
                       <span className="inline-flex items-center gap-1">
                         {tx.direction === "in" ? <ArrowDownLeft size={13} /> : <ArrowUpRight size={13} />}

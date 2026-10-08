@@ -154,6 +154,7 @@ function createDb() {
       phone TEXT,
       notes TEXT,
       active INTEGER NOT NULL DEFAULT 1,
+      lender_kind TEXT NOT NULL DEFAULT 'EXTERNAL' CHECK(lender_kind IN ('EXTERNAL','PARTNER')),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -162,8 +163,11 @@ function createDb() {
       mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
       lender_id INTEGER NOT NULL REFERENCES lenders(id),
       amount REAL NOT NULL CHECK(amount > 0),
+      interest_rate_percent REAL NOT NULL DEFAULT 0 CHECK(interest_rate_percent >= 0),
+      interest_amount REAL NOT NULL DEFAULT 0 CHECK(interest_amount >= 0),
       outstanding_amount REAL NOT NULL CHECK(outstanding_amount >= 0),
       borrowing_date TEXT NOT NULL,
+      due_date TEXT NOT NULL DEFAULT '',
       purpose TEXT NOT NULL DEFAULT '',
       notes TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN','PARTIAL','PAID')),
@@ -175,9 +179,21 @@ function createDb() {
       borrowing_id INTEGER NOT NULL REFERENCES borrowings(id) ON DELETE CASCADE,
       amount REAL NOT NULL CHECK(amount > 0),
       repayment_date TEXT NOT NULL,
+      paid_by TEXT NOT NULL DEFAULT '',
       notes TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS partner_settlements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      person TEXT NOT NULL,
+      amount REAL NOT NULL CHECK(amount > 0),
+      settlement_date TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS partner_settlements_mode_person_idx
+      ON partner_settlements(mode, person, settlement_date);
     CREATE TABLE IF NOT EXISTS purchases (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
@@ -393,9 +409,33 @@ function createDb() {
     "ALTER TABLE other_expenses ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE other_expenses ADD COLUMN billing_month TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE other_expenses ADD COLUMN billing_start_date TEXT NOT NULL DEFAULT ''",
-    "ALTER TABLE other_expenses ADD COLUMN billing_end_date TEXT NOT NULL DEFAULT ''",  ]) {
+    "ALTER TABLE other_expenses ADD COLUMN billing_end_date TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE vendor_payments ADD COLUMN funding_source TEXT NOT NULL DEFAULT 'COMPANY'",
+    "ALTER TABLE other_expenses ADD COLUMN funding_source TEXT NOT NULL DEFAULT 'COMPANY'",
+    "ALTER TABLE processing_expenses ADD COLUMN funding_source TEXT NOT NULL DEFAULT 'COMPANY'",
+    "ALTER TABLE sale_processing_costs ADD COLUMN funding_source TEXT NOT NULL DEFAULT 'COMPANY'",
+    "ALTER TABLE processing_manual_labour ADD COLUMN funding_source TEXT NOT NULL DEFAULT 'COMPANY'",
+    "ALTER TABLE lenders ADD COLUMN lender_kind TEXT NOT NULL DEFAULT 'EXTERNAL'",
+    "ALTER TABLE borrowings ADD COLUMN interest_rate_percent REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE borrowings ADD COLUMN interest_amount REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE borrowings ADD COLUMN due_date TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE borrowing_repayments ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
+  ]) {
     try { sqlite.exec(migration); } catch { /* column already exists */ }
   }
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS partner_settlements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      person TEXT NOT NULL,
+      amount REAL NOT NULL CHECK(amount > 0),
+      settlement_date TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS partner_settlements_mode_person_idx
+      ON partner_settlements(mode, person, settlement_date);
+  `);
   // Create the sale index only after the sale_id migration has run. Existing
   // production databases may have an older inventory_transactions table.
   try {

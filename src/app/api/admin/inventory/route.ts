@@ -4,7 +4,8 @@ import { z } from "zod";
 import { getSession } from "@/lib/auth";
 import { sqlite } from "@/db";
 import { listMaterials, nowIso, todayStr } from "@/lib/rates";
-import { ACCOUNT_PERSONS, optionalAccountPersonSchema } from "@/lib/account-persons";
+import { ACCOUNT_PERSONS, optionalAccountPersonSchema, accountPersonSchema } from "@/lib/account-persons";
+import { optionalFundingSourceSchema } from "@/lib/funding";
 
 export const dynamic = "force-dynamic";
 
@@ -102,6 +103,8 @@ export async function GET() {
     LIMIT 500
   `).all();
   const lenders = sqlite.prepare("SELECT * FROM lenders ORDER BY name").all();
+  const partnerSettlements = sqlite.prepare("SELECT * FROM partner_settlements ORDER BY settlement_date DESC, id DESC LIMIT 500").all();
+  const borrowingRepayments = sqlite.prepare("SELECT br.*, b.mode FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id ORDER BY br.repayment_date DESC, br.id DESC LIMIT 500").all();
   const sales = sqlite.prepare("SELECT * FROM sales ORDER BY sale_date DESC, id DESC LIMIT 200").all();
   const saleItems = sqlite.prepare("SELECT * FROM sale_items ORDER BY sale_id, id").all();
   const salePayments = sqlite.prepare("SELECT sp.*, s.customer_name as customerName, s.material_category as materialCategory, s.material_variant as materialVariant FROM sale_payments sp JOIN sales s ON s.id=sp.sale_id ORDER BY sp.payment_date DESC, sp.id DESC LIMIT 500").all();
@@ -141,7 +144,7 @@ export async function GET() {
   `).all();
 
   const borrowings = sqlite.prepare(`
-    SELECT b.*, l.name as lenderName
+    SELECT b.*, l.name as lenderName, COALESCE(l.lender_kind,'EXTERNAL') as lenderKind
     FROM borrowings b JOIN lenders l ON l.id = b.lender_id
     ORDER BY b.borrowing_date DESC, b.id DESC
     LIMIT 100
@@ -192,37 +195,94 @@ export async function GET() {
     FROM inventory_transactions
   `).get();
 
+  const companyFundedVendorSql = `SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments
+    WHERE mode=? AND NOT (payment_type='CREDIT_SETTLEMENT' AND payment_mode='Advance')
+    AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
+  const companyFundedExpenseSql = `SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
+  const companyFundedProcessingSql = `SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
+  const companyFundedSaleProcSql = `SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
+  const companyFundedLabourSql = `SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
+
   const modeCashflow = (m: string) => {
     const opening = Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode=?").get(m) as any)?.n || 0);
     const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=?").get(m) as any)?.n || 0);
-    const paidVendors = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments WHERE mode=? AND NOT (payment_type='CREDIT_SETTLEMENT' AND payment_mode='Advance')").get(m) as any)?.n || 0);
+    const paidVendors = Number((sqlite.prepare(companyFundedVendorSql).get(m) as any)?.n || 0);
+    // Loan principal received into company (not interest — interest is liability only)
     const borrowed = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM borrowings WHERE mode=?").get(m) as any)?.n || 0);
     const repaid = Number((sqlite.prepare("SELECT COALESCE(SUM(br.amount),0) as n FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id WHERE b.mode=?").get(m) as any)?.n || 0);
-    const monthlyProcessing = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=?").get(m) as any)?.n || 0);
-    const saleProcessing = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=?").get(m) as any)?.n || 0);
-    const otherExpenses = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=?").get(m) as any)?.n || 0);
-    const manualLabour = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=?").get(m) as any)?.n || 0);
-    return Math.round((opening + received - paidVendors + borrowed - repaid - monthlyProcessing - saleProcessing - otherExpenses - manualLabour) * 100) / 100;
+    const monthlyProcessing = Number((sqlite.prepare(companyFundedProcessingSql).get(m) as any)?.n || 0);
+    const saleProcessing = Number((sqlite.prepare(companyFundedSaleProcSql).get(m) as any)?.n || 0);
+    const otherExpenses = Number((sqlite.prepare(companyFundedExpenseSql).get(m) as any)?.n || 0);
+    const manualLabour = Number((sqlite.prepare(companyFundedLabourSql).get(m) as any)?.n || 0);
+    const partnerSettled = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE mode=?").get(m) as any)?.n || 0);
+    return Math.round((opening + received - paidVendors + borrowed - repaid - monthlyProcessing - saleProcessing - otherExpenses - manualLabour - partnerSettled) * 100) / 100;
   };
   const openingBalance = { PET: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PET'").get() as any)?.n || 0), PLASTIC: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PLASTIC'").get() as any)?.n || 0) };
 
+  const externalLoanOutstanding = {
+    PET: Number((sqlite.prepare(`SELECT COALESCE(SUM(b.outstanding_amount),0) as n FROM borrowings b JOIN lenders l ON l.id=b.lender_id WHERE b.mode='PET' AND COALESCE(l.lender_kind,'EXTERNAL')='EXTERNAL'`).get() as any)?.n || 0),
+    PLASTIC: Number((sqlite.prepare(`SELECT COALESCE(SUM(b.outstanding_amount),0) as n FROM borrowings b JOIN lenders l ON l.id=b.lender_id WHERE b.mode='PLASTIC' AND COALESCE(l.lender_kind,'EXTERNAL')='EXTERNAL'`).get() as any)?.n || 0),
+  };
+
   const personAccountTotals: Record<string, Record<string, {
-    received:number; purchasesPaid:number; expensesPaid:number; processingPaid:number; saleProcessingPaid:number; labourPaid:number; paid:number; balance:number;
+    received:number; purchasesPaid:number; expensesPaid:number; processingPaid:number; saleProcessingPaid:number; labourPaid:number;
+    companyPaid:number; ownPocketPaid:number; settled:number; cashWithPartner:number; companyOwesPartner:number; paid:number; balance:number;
   }>> = { PET: {}, PLASTIC: {} };
   for (const mode of ["PET","PLASTIC"]) {
     for (const person of ACCOUNT_PERSONS) {
       const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=? AND received_by=?").get(mode,person) as any)?.n || 0);
-      const purchasesPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(vp.amount),0) as n FROM vendor_payments vp LEFT JOIN purchases p ON p.id=vp.purchase_id WHERE vp.mode=? AND COALESCE(NULLIF(vp.paid_by,''), p.paid_by, '')=? AND vp.payment_type<>'ADVANCE' AND COALESCE(vp.payment_mode,'')<>'Advance'").get(mode,person) as any)?.n || 0);
-      const expensesPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
-      const processingPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
-      const saleProcessingPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
-      const labourPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
-      const paid = purchasesPaid + expensesPaid + processingPaid + saleProcessingPaid + labourPaid;
-      personAccountTotals[mode][person] = { received, purchasesPaid, expensesPaid, processingPaid, saleProcessingPaid, labourPaid, paid, balance: received - paid };
+      const purchasesCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(vp.amount),0) as n FROM vendor_payments vp LEFT JOIN purchases p ON p.id=vp.purchase_id WHERE vp.mode=? AND COALESCE(NULLIF(vp.paid_by,''), p.paid_by, '')=? AND vp.payment_type<>'ADVANCE' AND COALESCE(vp.payment_mode,'')<>'Advance' AND COALESCE(vp.funding_source,'COMPANY')='COMPANY'").get(mode,person) as any)?.n || 0);
+      const purchasesPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(vp.amount),0) as n FROM vendor_payments vp LEFT JOIN purchases p ON p.id=vp.purchase_id WHERE vp.mode=? AND COALESCE(NULLIF(vp.paid_by,''), p.paid_by, '')=? AND vp.payment_type<>'ADVANCE' AND COALESCE(vp.payment_mode,'')<>'Advance' AND COALESCE(vp.funding_source,'COMPANY')='OWN_POCKET'").get(mode,person) as any)?.n || 0);
+      const expensesCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(mode,person) as any)?.n || 0);
+      const expensesPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(mode,person) as any)?.n || 0);
+      const processingCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(mode,person) as any)?.n || 0);
+      const processingPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(mode,person) as any)?.n || 0);
+      const saleProcCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(mode,person) as any)?.n || 0);
+      const saleProcPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(mode,person) as any)?.n || 0);
+      const labourCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(mode,person) as any)?.n || 0);
+      const labourPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(mode,person) as any)?.n || 0);
+      const settled = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE mode=? AND person=?").get(mode,person) as any)?.n || 0);
+      const companyPaid = purchasesCompany + expensesCompany + processingCompany + saleProcCompany + labourCompany;
+      const ownPocketPaid = purchasesPocket + expensesPocket + processingPocket + saleProcPocket + labourPocket;
+      const purchasesPaid = purchasesCompany + purchasesPocket;
+      const expensesPaid = expensesCompany + expensesPocket;
+      const processingPaid = processingCompany + processingPocket;
+      const saleProcessingPaid = saleProcCompany + saleProcPocket;
+      const labourPaid = labourCompany + labourPocket;
+      const paid = companyPaid + ownPocketPaid;
+      const cashWithPartner = Math.round((received - companyPaid) * 100) / 100;
+      const companyOwesPartner = Math.round((ownPocketPaid - settled) * 100) / 100;
+      // Display balance: positive = company cash with partner; negative = company owes partner (own pocket net)
+      const balance = Math.round((cashWithPartner - companyOwesPartner) * 100) / 100;
+      personAccountTotals[mode][person] = {
+        received, purchasesPaid, expensesPaid, processingPaid, saleProcessingPaid, labourPaid,
+        companyPaid, ownPocketPaid, settled, cashWithPartner, companyOwesPartner, paid, balance,
+      };
     }
   }
 
-  return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, saleItems, salePayments, processingBatches, processingBatchItems, processingBatchOutputs, processingExpenses, saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, totals, openingBalance, personAccountTotals, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });
+  const reconciliation = {
+    PET: {
+      companyBook: modeCashflow("PET"),
+      cashWithPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Number(personAccountTotals.PET[p]?.cashWithPartner || 0), 0),
+      dueToPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, Number(personAccountTotals.PET[p]?.companyOwesPartner || 0)), 0),
+      externalLoanOutstanding: externalLoanOutstanding.PET,
+    },
+    PLASTIC: {
+      companyBook: modeCashflow("PLASTIC"),
+      cashWithPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Number(personAccountTotals.PLASTIC[p]?.cashWithPartner || 0), 0),
+      dueToPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, Number(personAccountTotals.PLASTIC[p]?.companyOwesPartner || 0)), 0),
+      externalLoanOutstanding: externalLoanOutstanding.PLASTIC,
+    },
+  };
+
+  return json({
+    materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments,
+    sales, saleItems, salePayments, processingBatches, processingBatchItems, processingBatchOutputs, processingExpenses,
+    saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, partnerSettlements, borrowingRepayments, totals,
+    openingBalance, personAccountTotals, externalLoanOutstanding, reconciliation,
+    cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")},
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -238,16 +298,27 @@ export async function POST(req: NextRequest) {
       return json({ok:true, amount:x.amount});
     }
 
-    if (body.action === "addSupplier" || body.action === "addLender") {
+    if (body.action === "addSupplier") {
       const s = z.object({
         name: z.string().trim().min(1),
         phone: z.string().trim().optional().default(""),
         location: z.string().trim().optional().default(""),
         notes: z.string().trim().optional().default(""),
       }).parse(body);
-      const table = body.action === "addSupplier" ? "suppliers" : "lenders";
-      const r = sqlite.prepare(`INSERT INTO ${table} (name, phone, location, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
+      const r = sqlite.prepare(`INSERT INTO suppliers (name, phone, location, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
         .run(s.name, s.phone, s.location, s.notes, nowIso(), nowIso());
+      return json({ ok: true, id: Number(r.lastInsertRowid) });
+    }
+
+    if (body.action === "addLender") {
+      const s = z.object({
+        name: z.string().trim().min(1),
+        phone: z.string().trim().optional().default(""),
+        notes: z.string().trim().optional().default(""),
+        lenderKind: z.enum(["EXTERNAL","PARTNER"]).optional().default("EXTERNAL"),
+      }).parse(body);
+      const r = sqlite.prepare(`INSERT INTO lenders (name, phone, notes, lender_kind, active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)`)
+        .run(s.name, s.phone, s.notes, s.lenderKind, nowIso(), nowIso());
       return json({ ok: true, id: Number(r.lastInsertRowid) });
     }
 
@@ -277,7 +348,8 @@ export async function POST(req: NextRequest) {
         billingMonth: z.string().optional(),
         billingStartDate: z.union([dateSchema, z.literal("")]).optional(),
         billingEndDate: z.union([dateSchema, z.literal("")]).optional(),
-        paidBy: optionalAccountPersonSchema
+        paidBy: optionalAccountPersonSchema,
+        fundingSource: optionalFundingSourceSchema,
       }).parse(body);
       const billingMonth = x.expenseType === "Electricity" ? (x.billingMonth ?? "") : "";
       const billingStartDate = x.expenseType === "Electricity" ? (x.billingStartDate ?? "") : "";
@@ -288,8 +360,11 @@ export async function POST(req: NextRequest) {
       if (x.expenseType === "Electricity" && x.billingStartDate && x.billingEndDate && x.billingStartDate > x.billingEndDate) {
         return NextResponse.json({error:"Electricity billing start date cannot be after end date"}, {status:400});
       }
-      sqlite.prepare(`INSERT INTO other_expenses (mode,purchase_id,expense_type,description,amount,expense_date,expense_frequency,paid_by,created_at,billing_month,billing_start_date,billing_end_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(x.mode,null,x.expenseType,x.description,x.amount,x.expenseDate,"ONE_TIME",x.paidBy??"",nowIso(),billingMonth,billingStartDate,billingEndDate);
+      if (x.fundingSource === "OWN_POCKET" && !x.paidBy) {
+        return NextResponse.json({error:"Payment done by is required for own-pocket payments"}, {status:400});
+      }
+      sqlite.prepare(`INSERT INTO other_expenses (mode,purchase_id,expense_type,description,amount,expense_date,expense_frequency,paid_by,created_at,billing_month,billing_start_date,billing_end_date,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(x.mode,null,x.expenseType,x.description,x.amount,x.expenseDate,"ONE_TIME",x.paidBy??"",nowIso(),billingMonth,billingStartDate,billingEndDate,x.fundingSource);
       return json({ok:true});
     }
 
@@ -298,16 +373,20 @@ export async function POST(req: NextRequest) {
         mode: modeSchema,
         lenderId: z.number().int().positive(),
         amount: z.number().positive(),
+        interestRatePercent: z.number().nonnegative().optional().default(0),
         borrowingDate: dateSchema.optional().default(todayStr()),
+        dueDate: z.union([dateSchema, z.literal("")]).optional().default(""),
         purpose: z.string().trim().optional().default(""),
         notes: z.string().trim().optional().default(""),
       }).parse(body);
+      const interestAmount = Math.round(s.amount * (s.interestRatePercent / 100) * 100) / 100;
+      const outstanding = Math.round((s.amount + interestAmount) * 100) / 100;
       const r = sqlite.prepare(`
         INSERT INTO borrowings
-        (mode, lender_id, amount, outstanding_amount, borrowing_date, purpose, notes, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)
-      `).run(s.mode, s.lenderId, s.amount, s.amount, s.borrowingDate, s.purpose, s.notes, nowIso(), nowIso());
-      return json({ ok: true, id: Number(r.lastInsertRowid) });
+        (mode, lender_id, amount, interest_rate_percent, interest_amount, outstanding_amount, borrowing_date, due_date, purpose, notes, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?)
+      `).run(s.mode, s.lenderId, s.amount, s.interestRatePercent, interestAmount, outstanding, s.borrowingDate, s.dueDate || "", s.purpose, s.notes, nowIso(), nowIso());
+      return json({ ok: true, id: Number(r.lastInsertRowid), interestAmount, outstanding });
     }
 
     if (body.action === "repayBorrowing") {
@@ -315,19 +394,33 @@ export async function POST(req: NextRequest) {
         borrowingId: z.number().int().positive(),
         amount: z.number().positive(),
         repaymentDate: dateSchema.optional().default(todayStr()),
+        paidBy: optionalAccountPersonSchema,
         notes: z.string().trim().optional().default(""),
       }).parse(body);
       const b = sqlite.prepare("SELECT * FROM borrowings WHERE id = ?").get(s.borrowingId) as { outstanding_amount: number } | undefined;
       if (!b) return NextResponse.json({ error: "Borrowing not found" }, { status: 404 });
       if (s.amount > b.outstanding_amount + 0.005) return NextResponse.json({ error: "Repayment exceeds outstanding amount" }, { status: 400 });
-      const outstanding = Math.max(0, b.outstanding_amount - s.amount);
+      const outstanding = Math.max(0, Math.round((b.outstanding_amount - s.amount) * 100) / 100);
       sqlite.prepare(`
-        INSERT INTO borrowing_repayments (borrowing_id, amount, repayment_date, notes, created_at)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(s.borrowingId, s.amount, s.repaymentDate, s.notes, nowIso());
+        INSERT INTO borrowing_repayments (borrowing_id, amount, repayment_date, paid_by, notes, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(s.borrowingId, s.amount, s.repaymentDate, s.paidBy ?? "", s.notes, nowIso());
       sqlite.prepare("UPDATE borrowings SET outstanding_amount=?, status=?, updated_at=? WHERE id=?")
         .run(outstanding, outstanding === 0 ? "PAID" : "PARTIAL", nowIso(), s.borrowingId);
       return json({ ok: true, outstanding });
+    }
+
+    if (body.action === "settlePartner") {
+      const s = z.object({
+        mode: modeSchema,
+        person: accountPersonSchema,
+        amount: z.number().positive(),
+        settlementDate: dateSchema.optional().default(todayStr()),
+        notes: z.string().trim().optional().default(""),
+      }).parse(body);
+      sqlite.prepare(`INSERT INTO partner_settlements (mode, person, amount, settlement_date, notes, created_at) VALUES (?,?,?,?,?,?)`)
+        .run(s.mode, s.person, s.amount, s.settlementDate, s.notes, nowIso());
+      return json({ ok: true });
     }
 
     if (body.action === "addPurchase") {
@@ -342,6 +435,7 @@ export async function POST(req: NextRequest) {
         ratePerKg: z.number().nonnegative(),
         paidAmount: z.number().nonnegative().optional(),
         paidBy: optionalAccountPersonSchema,
+        fundingSource: optionalFundingSourceSchema,
         lenderId: z.number().int().positive().optional(),
         borrowingId: z.number().int().positive().optional(),
         purchaseDate: dateSchema.optional().default(todayStr()),
@@ -385,7 +479,10 @@ export async function POST(req: NextRequest) {
         s.purchaseDate, s.notes, s.paidBy ?? "", 0, 0, 0, variant, nowIso(), nowIso()
       );
       const purchaseId = Number(r.lastInsertRowid);
-      if(cashPaid>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"PURCHASE",cashPaid,s.purchaseDate,"Cash",s.notes,s.paidBy ?? "",nowIso());
+      if (s.fundingSource === "OWN_POCKET" && cashPaid > 0 && !s.paidBy) {
+        return NextResponse.json({ error: "Payment done by is required for own-pocket payments" }, { status: 400 });
+      }
+      if(cashPaid>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"PURCHASE",cashPaid,s.purchaseDate,"Cash",s.notes,s.paidBy ?? "",nowIso(),s.fundingSource);
       if(advanceApplied>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"CREDIT_SETTLEMENT",advanceApplied,s.purchaseDate,"Advance","Advance applied to purchase #"+purchaseId,nowIso());
 
       sqlite.prepare(`
@@ -438,7 +535,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (body.action === "payVendor") {
-      const s=z.object({mode:modeSchema,supplierId:z.number().int().positive(),amount:z.number().positive(),paymentDate:dateSchema.optional().default(todayStr()),paymentMode:z.string().trim().min(1).default("Cash"),paidBy:optionalAccountPersonSchema,notes:z.string().trim().optional().default("")}).parse(body);
+      const s=z.object({mode:modeSchema,supplierId:z.number().int().positive(),amount:z.number().positive(),paymentDate:dateSchema.optional().default(todayStr()),paymentMode:z.string().trim().min(1).default("Cash"),paidBy:optionalAccountPersonSchema,fundingSource:optionalFundingSourceSchema,notes:z.string().trim().optional().default("")}).parse(body);
+      if (s.fundingSource === "OWN_POCKET" && !s.paidBy) return NextResponse.json({error:"Payment done by is required for own-pocket payments"},{status:400});
       const purchases=sqlite.prepare("SELECT id,credit_amount FROM purchases WHERE mode=? AND supplier_id=? AND credit_amount>0 ORDER BY purchase_date ASC,id ASC").all(s.mode,s.supplierId) as Array<{id:number;credit_amount:number}>;
       if(s.amount > purchases.reduce((n,p)=>n+p.credit_amount,0)+0.005) return NextResponse.json({error:"Payment exceeds vendor outstanding balance"},{status:400});
       let rem = s.amount;
@@ -448,7 +546,7 @@ export async function POST(req: NextRequest) {
         sqlite.prepare("UPDATE purchases SET paid_amount=paid_amount+?,credit_amount=credit_amount-?,updated_at=? WHERE id=?").run(use, use, nowIso(), p.id);
         rem -= use;
       }
-      sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(s.mode, s.supplierId, "CREDIT_SETTLEMENT", s.amount, s.paymentDate, s.paymentMode, s.notes, s.paidBy ?? "", nowIso());
+      sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(s.mode, s.supplierId, "CREDIT_SETTLEMENT", s.amount, s.paymentDate, s.paymentMode, s.notes, s.paidBy ?? "", nowIso(), s.fundingSource);
       return json({ok:true});
     }
 
@@ -457,13 +555,15 @@ export async function POST(req: NextRequest) {
         purchaseId: z.number().int().positive(),
         amount: z.number().positive(),
         paidBy: optionalAccountPersonSchema,
+        fundingSource: optionalFundingSourceSchema,
       }).parse(body);
+      if (s.fundingSource === "OWN_POCKET" && !s.paidBy) return NextResponse.json({error:"Payment done by is required for own-pocket payments"},{status:400});
       const p = sqlite.prepare("SELECT credit_amount, mode, supplier_id FROM purchases WHERE id=?").get(s.purchaseId) as { credit_amount:number; mode:string; supplier_id:number } | undefined;
       if (!p) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
       if (s.amount > p.credit_amount + 0.005) return NextResponse.json({ error: "Payment exceeds outstanding credit" }, { status: 400 });
       sqlite.prepare("UPDATE purchases SET paid_amount=paid_amount+?, credit_amount=credit_amount-?, updated_at=? WHERE id=?")
         .run(s.amount, s.amount, nowIso(), s.purchaseId);
-      sqlite.prepare("INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)").run(p.mode,p.supplier_id,s.purchaseId,"CREDIT_SETTLEMENT",s.amount,todayStr(),"Cash","Purchase credit payment",s.paidBy ?? "",nowIso());
+      sqlite.prepare("INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)").run(p.mode,p.supplier_id,s.purchaseId,"CREDIT_SETTLEMENT",s.amount,todayStr(),"Cash","Purchase credit payment",s.paidBy ?? "",nowIso(),s.fundingSource);
       return json({ ok: true });
     }
 
@@ -496,6 +596,7 @@ export async function POST(req: NextRequest) {
         amountPerWorker: z.number().positive(),
         paymentDate: dateSchema.optional(),
         paidBy: optionalAccountPersonSchema,
+        fundingSource: optionalFundingSourceSchema,
         notes: z.string().trim().max(500).optional().default("")
       }).parse(body);
       if (!s.paidBy) return NextResponse.json({error:"Payment done by is required"},{status:400});
@@ -506,7 +607,7 @@ export async function POST(req: NextRequest) {
       if (found.length !== ids.length) return NextResponse.json({error:"One or more selected workers are inactive or missing"},{status:400});
       const existing=sqlite.prepare("SELECT worker_id FROM processing_manual_labour WHERE batch_id IS NULL AND mode=? AND payment_date=? AND task_type=? AND worker_id IN ("+placeholders+")").all(s.mode,s.paymentDate ?? todayStr(),s.taskType,...ids) as any[];
       if (existing.length) return NextResponse.json({error:"Labour already recorded for one or more selected workers for this task and date"},{status:400});
-      for (const id of ids) sqlite.prepare("INSERT INTO processing_manual_labour (mode,batch_id,worker_id,amount,payment_date,paid_by,notes,task_type,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(s.mode,null,id,s.amountPerWorker,s.paymentDate ?? todayStr(),s.paidBy,s.notes,s.taskType,nowIso());
+      for (const id of ids) sqlite.prepare("INSERT INTO processing_manual_labour (mode,batch_id,worker_id,amount,payment_date,paid_by,notes,task_type,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?)").run(s.mode,null,id,s.amountPerWorker,s.paymentDate ?? todayStr(),s.paidBy,s.notes,s.taskType,nowIso(),s.fundingSource);
       return json({ok:true,totalAmount:Math.round(ids.length*s.amountPerWorker*100)/100,count:ids.length});
     }
 
@@ -590,9 +691,11 @@ export async function POST(req: NextRequest) {
         description: z.string().trim().optional().default(""),
         amount: z.number().positive(),
         expenseDate: dateSchema.optional().default(todayStr()),
-        paidBy: optionalAccountPersonSchema
+        paidBy: optionalAccountPersonSchema,
+        fundingSource: optionalFundingSourceSchema,
       }).parse(body);
-      sqlite.prepare("INSERT INTO processing_expenses (mode,expense_type,description,amount,expense_date,paid_by,created_at) VALUES (?,?,?,?,?,?,?)").run(s.mode,s.expenseType,s.description,s.amount,s.expenseDate,s.paidBy??"",nowIso());
+      if (s.fundingSource === "OWN_POCKET" && !s.paidBy) return NextResponse.json({error:"Payment done by is required for own-pocket payments"},{status:400});
+      sqlite.prepare("INSERT INTO processing_expenses (mode,expense_type,description,amount,expense_date,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,s.expenseType,s.description,s.amount,s.expenseDate,s.paidBy??"",nowIso(),s.fundingSource);
       return json({ok:true});
     }
 

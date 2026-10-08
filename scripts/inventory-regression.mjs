@@ -127,5 +127,45 @@ try {
   assert.equal(String(error.message).includes("bad variant"), true);
 }
 
+// A10: company cashflow only subtracts COMPANY-funded payments; OWN_POCKET becomes due-to-partner.
+db.exec(`
+  CREATE TABLE company_balances(mode TEXT PRIMARY KEY, opening_balance REAL NOT NULL DEFAULT 0);
+  CREATE TABLE other_expenses(id INTEGER PRIMARY KEY, mode TEXT, amount REAL, paid_by TEXT, funding_source TEXT DEFAULT 'COMPANY');
+  CREATE TABLE partner_settlements(id INTEGER PRIMARY KEY, mode TEXT, person TEXT, amount REAL);
+  CREATE TABLE borrowings(id INTEGER PRIMARY KEY, mode TEXT, amount REAL, outstanding_amount REAL, interest_amount REAL DEFAULT 0, interest_rate_percent REAL DEFAULT 0);
+`);
+try { db.exec("ALTER TABLE vendor_payments ADD COLUMN funding_source TEXT NOT NULL DEFAULT 'COMPANY'"); } catch { /* exists */ }
+try { db.exec("ALTER TABLE vendor_payments ADD COLUMN mode TEXT"); } catch { /* exists */ }
+try { db.exec("ALTER TABLE sale_payments ADD COLUMN mode TEXT"); } catch { /* exists */ }
+try { db.exec("ALTER TABLE sale_payments ADD COLUMN amount REAL"); } catch { /* exists */ }
+db.exec("DELETE FROM vendor_payments");
+db.exec("DELETE FROM sale_payments");
+db.exec("INSERT INTO company_balances(mode,opening_balance) VALUES('PET',100000)");
+db.exec("INSERT INTO sale_payments(id,sale_id,received_by,payment_mode,mode,amount) VALUES(2,1,'Rahul','Cash','PET',50000)");
+db.exec("INSERT INTO vendor_payments(supplier_id,payment_type,amount,payment_date,payment_mode,paid_by,funding_source,mode) VALUES(1,'PURCHASE',20000,'2026-10-01','Cash','Rahul','COMPANY','PET')");
+db.exec("INSERT INTO vendor_payments(supplier_id,payment_type,amount,payment_date,payment_mode,paid_by,funding_source,mode) VALUES(1,'PURCHASE',10000,'2026-10-01','Cash','Rahul','OWN_POCKET','PET')");
+db.exec("INSERT INTO other_expenses(mode,amount,paid_by,funding_source) VALUES('PET',5000,'Rahul','OWN_POCKET')");
+db.exec("INSERT INTO partner_settlements(mode,person,amount) VALUES('PET','Rahul',2000)");
+db.exec("INSERT INTO borrowings(mode,amount,outstanding_amount,interest_amount,interest_rate_percent) VALUES('PET',25000,27500,2500,10)");
+
+const companyFundedVendor = Number(db.prepare("SELECT COALESCE(SUM(amount),0) n FROM vendor_payments WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get("PET").n);
+const ownPocketVendor = Number(db.prepare("SELECT COALESCE(SUM(amount),0) n FROM vendor_payments WHERE mode=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get("PET").n);
+const ownPocketExpense = Number(db.prepare("SELECT COALESCE(SUM(amount),0) n FROM other_expenses WHERE mode=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get("PET").n);
+const settled = Number(db.prepare("SELECT COALESCE(SUM(amount),0) n FROM partner_settlements WHERE mode=? AND person=?").get("PET","Rahul").n);
+const received = Number(db.prepare("SELECT COALESCE(SUM(amount),0) n FROM sale_payments WHERE mode=? AND received_by=?").get("PET","Rahul").n);
+const opening = Number(db.prepare("SELECT opening_balance n FROM company_balances WHERE mode=?").get("PET").n);
+const borrowed = Number(db.prepare("SELECT COALESCE(SUM(amount),0) n FROM borrowings WHERE mode=?").get("PET").n);
+const companyBook = opening + received - companyFundedVendor + borrowed;
+const cashWithPartner = received - companyFundedVendor;
+const companyOwesPartner = ownPocketVendor + ownPocketExpense - settled;
+const interestAmount = Math.round(25000 * (10 / 100) * 100) / 100;
+assert.equal(companyFundedVendor, 20000);
+assert.equal(ownPocketVendor, 10000);
+assert.equal(cashWithPartner, 30000);
+assert.equal(companyOwesPartner, 13000);
+assert.equal(companyBook, 155000);
+assert.equal(interestAmount, 2500);
+assert.equal(Number(db.prepare("SELECT outstanding_amount n FROM borrowings WHERE id=1").get().n), 27500);
+
 db.close();
 console.log("inventory regression tests: PASS");

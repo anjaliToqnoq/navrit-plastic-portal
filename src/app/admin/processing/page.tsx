@@ -2,8 +2,10 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AdminShell, adminToast } from "@/components/admin-shell";
+import { FundingSelect } from "@/components/funding-select";
 import { PersonSelect } from "@/components/person-select";
 import { useBusinessMode } from "@/components/business-mode-provider";
+import type { FundingSource } from "@/lib/funding";
 import { CheckSquare, Plus, Square, Users, WalletCards, X } from "lucide-react";
 
 type Worker = { id: number; name: string; active: number };
@@ -40,6 +42,7 @@ export default function ProcessingPage() {
   const [amount, setAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(today);
   const [paidBy, setPaidBy] = useState("");
+  const [fundingSource, setFundingSource] = useState<FundingSource>("COMPANY");
   const [notes, setNotes] = useState("");
   const [selected, setSelected] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
@@ -143,6 +146,7 @@ export default function ProcessingPage() {
       amountPerWorker: Number(amount),
       paymentDate,
       paidBy,
+      fundingSource,
       notes,
     });
 
@@ -151,6 +155,7 @@ export default function ProcessingPage() {
       setAmount("");
       setPaymentDate(today);
       setPaidBy("");
+      setFundingSource("COMPANY");
       setNotes("");
     }
   }
@@ -355,6 +360,7 @@ export default function ProcessingPage() {
                   required
                 />
                 <PersonSelect value={paidBy} onChange={setPaidBy} required />
+                <FundingSelect value={fundingSource} onChange={setFundingSource} />
               </div>
 
               <input

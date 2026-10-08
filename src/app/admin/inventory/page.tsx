@@ -42,7 +42,7 @@ export default function InventoryPage() {
   const [preStock,setPreStock] = useState({materialName:"Natural Bottles",materialVariant:"Mixed",quantityKg:"",ratePerKg:"",stockDate:"2026-09-30",notes:""});
   const [showPreStock,setShowPreStock] = useState(false);
   const [adjust,setAdjust] = useState({materialId:"",materialName:"",quantityKg:"",amount:"",notes:""});
-  const [creditPay,setCreditPay] = useState<{purchaseId:number; amount:string; paidBy:string; fundingSource:FundingSource} | null>(null);
+  const [creditPay,setCreditPay] = useState<{purchaseId:number; amount:string; paidBy:string; fundingSource:FundingSource; paymentDate:string} | null>(null);
   const [salePay,setSalePay] = useState<{saleId:number; amount:string; receivedBy:string; paymentMode:string} | null>(null);
 
   async function load() {
@@ -137,21 +137,22 @@ export default function InventoryPage() {
   }
 
   function openCreditPayment(p:Purchase) {
-    setCreditPay({purchaseId:p.id, amount:String(p.credit_amount??""), paidBy:"", fundingSource:"COMPANY"});
+    setCreditPay({purchaseId:p.id, amount:String(p.credit_amount??""), paidBy:"", fundingSource:"COMPANY", paymentDate:new Date().toISOString().slice(0,10)});
   }
 
   async function submitCreditPayment() {
     if(!creditPay) return;
     const amount=Number(creditPay.amount);
     if(!(amount>0)) { setMessage("Enter a valid payment amount"); return; }
-    if(creditPay.paidBy && !isAccountPerson(creditPay.paidBy)) {
-      setMessage("Invalid payment person"); return;
-    }
-    if(creditPay.fundingSource==="OWN_POCKET" && !creditPay.paidBy) {
-      setMessage("Payment done by is required for own-pocket payments"); return;
+    if(!creditPay.paidBy || !isAccountPerson(creditPay.paidBy)) {
+      setMessage("Payment done by is required for later vendor payments"); return;
     }
     const ok=await post("paySupplierCredit",{
-      purchaseId:creditPay.purchaseId, amount, paidBy:creditPay.paidBy||undefined, fundingSource:creditPay.fundingSource,
+      purchaseId:creditPay.purchaseId,
+      amount,
+      paidBy:creditPay.paidBy,
+      fundingSource:creditPay.fundingSource,
+      paymentDate:creditPay.paymentDate,
     });
     if(ok) setCreditPay(null);
   }
@@ -333,12 +334,14 @@ export default function InventoryPage() {
       </div>
 
       {creditPay && <div className="ad-card p-4 border border-[var(--ad-accent)]">
-        <h3 className="mb-3 text-sm font-semibold">Pay supplier credit — purchase #{creditPay.purchaseId}</h3>
-        <div className="grid gap-2 md:grid-cols-5">
+        <h3 className="mb-1 text-sm font-semibold">Pay vendor later — purchase #{creditPay.purchaseId}</h3>
+        <p className="ad-muted mb-3 text-xs">Use when payment is made after cash comes into company. Payment done by is required for Accounts.</p>
+        <div className="grid gap-2 md:grid-cols-6">
           <input className="ad-input" type="number" min="0" placeholder="Payment amount" value={creditPay.amount} onChange={e=>setCreditPay({...creditPay,amount:e.target.value})}/>
-          <PersonSelect value={creditPay.paidBy} onChange={(v)=>setCreditPay({...creditPay,paidBy:v})} />
+          <input className="ad-input" type="date" value={creditPay.paymentDate} onChange={e=>setCreditPay({...creditPay,paymentDate:e.target.value})}/>
+          <PersonSelect value={creditPay.paidBy} onChange={(v)=>setCreditPay({...creditPay,paidBy:v})} required />
           <FundingSelect value={creditPay.fundingSource} onChange={(v)=>setCreditPay({...creditPay,fundingSource:v})} />
-          <button className="ad-btn ad-btn-primary" onClick={submitCreditPayment}>Save credit payment</button>
+          <button className="ad-btn ad-btn-primary" onClick={submitCreditPayment}>Save payment</button>
           <button className="ad-btn ad-btn-ghost" onClick={()=>setCreditPay(null)}>Cancel</button>
         </div>
       </div>}

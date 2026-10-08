@@ -248,7 +248,6 @@ export async function GET() {
   const companyFundedLabourSql = `SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
 
   const modeCashflow = (m: string) => {
-    const opening = Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode=?").get(m) as any)?.n || 0);
     const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=?").get(m) as any)?.n || 0);
     const paidVendors = Number((sqlite.prepare(companyFundedVendorSql).get(m) as any)?.n || 0);
     // Loan principal received into company (not interest — interest is liability only)
@@ -259,9 +258,9 @@ export async function GET() {
     const otherExpenses = Number((sqlite.prepare(companyFundedExpenseSql).get(m) as any)?.n || 0);
     const manualLabour = Number((sqlite.prepare(companyFundedLabourSql).get(m) as any)?.n || 0);
     const partnerSettled = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE mode=?").get(m) as any)?.n || 0);
-    return Math.round((opening + received - paidVendors + borrowed - repaid - monthlyProcessing - saleProcessing - otherExpenses - manualLabour - partnerSettled) * 100) / 100;
+    // No opening balance — book starts from recorded receipts/payments only.
+    return Math.round((received - paidVendors + borrowed - repaid - monthlyProcessing - saleProcessing - otherExpenses - manualLabour - partnerSettled) * 100) / 100;
   };
-  const openingBalance = { PET: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PET'").get() as any)?.n || 0), PLASTIC: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PLASTIC'").get() as any)?.n || 0) };
 
   const externalLoanOutstanding = {
     PET: Number((sqlite.prepare(`SELECT COALESCE(SUM(b.outstanding_amount),0) as n FROM borrowings b JOIN lenders l ON l.id=b.lender_id WHERE b.mode='PET' AND COALESCE(l.lender_kind,'EXTERNAL')='EXTERNAL'`).get() as any)?.n || 0),
@@ -324,7 +323,7 @@ export async function GET() {
     materials, suppliers, lenders, inventory, preStock, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments,
     sales, saleItems, salePayments, processingBatches, processingBatchItems, processingBatchOutputs, processingExpenses,
     saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, partnerSettlements, borrowingRepayments, totals,
-    openingBalance, personAccountTotals, externalLoanOutstanding, reconciliation,
+    personAccountTotals, externalLoanOutstanding, reconciliation,
     cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")},
   });
 }
@@ -336,12 +335,6 @@ export async function POST(req: NextRequest) {
 
   try {
     return withTransaction(() => {
-    if (body.action === "setOpeningBalance") {
-      const x = z.object({ mode: modeSchema, amount: z.number().nonnegative() }).parse(body);
-      sqlite.prepare("INSERT INTO company_balances(mode,opening_balance,updated_at) VALUES(?,?,?) ON CONFLICT(mode) DO UPDATE SET opening_balance=excluded.opening_balance,updated_at=excluded.updated_at").run(x.mode,x.amount,nowIso());
-      return json({ok:true, amount:x.amount});
-    }
-
     if (body.action === "addSupplier") {
       const s = z.object({
         name: z.string().trim().min(1),
@@ -483,8 +476,10 @@ export async function POST(req: NextRequest) {
         lenderId: z.number().int().positive().optional(),
         borrowingId: z.number().int().positive().optional(),
         purchaseDate: dateSchema.optional().default(todayStr()),
+        paymentDate: dateSchema.optional(),
         notes: z.string().trim().optional().default(""),
       }).parse(body);
+      const paymentDoneDate = s.paymentDate || s.purchaseDate;
 
       if (!s.supplierId) {
         return NextResponse.json({ error: "Vendor is required for every purchase" }, { status: 400 });
@@ -526,8 +521,8 @@ export async function POST(req: NextRequest) {
       if (s.fundingSource === "OWN_POCKET" && cashPaid > 0 && !s.paidBy) {
         return NextResponse.json({ error: "Payment done by is required for own-pocket payments" }, { status: 400 });
       }
-      if(cashPaid>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"PURCHASE",cashPaid,s.purchaseDate,"Cash",s.notes,s.paidBy ?? "",nowIso(),s.fundingSource);
-      if(advanceApplied>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"CREDIT_SETTLEMENT",advanceApplied,s.purchaseDate,"Advance","Advance applied to purchase #"+purchaseId,nowIso());
+      if(cashPaid>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"PURCHASE",cashPaid,paymentDoneDate,"Cash",s.notes,s.paidBy ?? "",nowIso(),s.fundingSource);
+      if(advanceApplied>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"CREDIT_SETTLEMENT",advanceApplied,paymentDoneDate,"Advance","Advance applied to purchase #"+purchaseId,nowIso());
 
       sqlite.prepare(`
         INSERT INTO inventory_transactions
@@ -619,18 +614,29 @@ export async function POST(req: NextRequest) {
     }
 
     if (body.action === "payVendor") {
-      const s=z.object({mode:modeSchema,supplierId:z.number().int().positive(),amount:z.number().positive(),paymentDate:dateSchema.optional().default(todayStr()),paymentMode:z.string().trim().min(1).default("Cash"),paidBy:optionalAccountPersonSchema,fundingSource:optionalFundingSourceSchema,notes:z.string().trim().optional().default("")}).parse(body);
-      if (s.fundingSource === "OWN_POCKET" && !s.paidBy) return NextResponse.json({error:"Payment done by is required for own-pocket payments"},{status:400});
+      const s=z.object({
+        mode:modeSchema,
+        supplierId:z.number().int().positive(),
+        amount:z.number().positive(),
+        paymentDate:dateSchema.optional().default(todayStr()),
+        paymentMode:z.string().trim().min(1).default("Cash"),
+        paidBy:accountPersonSchema,
+        fundingSource:optionalFundingSourceSchema,
+        notes:z.string().trim().optional().default(""),
+      }).parse(body);
       const purchases=sqlite.prepare("SELECT id,credit_amount FROM purchases WHERE mode=? AND supplier_id=? AND credit_amount>0 ORDER BY purchase_date ASC,id ASC").all(s.mode,s.supplierId) as Array<{id:number;credit_amount:number}>;
       if(s.amount > purchases.reduce((n,p)=>n+p.credit_amount,0)+0.005) return NextResponse.json({error:"Payment exceeds vendor outstanding balance"},{status:400});
       let rem = s.amount;
       for (const p of purchases) {
         if (rem <= 0) break;
         const use = Math.min(rem, p.credit_amount);
+        if (use <= 0) continue;
         sqlite.prepare("UPDATE purchases SET paid_amount=paid_amount+?,credit_amount=credit_amount-?,updated_at=? WHERE id=?").run(use, use, nowIso(), p.id);
+        // One ledger row per purchase so Accounts can show later vendor pays with Payment done by.
+        sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+          .run(s.mode, s.supplierId, p.id, "CREDIT_SETTLEMENT", use, s.paymentDate, s.paymentMode, s.notes || "Vendor payment (later)", s.paidBy, nowIso(), s.fundingSource);
         rem -= use;
       }
-      sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?)`).run(s.mode, s.supplierId, "CREDIT_SETTLEMENT", s.amount, s.paymentDate, s.paymentMode, s.notes, s.paidBy ?? "", nowIso(), s.fundingSource);
       return json({ok:true});
     }
 
@@ -638,16 +644,17 @@ export async function POST(req: NextRequest) {
       const s = z.object({
         purchaseId: z.number().int().positive(),
         amount: z.number().positive(),
-        paidBy: optionalAccountPersonSchema,
+        paymentDate: dateSchema.optional().default(todayStr()),
+        paidBy: accountPersonSchema,
         fundingSource: optionalFundingSourceSchema,
       }).parse(body);
-      if (s.fundingSource === "OWN_POCKET" && !s.paidBy) return NextResponse.json({error:"Payment done by is required for own-pocket payments"},{status:400});
       const p = sqlite.prepare("SELECT credit_amount, mode, supplier_id FROM purchases WHERE id=?").get(s.purchaseId) as { credit_amount:number; mode:string; supplier_id:number } | undefined;
       if (!p) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
       if (s.amount > p.credit_amount + 0.005) return NextResponse.json({ error: "Payment exceeds outstanding credit" }, { status: 400 });
       sqlite.prepare("UPDATE purchases SET paid_amount=paid_amount+?, credit_amount=credit_amount-?, updated_at=? WHERE id=?")
         .run(s.amount, s.amount, nowIso(), s.purchaseId);
-      sqlite.prepare("INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)").run(p.mode,p.supplier_id,s.purchaseId,"CREDIT_SETTLEMENT",s.amount,todayStr(),"Cash","Purchase credit payment",s.paidBy ?? "",nowIso(),s.fundingSource);
+      sqlite.prepare("INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(p.mode,p.supplier_id,s.purchaseId,"CREDIT_SETTLEMENT",s.amount,s.paymentDate,"Cash","Vendor payment (later)",s.paidBy,nowIso(),s.fundingSource);
       return json({ ok: true });
     }
 
@@ -794,11 +801,14 @@ export async function POST(req: NextRequest) {
           ratePerKg: z.number().nonnegative()
         })).min(1),
         receivedAmount: z.number().nonnegative().optional(),
-        saleDate: dateSchema.optional().default(todayStr()), receivedBy: optionalAccountPersonSchema,
+        saleDate: dateSchema.optional().default(todayStr()),
+        paymentDate: dateSchema.optional(),
+        receivedBy: optionalAccountPersonSchema,
         paymentMode: z.string().trim().min(1).optional().default("Cash"),
         loadingCharges: z.number().nonnegative().optional().default(0),
         notes: z.string().trim().optional().default("")
       }).parse(body);
+      const receiptDate = s.paymentDate || s.saleDate;
 
       for (const item of s.items) {
         if (item.materialCategory === "Natural Bottles" && !["Green","White","White Milk"].includes(item.materialVariant)) {
@@ -842,7 +852,7 @@ export async function POST(req: NextRequest) {
         sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,purchase_id,sale_id,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
           .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],null,saleId,s.saleDate,"SALE #"+saleId+(s.notes ? " - "+s.notes : ""),nowIso());
       }
-      if (received > 0) sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,saleId,received,s.saleDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
+      if (received > 0) sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,saleId,received,receiptDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
       return json({ok:true,id:saleId,grossAmount,labourCharges,loadingCharges,total,received,credit});
     }
 

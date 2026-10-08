@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AdminShell } from "@/components/admin-shell";
 import { useBusinessMode } from "@/components/business-mode-provider";
 import { ACCOUNT_PERSONS, isAccountPerson, type AccountPerson } from "@/lib/account-persons";
+import { FundingSelect } from "@/components/funding-select";
 import { PersonSelect } from "@/components/person-select";
-import { ArrowDownLeft, ArrowUpRight, RefreshCw, WalletCards } from "lucide-react";
+import type { FundingSource } from "@/lib/funding";
+import { ArrowDownLeft, ArrowUpRight, RefreshCw } from "lucide-react";
 
 type Person = AccountPerson;
 type Row = Record<string, unknown>;
@@ -45,8 +47,8 @@ type Borrowing = {
   purpose?: string;
   status?: string;
 };
+type Supplier = { id: number; name: string };
 type AccountsData = {
-  openingBalance?: Record<string, number>;
   personAccountTotals?: Record<string, Record<string, PersonTotals>>;
   cashBalance?: Record<string, number>;
   reconciliation?: Record<string, Reconciliation>;
@@ -61,6 +63,7 @@ type AccountsData = {
   manualLabour?: Row[];
   lenders?: Lender[];
   borrowings?: Borrowing[];
+  suppliers?: Supplier[];
 };
 
 const people: Person[] = [...ACCOUNT_PERSONS];
@@ -82,11 +85,18 @@ export default function AccountsPage() {
   const { mode } = useBusinessMode();
   const [data, setData] = useState<AccountsData | null>(null);
   const [tab, setTab] = useState<"overview" | "borrowings">("overview");
-  const [opening, setOpening] = useState("");
-  const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [settle, setSettle] = useState({ person: "" as string, amount: "", settlementDate: new Date().toISOString().slice(0, 10), notes: "" });
   const [settleBusy, setSettleBusy] = useState(false);
+  const [vendorPay, setVendorPay] = useState({
+    supplierId: "",
+    amount: "",
+    paymentDate: new Date().toISOString().slice(0, 10),
+    paidBy: "",
+    fundingSource: "COMPANY" as FundingSource,
+    notes: "",
+  });
+  const [vendorPayBusy, setVendorPayBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [borrowing, setBorrowing] = useState({
     lenderId: "",
@@ -98,7 +108,7 @@ export default function AccountsPage() {
     notes: "",
   });
   const [lenderForm, setLenderForm] = useState({ name: "", phone: "", notes: "", lenderKind: "EXTERNAL" });
-  const [repayForm, setRepayForm] = useState<{ borrowingId: number; amount: string; paidBy: string } | null>(null);
+  const [repayForm, setRepayForm] = useState<{ borrowingId: number; amount: string; paidBy: string; repaymentDate: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -107,7 +117,6 @@ export default function AccountsPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Failed to load accounts");
       setData(json);
-      setOpening(String(Number(json.openingBalance?.[mode] || 0)));
     } catch (error) {
       console.error(error);
     } finally {
@@ -129,19 +138,6 @@ export default function AccountsPage() {
     if (!res.ok) throw new Error(json?.error || "Operation failed");
     await load();
     return json;
-  }
-
-  async function saveOpeningBalance() {
-    const amount = Number(opening);
-    if (!Number.isFinite(amount) || amount < 0) return;
-    setSaving(true);
-    try {
-      await postAction("setOpeningBalance", { mode, amount });
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Failed to save opening balance");
-    } finally {
-      setSaving(false);
-    }
   }
 
   async function settlePartner() {
@@ -166,6 +162,44 @@ export default function AccountsPage() {
       setMessage(error instanceof Error ? error.message : "Settlement failed");
     } finally {
       setSettleBusy(false);
+    }
+  }
+
+  async function payVendorLater() {
+    const amount = Number(vendorPay.amount);
+    if (!vendorPay.supplierId || !(amount > 0)) {
+      setMessage("Choose a vendor and enter a payment amount");
+      return;
+    }
+    if (!vendorPay.paidBy || !isAccountPerson(vendorPay.paidBy)) {
+      setMessage("Payment done by is required for later vendor payments");
+      return;
+    }
+    setVendorPayBusy(true);
+    setMessage("");
+    try {
+      await postAction("payVendor", {
+        mode,
+        supplierId: Number(vendorPay.supplierId),
+        amount,
+        paymentDate: vendorPay.paymentDate,
+        paidBy: vendorPay.paidBy,
+        fundingSource: vendorPay.fundingSource,
+        notes: vendorPay.notes || "Vendor payment (later)",
+      });
+      setVendorPay({
+        supplierId: "",
+        amount: "",
+        paymentDate: new Date().toISOString().slice(0, 10),
+        paidBy: "",
+        fundingSource: "COMPANY",
+        notes: "",
+      });
+      setMessage("Vendor payment saved — counted in Accounts on the payment date");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Vendor payment failed");
+    } finally {
+      setVendorPayBusy(false);
     }
   }
 
@@ -234,6 +268,7 @@ export default function AccountsPage() {
       await postAction("repayBorrowing", {
         borrowingId: repayForm.borrowingId,
         amount,
+        repaymentDate: repayForm.repaymentDate,
         paidBy: repayForm.paidBy || undefined,
       });
       setRepayForm(null);
@@ -244,11 +279,25 @@ export default function AccountsPage() {
   }
 
   const companyBalance = Number(data?.cashBalance?.[mode] || 0);
-  const openingBalance = Number(data?.openingBalance?.[mode] || 0);
   const recon = data?.reconciliation?.[mode];
   const externalLoans = Number(data?.externalLoanOutstanding?.[mode] || recon?.externalLoanOutstanding || 0);
   const filteredBorrowings = (data?.borrowings || []).filter((b) => b.mode === mode);
   const openBorrowings = filteredBorrowings.filter((b) => Number(b.outstanding_amount) > 0);
+  const outstandingByVendor = useMemo(() => {
+    const map = new Map<number, { supplierId: number; name: string; outstanding: number }>();
+    for (const row of data?.purchases || []) {
+      if (row.mode !== mode) continue;
+      const credit = Number(row.credit_amount || 0);
+      if (credit <= 0.005) continue;
+      const supplierId = Number(row.supplier_id || 0);
+      if (!supplierId) continue;
+      const name = String(row.supplierName || (data?.suppliers || []).find((s) => s.id === supplierId)?.name || `Vendor #${supplierId}`);
+      const prev = map.get(supplierId);
+      map.set(supplierId, { supplierId, name, outstanding: (prev?.outstanding || 0) + credit });
+    }
+    return [...map.values()].sort((a, b) => b.outstanding - a.outstanding);
+  }, [data, mode]);
+  const vendorOutstandingTotal = outstandingByVendor.reduce((n, v) => n + v.outstanding, 0);
 
   const accounts = useMemo(() => {
     return people.map((person) => {
@@ -322,15 +371,20 @@ export default function AccountsPage() {
 
     (data?.vendorPayments || [])
       .filter((x) => x.mode === mode && x.paid_by && String(x.payment_type || "") !== "ADVANCE" && String(x.payment_mode || "") !== "Advance" && Number(x.amount) > 0)
-      .forEach((x) => rows.push({
-        date: String(x.payment_date ?? ""),
-        type: "Purchase payment",
-        description: x.purchase_id ? `Purchase #${x.purchase_id} — ${x.materialName || "Vendor payment"}` : "Vendor payment",
-        person: String(x.paid_by ?? ""),
-        amount: Number(x.amount || 0),
-        direction: "out",
-        funding: String(x.funding_source || "COMPANY") === "OWN_POCKET" ? "Own pocket" : "Company cash",
-      }));
+      .forEach((x) => {
+        const later = String(x.payment_type || "") === "CREDIT_SETTLEMENT";
+        rows.push({
+          date: String(x.payment_date ?? ""),
+          type: later ? "Vendor payment (later)" : "Purchase payment",
+          description: x.purchase_id
+            ? `${later ? "Paid after cash in" : "Paid at purchase"} — #${x.purchase_id} ${x.materialName || x.supplierName || ""}`.trim()
+            : String(x.supplierName || "Vendor payment"),
+          person: String(x.paid_by ?? ""),
+          amount: Number(x.amount || 0),
+          direction: "out",
+          funding: String(x.funding_source || "COMPANY") === "OWN_POCKET" ? "Own pocket" : "Company cash",
+        });
+      });
 
     [...(data?.otherExpenses || []), ...(data?.processingExpenses || []), ...(data?.saleProcessingCosts || [])]
       .filter((x) => x.mode === mode && x.paid_by && Number(x.amount ?? x.labour_cost ?? x.loading_cost) > 0)
@@ -399,39 +453,13 @@ export default function AccountsPage() {
       </div>
 
       {tab === "overview" && <>
-      <div className="mb-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-        <div className="ad-card p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="ad-muted text-xs">Opening Balance</p>
-              <p className="mt-1 text-2xl font-bold">{money(openingBalance)}</p>
-              <p className="ad-muted mt-1 text-xs">Starting {mode} company cash</p>
-            </div>
-            <WalletCards size={20} className="text-[var(--ad-accent)]" />
-          </div>
-          <div className="mt-4 flex gap-2">
-            <input
-              className="ad-input min-w-0"
-              type="number"
-              min="0"
-              value={opening}
-              onChange={(e) => setOpening(e.target.value)}
-              placeholder="Opening balance"
-            />
-            <button className="ad-btn ad-btn-primary" onClick={saveOpeningBalance} disabled={saving}>
-              {saving ? "Saving…" : "Save"}
-            </button>
-          </div>
-        </div>
-
-        <div className="ad-card p-4">
-          <p className="ad-muted text-xs">Company Account (book)</p>
-          <p className="mt-1 text-3xl font-bold">{money(companyBalance)}</p>
-          <p className="ad-muted mt-2 text-xs leading-relaxed">
-            Opening + Sales − Company-funded payments − Expenses + Loans − Loan repayments − Partner settlements.
-            Own-pocket payments do not drain this balance again — they increase “due to partner” instead.
-          </p>
-        </div>
+      <div className="mb-5 ad-card p-4">
+        <p className="ad-muted text-xs">Company Account (book)</p>
+        <p className="mt-1 text-3xl font-bold">{money(companyBalance)}</p>
+        <p className="ad-muted mt-2 text-xs leading-relaxed">
+          Sales receipts − Vendor payments (including later pays) − Expenses + Loans − Loan repayments − Partner settlements.
+          No opening balance. Vendor dues hit the book on the payment date when cash is actually paid.
+        </p>
       </div>
 
       <div className="mb-5 ad-card p-4">
@@ -499,6 +527,46 @@ export default function AccountsPage() {
             </div>
           );
         })}
+      </div>
+
+      <div className="mb-5 ad-card p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h2 className="font-semibold">Pay vendor later</h2>
+            <p className="ad-muted text-xs">
+              When purchase was unpaid and cash comes in later — record payment here with Payment done by. Outstanding now: {money(vendorOutstandingTotal)}.
+            </p>
+          </div>
+        </div>
+        {outstandingByVendor.length > 0 && (
+          <div className="mb-3 flex flex-wrap gap-2 text-xs">
+            {outstandingByVendor.map((v) => (
+              <button
+                key={v.supplierId}
+                type="button"
+                className="rounded-lg border border-[var(--ad-border)] px-2 py-1"
+                onClick={() => setVendorPay({ ...vendorPay, supplierId: String(v.supplierId), amount: String(v.outstanding) })}
+              >
+                {v.name}: {money(v.outstanding)}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="grid gap-2 md:grid-cols-6">
+          <select className="ad-input" value={vendorPay.supplierId} onChange={(e) => setVendorPay({ ...vendorPay, supplierId: e.target.value })}>
+            <option value="">Vendor</option>
+            {(data?.suppliers || []).map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+          <input className="ad-input" type="number" min="0" placeholder="Amount" value={vendorPay.amount} onChange={(e) => setVendorPay({ ...vendorPay, amount: e.target.value })} />
+          <input className="ad-input" type="date" value={vendorPay.paymentDate} onChange={(e) => setVendorPay({ ...vendorPay, paymentDate: e.target.value })} />
+          <PersonSelect value={vendorPay.paidBy} onChange={(v) => setVendorPay({ ...vendorPay, paidBy: v })} required />
+          <FundingSelect value={vendorPay.fundingSource} onChange={(v) => setVendorPay({ ...vendorPay, fundingSource: v })} />
+          <button className="ad-btn ad-btn-primary" onClick={() => void payVendorLater()} disabled={vendorPayBusy}>
+            {vendorPayBusy ? "Saving…" : "Record vendor pay"}
+          </button>
+        </div>
       </div>
 
       <div className="mb-5 ad-card p-4">
@@ -662,7 +730,7 @@ export default function AccountsPage() {
                       {Number(b.outstanding_amount) > 0 && (
                         <button
                           className="text-xs font-semibold text-[var(--ad-accent)]"
-                          onClick={() => setRepayForm({ borrowingId: b.id, amount: String(b.outstanding_amount ?? ""), paidBy: "" })}
+                          onClick={() => setRepayForm({ borrowingId: b.id, amount: String(b.outstanding_amount ?? ""), paidBy: "", repaymentDate: new Date().toISOString().slice(0, 10) })}
                         >
                           Repay
                         </button>

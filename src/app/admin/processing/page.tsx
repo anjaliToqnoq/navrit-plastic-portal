@@ -248,7 +248,7 @@ export default function ProcessingPage() {
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold">Record Attendance</h2>
-                <p className="ad-muted mt-1 text-sm">Select a processing batch and record wages for one or more labourers.</p>
+                <p className="ad-muted mt-1 text-sm">Record labour attendance for cap removal or sorting.</p>
               </div>
               <WalletCards size={18} className="text-[var(--ad-muted)]" />
             </div>
@@ -260,7 +260,6 @@ export default function ProcessingPage() {
                 <select className="ad-input" value={taskType} onChange={(event) => setTaskType(event.target.value)}>
                   <option>Cap Removal</option>
                   <option>Sorting</option>
-                  <option>Other</option>
                 </select>
                 <input
                   className="ad-input"

@@ -271,7 +271,8 @@ function createDb() {
       payment_date TEXT NOT NULL,
       paid_by TEXT NOT NULL DEFAULT '',
       notes TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      task_type TEXT NOT NULL DEFAULT 'Manual Labour'
     );
     CREATE INDEX IF NOT EXISTS processing_manual_labour_batch_idx
       ON processing_manual_labour(batch_id, payment_date);

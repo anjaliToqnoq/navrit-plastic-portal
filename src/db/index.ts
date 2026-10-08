@@ -315,8 +315,6 @@ function createDb() {
     );
     CREATE INDEX IF NOT EXISTS inventory_mode_material_idx
       ON inventory_transactions(mode, material_id, transaction_date);
-    CREATE INDEX IF NOT EXISTS inventory_sale_idx
-      ON inventory_transactions(sale_id);
     CREATE TABLE IF NOT EXISTS articles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       slug TEXT NOT NULL UNIQUE,
@@ -355,6 +353,11 @@ function createDb() {
   ]) {
     try { sqlite.exec(migration); } catch { /* column already exists */ }
   }
+  // Create the sale index only after the sale_id migration has run. Existing
+  // production databases may have an older inventory_transactions table.
+  try {
+    sqlite.exec("CREATE INDEX IF NOT EXISTS inventory_sale_idx ON inventory_transactions(sale_id)");
+  } catch { /* legacy schema will be handled by the migration above */ }
   // Backfill sale links for historical sale inventory rows created before sale_id existed.
   try {
     sqlite.exec(`UPDATE inventory_transactions

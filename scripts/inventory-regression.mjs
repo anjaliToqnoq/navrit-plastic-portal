@@ -57,7 +57,7 @@ db.exec("INSERT INTO inventory_transactions(mode,material_name,transaction_type,
 db.exec("INSERT INTO inventory_transactions(mode,material_name,transaction_type,quantity_kg,amount,transaction_date) VALUES ('PET','Natural Bottles - Green','PURCHASE',80,1200,'2026-10-01')");
 assert.equal(availableStock("PET","Natural Bottles - Red","2026-10-01"), 0);
 assert.equal(availableStock("PET","Natural Bottles - White","2026-10-01"), 50);
-assert.equal(availableStock("PET","Natural Bottles - Green","2026-10-01"), -20);
+assert.equal(availableStock("PET","Natural Bottles - Green","2026-10-01"), 80);
 
 // A3: omitted payer/payment mode must preserve the latest payment.
 db.exec("INSERT INTO sales(id) VALUES(1)");

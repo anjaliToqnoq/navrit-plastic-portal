@@ -3,11 +3,11 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AdminShell, adminToast } from "@/components/admin-shell";
 import { useBusinessMode } from "@/components/business-mode-provider";
-import { Plus, Trash2, WalletCards, X } from "lucide-react";
+import { Plus, WalletCards, X } from "lucide-react";
 
 type Worker = { id: number; name: string; active: number };
 type Batch = { id: number; mode: string; batch_date: string; total_input_kg: number; status: string };
-type Labour = { id: number; batch_id: number; worker_id: number; workerName: string; amount: number; payment_date: string; paid_by: string; task_type: string; mode: string };
+type Labour = { id: number; batch_id: number; worker_id: number; workerName: string; amount: number; payment_date: string; paid_by: string; task_type: string; mode: string; notes?: string };
 type ApiResponse = { ok?: boolean; error?: string; labourWorkers?: Worker[]; processingBatches?: Batch[]; manualLabour?: Labour[] };
 type PostBody = Record<string, string | number | boolean | number[] | undefined>;
 

@@ -34,7 +34,7 @@ const navByMode = {
     { href: "/admin/vendors", label: "Vendors & Management", icon: Users },
     { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
     { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
-    { href: "/admin/processing", label: "Processing", icon: Factory },
+    { href: "/admin/processing", label: "Labour Management", icon: Factory },
   ],
   PLASTIC: [
     { href: "/admin", label: "Plastic Dashboard", icon: LayoutDashboard },

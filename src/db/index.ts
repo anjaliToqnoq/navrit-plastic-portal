@@ -371,6 +371,7 @@ function createDb() {
     "ALTER TABLE other_expenses ADD COLUMN billing_month TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE other_expenses ADD COLUMN billing_start_date TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE other_expenses ADD COLUMN billing_end_date TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE processing_manual_labour ADD COLUMN task_type TEXT NOT NULL DEFAULT 'Manual Labour'",
   ]) {
     try { sqlite.exec(migration); } catch { /* column already exists */ }
   }

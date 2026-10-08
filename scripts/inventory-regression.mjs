@@ -54,10 +54,10 @@ assert.equal(db.prepare("SELECT COUNT(*) n FROM inventory_transactions WHERE sal
 
 // A4: stock is exact by material and duplicate lines aggregate before checking.
 db.exec("INSERT INTO inventory_transactions(mode,material_name,transaction_type,quantity_kg,amount,transaction_date) VALUES ('PET','Natural Bottles - White','PURCHASE',50,1000,'2026-10-01')");
-db.exec("INSERT INTO inventory_transactions(mode,material_name,transaction_type,quantity_kg,amount,transaction_date) VALUES ('PET','Natural Bottles - Green','PURCHASE',80,1200,'2026-10-01')");
+db.exec("INSERT INTO inventory_transactions(mode,material_name,transaction_type,quantity_kg,amount,transaction_date) VALUES ('PET','Natural Bottles - Green','PURCHASE',400,6000,'2026-10-01')");
 assert.equal(availableStock("PET","Natural Bottles - Red","2026-10-01"), 0);
 assert.equal(availableStock("PET","Natural Bottles - White","2026-10-01"), 50);
-assert.equal(availableStock("PET","Natural Bottles - Green","2026-10-01"), 80);
+assert.equal(availableStock("PET","Natural Bottles - Green","2026-10-01"), 200);
 
 // A3: omitted payer/payment mode must preserve the latest payment.
 db.exec("INSERT INTO sales(id) VALUES(1)");

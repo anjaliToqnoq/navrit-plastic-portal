@@ -450,7 +450,6 @@ export async function POST(req: NextRequest) {
     if (body.action === "addManualLabour") {
       const s = z.object({
         mode: modeSchema,
-        batchId: z.number().int().positive(),
         workerIds: z.array(z.number().int().positive()).min(1),
         taskType: z.enum(["Cap Removal","Sorting","Other"]),
         amountPerWorker: z.number().positive(),
@@ -458,17 +457,14 @@ export async function POST(req: NextRequest) {
         paidBy: z.string().trim().max(100).optional().default(""),
         notes: z.string().trim().max(500).optional().default("")
       }).parse(body);
-      const batch = sqlite.prepare("SELECT * FROM processing_batches WHERE id=? AND mode=?").get(s.batchId,s.mode) as any;
-      if (!batch) return NextResponse.json({error:"Processing batch not found"},{status:404});
-      if (batch.status === "CANCELLED") return NextResponse.json({error:"Cannot add labour to a cancelled batch"},{status:400});
       const ids=[...new Set(s.workerIds)];
       const placeholders=ids.map(()=>"?").join(",");
       const workers=sqlite.prepare("SELECT id,name FROM manual_labour_workers WHERE active=1 AND id IN ("+placeholders+")");
       const found=workers.all(...ids) as any[];
       if (found.length !== ids.length) return NextResponse.json({error:"One or more selected workers are inactive or missing"},{status:400});
-      const existing=sqlite.prepare("SELECT worker_id FROM processing_manual_labour WHERE batch_id=? AND task_type=? AND worker_id IN ("+placeholders+")").all(s.batchId,s.taskType,...ids) as any[];
-      if (existing.length) return NextResponse.json({error:"Labour already recorded for one or more selected workers for this task and batch"},{status:400});
-      for (const id of ids) sqlite.prepare("INSERT INTO processing_manual_labour (mode,batch_id,worker_id,amount,payment_date,paid_by,notes,task_type,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(s.mode,s.batchId,id,s.amountPerWorker,s.paymentDate ?? batch.batch_date,s.paidBy,s.notes,s.taskType,nowIso());
+      const existing=sqlite.prepare("SELECT worker_id FROM processing_manual_labour WHERE batch_id IS NULL AND mode=? AND payment_date=? AND task_type=? AND worker_id IN ("+placeholders+")").all(s.mode,s.paymentDate ?? todayStr(),s.taskType,...ids) as any[];
+      if (existing.length) return NextResponse.json({error:"Labour already recorded for one or more selected workers for this task and date"},{status:400});
+      for (const id of ids) sqlite.prepare("INSERT INTO processing_manual_labour (mode,batch_id,worker_id,amount,payment_date,paid_by,notes,task_type,created_at) VALUES (?,?,?,?,?,?,?,?,?)").run(s.mode,null,id,s.amountPerWorker,s.paymentDate ?? todayStr(),s.paidBy,s.notes,s.taskType,nowIso());
       return json({ok:true,totalAmount:Math.round(ids.length*s.amountPerWorker*100)/100,count:ids.length});
     }
 

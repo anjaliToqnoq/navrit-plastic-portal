@@ -180,7 +180,7 @@ export async function GET() {
   for (const mode of ["PET","PLASTIC"]) {
     for (const person of ["Rahul","Nitin","Devesh"]) {
       const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=? AND received_by=?").get(mode,person) as any)?.n || 0);
-      const purchasesPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments WHERE mode=? AND paid_by=? AND payment_type<>'ADVANCE' AND COALESCE(payment_mode,'')<>'Advance'").get(mode,person) as any)?.n || 0);
+      const purchasesPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(vp.amount),0) as n FROM vendor_payments vp LEFT JOIN purchases p ON p.id=vp.purchase_id WHERE vp.mode=? AND COALESCE(NULLIF(vp.paid_by,''), p.paid_by, '')=? AND vp.payment_type<>'ADVANCE' AND COALESCE(vp.payment_mode,'')<>'Advance'").get(mode,person) as any)?.n || 0);
       const expensesPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
       const processingPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
       const saleProcessingPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);

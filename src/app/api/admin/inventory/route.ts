@@ -354,16 +354,21 @@ export async function POST(req: NextRequest) {
         paidBy: z.enum(["Rahul","Devesh","Nitin"]).optional(),
         notes: z.string().trim().optional().default(""),
       }).parse(body);
-      const existing = sqlite.prepare("SELECT id, paid_amount FROM purchases WHERE id=? AND mode=?").get(s.purchaseId, s.mode) as {id:number;paid_amount:number} | undefined;
+      const existing = sqlite.prepare("SELECT id, paid_amount, material_id, material_name as existing_material_name, supplier_id as existing_supplier_id FROM purchases WHERE id=? AND mode=?").get(s.purchaseId, s.mode) as {id:number;paid_amount:number;material_id:number|null;existing_material_name:string;existing_supplier_id:number|null} | undefined;
       if (!existing) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
       if (existing.paid_amount > total + 0.005) return NextResponse.json({ error: "Purchase total cannot be less than amount already paid" }, { status: 400 });
       const credit = Math.round((total - existing.paid_amount) * 100) / 100;
+      if (!s.supplierId) return NextResponse.json({ error: "Vendor is required for every purchase" }, { status: 400 });
+      const materialId = s.materialId ?? existing.material_id ?? null;
       sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, credit_amount=?, purchase_date=?, paid_by=?, notes=?, updated_at=? WHERE id=? AND mode=?`)
-        .run(s.materialId ?? null, s.materialName, s.supplierId ?? null, s.purchaseType, s.quantityKg, s.ratePerKg, total, credit, s.purchaseDate, s.paidBy ?? "", s.notes, nowIso(), s.purchaseId, s.mode);
+        .run(materialId, s.materialName, s.supplierId, s.purchaseType, s.quantityKg, s.ratePerKg, total, credit, s.purchaseDate, s.paidBy ?? "", s.notes, nowIso(), s.purchaseId, s.mode);
       sqlite.prepare("UPDATE inventory_transactions SET material_id=?, material_name=?, quantity_kg=?, amount=?, transaction_date=?, notes=? WHERE purchase_id=? AND transaction_type='PURCHASE'")
-        .run(s.materialId ?? null, s.materialName, s.quantityKg, total, s.purchaseDate, s.notes, s.purchaseId);
-      sqlite.prepare("UPDATE vendor_payments SET payment_date=?, paid_by=? WHERE purchase_id=?").run(s.purchaseDate, s.paidBy ?? "", s.purchaseId);
+        .run(materialId, s.materialName, s.quantityKg, total, s.purchaseDate, s.notes, s.purchaseId);
+      if (s.supplierId !== existing.existing_supplier_id) {
+        sqlite.prepare("UPDATE vendor_payments SET supplier_id=? WHERE purchase_id=?").run(s.supplierId, s.purchaseId);
+      }
+      assertNoNegativeStock(s.mode, [existing.existing_material_name, s.materialName]);
       return json({ ok: true, total, paid: existing.paid_amount, credit });
     }
 

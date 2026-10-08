@@ -456,12 +456,12 @@ export async function POST(req: NextRequest) {
         for (const item of inputItems) {
           const materialName = item.material_variant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.material_variant;
           sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,purchase_id,sale_id,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-            .run(s.mode,null,materialName,"ADJUSTMENT",-Number(item.quantity_kg),0,batch.batch_date,"PROCESSING INPUT #"+s.batchId,nowIso());
+            .run(s.mode,null,materialName,"ADJUSTMENT",-Number(item.quantity_kg),0,null,null,batch.batch_date,"PROCESSING INPUT #"+s.batchId,nowIso());
         }
         for (const item of s.outputs) {
           const materialName = item.materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.materialVariant;
-          sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
-            .run(s.mode,null,materialName,"ADJUSTMENT",item.quantityKg,0,batch.batch_date,"PROCESSING OUTPUT #"+s.batchId,nowIso());
+          sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,purchase_id,sale_id,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+            .run(s.mode,null,materialName,"ADJUSTMENT",item.quantityKg,0,null,null,batch.batch_date,"PROCESSING OUTPUT #"+s.batchId,nowIso());
           sqlite.prepare("INSERT INTO processing_batch_outputs (batch_id,material_variant,quantity_kg,created_at) VALUES (?,?,?,?)")
             .run(s.batchId,item.materialVariant,item.quantityKg,nowIso());
         }
@@ -600,8 +600,6 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      sqlite.exec("BEGIN");
-      try {
         sqlite.prepare("UPDATE sales SET customer_name=?,phone=?,location=?,material_category=?,material_variant=?,quantity_kg=?,rate_per_kg=?,gross_amount=?,labour_charges=?,loading_charges=?,total_amount=?,credit_amount=?,sale_date=?,notes=?,updated_at=? WHERE id=? AND mode=?")
           .run(s.customerName,s.phone,s.location,s.items[0].materialCategory,s.items.length===1?s.items[0].materialVariant:"MIXED",totalWeight,0,grossAmount,labourCharges,loadingCharges,total,Math.round((total-Number(existing.received_amount))*100)/100,s.saleDate,s.notes,nowIso(),s.saleId,s.mode);
 
@@ -621,11 +619,6 @@ export async function POST(req: NextRequest) {
           sqlite.prepare("UPDATE sale_payments SET received_by=COALESCE(?,received_by),payment_mode=COALESCE(?,payment_mode) WHERE id=(SELECT id FROM sale_payments WHERE sale_id=? ORDER BY id DESC LIMIT 1)")
             .run(s.receivedBy ?? null,s.paymentMode ?? null,s.saleId);
         }
-        sqlite.exec("COMMIT");
-      } catch (e) {
-        sqlite.exec("ROLLBACK");
-        throw e;
-      }
 
       return json({ok:true,id:s.saleId,grossAmount,labourCharges,loadingCharges,total,received:Number(existing.received_amount),credit:Math.round((total-Number(existing.received_amount))*100)/100});
     }

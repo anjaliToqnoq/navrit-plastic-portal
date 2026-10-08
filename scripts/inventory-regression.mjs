@@ -183,5 +183,13 @@ assert.equal(db.prepare("SELECT COUNT(*) n FROM purchases WHERE id=99").get().n,
 assert.equal(db.prepare("SELECT COUNT(*) n FROM inventory_transactions WHERE purchase_id=99").get().n, 0);
 assert.equal(db.prepare("SELECT COUNT(*) n FROM vendor_payments WHERE purchase_id=99").get().n, 0);
 
+// A13: payment date can be corrected independently of purchase date (paid after cash in).
+db.exec("INSERT INTO purchases(id,paid_amount,material_id,material_name,supplier_id,paid_by,credit_amount) VALUES(100,500,null,'Natural Bottles',1,'Rahul',0)");
+db.exec("INSERT INTO vendor_payments(supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,paid_by,funding_source,mode) VALUES(1,100,'PURCHASE',500,'2026-09-30','Cash','Rahul','COMPANY','PET')");
+db.prepare("UPDATE vendor_payments SET payment_date=?, paid_by=? WHERE purchase_id=? AND payment_type<>'ADVANCE'").run("2026-10-05","Rahul",100);
+const corrected = db.prepare("SELECT payment_date, paid_by FROM vendor_payments WHERE purchase_id=100").get();
+assert.equal(corrected.payment_date, "2026-10-05");
+assert.equal(corrected.paid_by, "Rahul");
+
 db.close();
 console.log("inventory regression tests: PASS");

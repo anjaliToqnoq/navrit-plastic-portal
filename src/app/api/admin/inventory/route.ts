@@ -179,12 +179,28 @@ export async function GET() {
 
   const purchases = sqlite.prepare(`
     SELECT p.*, s.name as supplierName, l.name as lenderName,
-           ROUND(p.total_amount / NULLIF(p.quantity_kg,0), 2) as effective_cost
+           ROUND(p.total_amount / NULLIF(p.quantity_kg,0), 2) as effective_cost,
+           (
+             SELECT vp.payment_date FROM vendor_payments vp
+             WHERE vp.purchase_id = p.id
+               AND vp.payment_type <> 'ADVANCE'
+               AND COALESCE(vp.payment_mode,'') <> 'Advance'
+             ORDER BY vp.payment_date DESC, vp.id DESC
+             LIMIT 1
+           ) as payment_date,
+           (
+             SELECT COALESCE(NULLIF(vp.paid_by,''), p.paid_by, '') FROM vendor_payments vp
+             WHERE vp.purchase_id = p.id
+               AND vp.payment_type <> 'ADVANCE'
+               AND COALESCE(vp.payment_mode,'') <> 'Advance'
+             ORDER BY vp.payment_date DESC, vp.id DESC
+             LIMIT 1
+           ) as payment_done_by
     FROM purchases p
     LEFT JOIN suppliers s ON s.id = p.supplier_id
     LEFT JOIN lenders l ON l.id = p.lender_id
     ORDER BY p.purchase_date DESC, p.id DESC
-    LIMIT 100
+    LIMIT 200
   `).all();
 
   const borrowings = sqlite.prepare(`
@@ -545,6 +561,7 @@ export async function POST(req: NextRequest) {
         quantityKg: z.number().positive(),
         ratePerKg: z.number().nonnegative(),
         purchaseDate: dateSchema,
+        paymentDate: dateSchema.optional(),
         paidBy: optionalAccountPersonSchema,
         notes: z.string().trim().optional().default(""),
       }).parse(body);
@@ -569,8 +586,78 @@ export async function POST(req: NextRequest) {
       if (s.supplierId !== existing.existing_supplier_id) {
         sqlite.prepare("UPDATE vendor_payments SET supplier_id=? WHERE purchase_id=?").run(s.supplierId, s.purchaseId);
       }
+      // Keep Accounts correct: payment date can differ from purchase date (paid after cash came in).
+      if (s.paymentDate || s.paidBy) {
+        const payRows = sqlite.prepare(`
+          SELECT id FROM vendor_payments
+          WHERE purchase_id=? AND payment_type<>'ADVANCE' AND COALESCE(payment_mode,'')<>'Advance'
+        `).all(s.purchaseId) as Array<{ id: number }>;
+        for (const row of payRows) {
+          if (s.paymentDate) {
+            sqlite.prepare("UPDATE vendor_payments SET payment_date=? WHERE id=?").run(s.paymentDate, row.id);
+          }
+          if (s.paidBy) {
+            sqlite.prepare("UPDATE vendor_payments SET paid_by=? WHERE id=?").run(s.paidBy, row.id);
+          }
+        }
+      }
       assertNoNegativeStock(s.mode, [existing.existing_material_name, stockName]);
       return json({ ok: true, total, paid: existing.paid_amount, credit, materialName: stockName });
+    }
+
+    // Fix payment date / done-by on already-paid purchases without rewriting the whole purchase.
+    if (body.action === "updatePurchasePayment") {
+      const s = z.object({
+        purchaseId: z.number().int().positive(),
+        mode: modeSchema,
+        paymentDate: dateSchema,
+        paidBy: optionalAccountPersonSchema,
+      }).parse(body);
+      const existing = sqlite.prepare("SELECT id, paid_amount, supplier_id FROM purchases WHERE id=? AND mode=?").get(s.purchaseId, s.mode) as
+        | { id: number; paid_amount: number; supplier_id: number | null }
+        | undefined;
+      if (!existing) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
+      if (!(Number(existing.paid_amount) > 0)) {
+        return NextResponse.json({ error: "Purchase has no payment to update — use Pay vendor later first" }, { status: 400 });
+      }
+      const payRows = sqlite.prepare(`
+        SELECT id FROM vendor_payments
+        WHERE purchase_id=? AND payment_type<>'ADVANCE' AND COALESCE(payment_mode,'')<>'Advance'
+      `).all(s.purchaseId) as Array<{ id: number }>;
+      if (!payRows.length) {
+        // Legacy paid purchase with no vendor_payments row — create one so Accounts can use the date.
+        if (!existing.supplier_id) {
+          return NextResponse.json({ error: "Purchase has no vendor to attach payment" }, { status: 400 });
+        }
+        sqlite.prepare(`
+          INSERT INTO vendor_payments
+          (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        `).run(
+          s.mode,
+          existing.supplier_id,
+          s.purchaseId,
+          "PURCHASE",
+          existing.paid_amount,
+          s.paymentDate,
+          "Cash",
+          "Payment date corrected",
+          s.paidBy ?? "",
+          nowIso(),
+          "COMPANY"
+        );
+      } else {
+        for (const row of payRows) {
+          sqlite.prepare("UPDATE vendor_payments SET payment_date=?, paid_by=COALESCE(NULLIF(?, ''), paid_by) WHERE id=?")
+            .run(s.paymentDate, s.paidBy ?? "", row.id);
+        }
+      }
+      if (s.paidBy) {
+        sqlite.prepare("UPDATE purchases SET paid_by=?, updated_at=? WHERE id=?").run(s.paidBy, nowIso(), s.purchaseId);
+      } else {
+        sqlite.prepare("UPDATE purchases SET updated_at=? WHERE id=?").run(nowIso(), s.purchaseId);
+      }
+      return json({ ok: true, paymentDate: s.paymentDate });
     }
 
     if (body.action === "deletePurchase") {

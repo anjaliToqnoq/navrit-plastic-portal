@@ -32,33 +32,54 @@ function withTransaction<T>(fn: () => T): T {
   }
 }
 
+/** Ledger stock key: only two buy types — Natural (mixed) and Red. */
 function saleMaterialName(materialCategory: string, materialVariant: string) {
-  return materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + materialVariant;
+  if (materialCategory === "Red Bottles" || materialVariant === "Red") return "Red Bottles";
+  return "Natural Bottles";
 }
 
-/** Normalize purchase category + variant into the same stock key sales/processing use. */
+/**
+ * Purchase / pre-stock stock key.
+ * Natural is bought mixed (green + white + white milk together) — no colour split.
+ */
 function purchaseStockName(materialName: string, materialVariant: string) {
   const name = materialName.trim();
   const variant = materialVariant.trim();
   if (name === "Red Bottles" || variant === "Red") {
-    if (variant && variant !== "Red") {
-      throw new Error("Red Bottles must use the Red variant");
+    if (variant && variant !== "Red" && variant !== "Mixed") {
+      throw new Error("Red Bottles must use the Red type");
     }
     return "Red Bottles";
   }
-  if (name === "Natural Bottles" || name.startsWith("Natural Bottles - ")) {
-    const fromName = name.startsWith("Natural Bottles - ") ? name.slice("Natural Bottles - ".length) : "";
-    const resolved = variant || fromName;
-    if (!["Green", "White", "White Milk"].includes(resolved)) {
-      throw new Error("Natural Bottles require Green, White, or White Milk variant");
-    }
-    return "Natural Bottles - " + resolved;
+  if (name === "Natural Bottles" || name.startsWith("Natural Bottles")) {
+    // Accept legacy Green/White/White Milk labels but store as one mixed Natural pool.
+    return "Natural Bottles";
   }
   // Legacy free-text materials keep their purchased name as the stock key.
   return name;
 }
 
+function isNaturalStockName(materialName: string) {
+  return materialName === "Natural Bottles" || materialName.startsWith("Natural Bottles");
+}
+
 function getAvailableStock(mode: string, materialName: string, date: string, excludeSaleId?: number) {
+  // Natural buys are mixed; include legacy colour rows so older data still counts.
+  if (isNaturalStockName(materialName)) {
+    const row = excludeSaleId === undefined
+      ? sqlite.prepare(`
+          SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions
+          WHERE mode=? AND transaction_date<=?
+            AND (material_name='Natural Bottles' OR material_name LIKE 'Natural Bottles - %')
+        `).get(mode, date) as any
+      : sqlite.prepare(`
+          SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions
+          WHERE mode=? AND transaction_date<=?
+            AND (material_name='Natural Bottles' OR material_name LIKE 'Natural Bottles - %')
+            AND COALESCE(sale_id,0)<>?
+        `).get(mode, date, excludeSaleId) as any;
+    return Number(row?.kg || 0);
+  }
   const row = excludeSaleId === undefined
     ? sqlite.prepare("SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions WHERE mode=? AND transaction_date<=? AND material_name=?").get(mode,date,materialName) as any
     : sqlite.prepare("SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions WHERE mode=? AND transaction_date<=? AND material_name=? AND COALESCE(sale_id,0)<>?").get(mode,date,materialName,excludeSaleId) as any;
@@ -66,10 +87,17 @@ function getAvailableStock(mode: string, materialName: string, date: string, exc
 }
 
 function assertNoNegativeStock(mode: string, materialNames: string[]) {
-  for (const materialName of [...new Set(materialNames)]) {
-    const rows = sqlite.prepare(
-      "SELECT quantity_kg FROM inventory_transactions WHERE mode=? AND material_name=? ORDER BY transaction_date ASC, id ASC"
-    ).all(mode,materialName) as Array<{quantity_kg:number}>;
+  const normalized = [...new Set(materialNames.map((name) => (isNaturalStockName(name) ? "Natural Bottles" : name)))];
+  for (const materialName of normalized) {
+    const rows = isNaturalStockName(materialName)
+      ? sqlite.prepare(`
+          SELECT quantity_kg FROM inventory_transactions
+          WHERE mode=? AND (material_name='Natural Bottles' OR material_name LIKE 'Natural Bottles - %')
+          ORDER BY transaction_date ASC, id ASC
+        `).all(mode) as Array<{ quantity_kg: number }>
+      : sqlite.prepare(
+          "SELECT quantity_kg FROM inventory_transactions WHERE mode=? AND material_name=? ORDER BY transaction_date ASC, id ASC"
+        ).all(mode, materialName) as Array<{ quantity_kg: number }>;
     let balance = 0;
     for (const row of rows) {
       balance += Number(row.quantity_kg || 0);
@@ -124,11 +152,19 @@ export async function GET() {
   const otherExpenses = sqlite.prepare("SELECT * FROM other_expenses WHERE mode IN ('PET','PLASTIC') ORDER BY expense_date DESC, id DESC LIMIT 500").all();
 
   const inventory = sqlite.prepare(`
-    SELECT mode, material_id as materialId, material_name as materialName,
+    SELECT mode, NULL as materialId,
+           CASE
+             WHEN material_name='Natural Bottles' OR material_name LIKE 'Natural Bottles - %' THEN 'Natural Bottles'
+             ELSE material_name
+           END as materialName,
            ROUND(SUM(quantity_kg), 3) as quantityKg,
            ROUND(SUM(amount), 2) as value
     FROM inventory_transactions
-    GROUP BY mode, material_id, material_name
+    GROUP BY mode,
+      CASE
+        WHEN material_name='Natural Bottles' OR material_name LIKE 'Natural Bottles - %' THEN 'Natural Bottles'
+        ELSE material_name
+      END
     HAVING ABS(SUM(quantity_kg)) > 0.0001
     ORDER BY mode, materialName
   `).all();
@@ -466,7 +502,7 @@ export async function POST(req: NextRequest) {
       } catch (error) {
         return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid material variant" }, { status: 400 });
       }
-      const variant = stockName === "Red Bottles" ? "Red" : stockName.startsWith("Natural Bottles - ") ? stockName.slice("Natural Bottles - ".length) : s.materialVariant;
+      const variant = stockName === "Red Bottles" ? "Red" : "Mixed";
 
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
       let cashPaid = s.paidAmount ?? 0;
@@ -525,7 +561,7 @@ export async function POST(req: NextRequest) {
       } catch (error) {
         return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid material variant" }, { status: 400 });
       }
-      const variant = stockName === "Red Bottles" ? "Red" : stockName.startsWith("Natural Bottles - ") ? stockName.slice("Natural Bottles - ".length) : s.materialVariant;
+      const variant = stockName === "Red Bottles" ? "Red" : "Mixed";
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
       if (existing.paid_amount > total + 0.005) return NextResponse.json({ error: "Purchase total cannot be less than amount already paid" }, { status: 400 });
       const credit = Math.round((total - existing.paid_amount) * 100) / 100;
@@ -540,6 +576,46 @@ export async function POST(req: NextRequest) {
       }
       assertNoNegativeStock(s.mode, [existing.existing_material_name, stockName]);
       return json({ ok: true, total, paid: existing.paid_amount, credit, materialName: stockName });
+    }
+
+    if (body.action === "deletePurchase") {
+      const s = z.object({
+        purchaseId: z.number().int().positive(),
+        mode: modeSchema,
+      }).parse(body);
+      const existing = sqlite.prepare("SELECT id, mode, material_name, supplier_id FROM purchases WHERE id=? AND mode=?").get(s.purchaseId, s.mode) as
+        | { id: number; mode: string; material_name: string; supplier_id: number | null }
+        | undefined;
+      if (!existing) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
+
+      // Restore any advance that was applied to this purchase.
+      const advanceRows = sqlite.prepare(`
+        SELECT amount FROM vendor_payments
+        WHERE purchase_id=? AND payment_type='CREDIT_SETTLEMENT' AND payment_mode='Advance'
+      `).all(s.purchaseId) as Array<{ amount: number }>;
+      let restore = advanceRows.reduce((n, row) => n + Number(row.amount || 0), 0);
+      if (restore > 0.005 && existing.supplier_id) {
+        const advances = sqlite.prepare(`
+          SELECT id, used_amount FROM vendor_advances
+          WHERE mode=? AND supplier_id=? AND used_amount>0.005
+          ORDER BY advance_date DESC, id DESC
+        `).all(s.mode, existing.supplier_id) as Array<{ id: number; used_amount: number }>;
+        for (const adv of advances) {
+          if (restore <= 0) break;
+          const giveBack = Math.min(Number(adv.used_amount), restore);
+          if (giveBack > 0) {
+            sqlite.prepare("UPDATE vendor_advances SET used_amount=used_amount-?, updated_at=? WHERE id=?").run(giveBack, nowIso(), adv.id);
+            restore -= giveBack;
+          }
+        }
+      }
+
+      sqlite.prepare("DELETE FROM vendor_payments WHERE purchase_id=?").run(s.purchaseId);
+      sqlite.prepare("DELETE FROM inventory_transactions WHERE purchase_id=?").run(s.purchaseId);
+      sqlite.prepare("UPDATE other_expenses SET purchase_id=NULL WHERE purchase_id=?").run(s.purchaseId);
+      sqlite.prepare("DELETE FROM purchases WHERE id=? AND mode=?").run(s.purchaseId, s.mode);
+      assertNoNegativeStock(s.mode, [existing.material_name]);
+      return json({ ok: true });
     }
 
     if (body.action === "payVendor") {
@@ -660,8 +736,8 @@ export async function POST(req: NextRequest) {
       const inputItems = sqlite.prepare("SELECT material_variant, quantity_kg FROM processing_batch_items WHERE batch_id=?").all(s.batchId) as Array<{material_variant:string;quantity_kg:number}>;
       const inputKg = Number(batch.total_input_kg);
       for (const item of inputItems) {
-        const materialName = item.material_variant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.material_variant;
-        const available = Number((sqlite.prepare("SELECT COALESCE(SUM(quantity_kg),0) as kg FROM inventory_transactions WHERE mode=? AND transaction_date<=? AND material_name=?").get(s.mode,batch.batch_date,materialName) as any)?.kg || 0);
+        const materialName = item.material_variant === "Red" ? "Red Bottles" : "Natural Bottles";
+        const available = getAvailableStock(s.mode, materialName, batch.batch_date);
         if (Number(item.quantity_kg) > available + 0.005) {
           return NextResponse.json({error:"Insufficient stock for processing " + item.material_variant + ". Available up to " + batch.batch_date + ": " + available.toFixed(2) + " kg"}, {status:400});
         }
@@ -671,17 +747,17 @@ export async function POST(req: NextRequest) {
       if (wasteKg < -0.005) return NextResponse.json({error:"Output cannot be greater than batch input"}, {status:400});
 
       for (const item of s.outputs) {
-        const allowed = s.mode === "PET" ? ["Green","White","White Milk"] : ["Green","White","White Milk","Red"];
+        const allowed = s.mode === "PET" ? ["Green","White","White Milk","Mixed"] : ["Green","White","White Milk","Red","Mixed"];
         if (!allowed.includes(item.materialVariant)) return NextResponse.json({error:"Invalid output material for this mode"}, {status:400});
       }
 
         for (const item of inputItems) {
-          const materialName = item.material_variant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.material_variant;
+          const materialName = item.material_variant === "Red" ? "Red Bottles" : "Natural Bottles";
           sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,purchase_id,sale_id,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
             .run(s.mode,null,materialName,"ADJUSTMENT",-Number(item.quantity_kg),0,null,null,batch.batch_date,"PROCESSING INPUT #"+s.batchId,nowIso());
         }
         for (const item of s.outputs) {
-          const materialName = item.materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.materialVariant;
+          const materialName = item.materialVariant === "Red" ? "Red Bottles" : "Natural Bottles";
           sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,purchase_id,sale_id,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
             .run(s.mode,null,materialName,"ADJUSTMENT",item.quantityKg,0,null,null,batch.batch_date,"PROCESSING OUTPUT #"+s.batchId,nowIso());
           sqlite.prepare("INSERT INTO processing_batch_outputs (batch_id,material_variant,quantity_kg,created_at) VALUES (?,?,?,?)")
@@ -762,7 +838,7 @@ export async function POST(req: NextRequest) {
         const item = s.items[i];
         sqlite.prepare("INSERT INTO sale_items (sale_id,material_category,material_variant,quantity_kg,rate_per_kg,amount) VALUES (?,?,?,?,?,?)")
           .run(saleId,item.materialCategory,item.materialVariant,item.quantityKg,item.ratePerKg,lineTotals[i]);
-        const materialName = item.materialVariant === "Red" ? "Red Bottles" : "Natural Bottles - " + item.materialVariant;
+        const materialName = saleMaterialName(item.materialCategory, item.materialVariant);
         sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,purchase_id,sale_id,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
           .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],null,saleId,s.saleDate,"SALE #"+saleId+(s.notes ? " - "+s.notes : ""),nowIso());
       }
@@ -834,7 +910,7 @@ export async function POST(req: NextRequest) {
           const item=s.items[i];
           sqlite.prepare("INSERT INTO sale_items (sale_id,material_category,material_variant,quantity_kg,rate_per_kg,amount) VALUES (?,?,?,?,?,?)")
             .run(s.saleId,item.materialCategory,item.materialVariant,item.quantityKg,item.ratePerKg,lineTotals[i]);
-          const materialName=item.materialVariant==="Red" ? "Red Bottles" : "Natural Bottles - "+item.materialVariant;
+          const materialName=saleMaterialName(item.materialCategory,item.materialVariant);
           sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,purchase_id,sale_id,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
             .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],null,s.saleId,s.saleDate,"SALE #"+s.saleId+(s.notes ? " - "+s.notes : ""),nowIso());
         }

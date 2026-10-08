@@ -36,10 +36,10 @@ export default function InventoryPage() {
   const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
 
   const [message,setMessage] = useState("");
-  const emptyPurchase = { materialId:"", materialName:"", materialVariant:"Green", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", fundingSource:"COMPANY" as FundingSource, borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), notes:"",  };
+  const emptyPurchase = { materialId:"", materialName:"", materialVariant:"Mixed", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", fundingSource:"COMPANY" as FundingSource, borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), notes:"",  };
   const [purchase,setPurchase] = useState(emptyPurchase);
   const [editingPurchase,setEditingPurchase] = useState<number|null>(null);
-  const [preStock,setPreStock] = useState({materialName:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:"",stockDate:"2026-09-30",notes:""});
+  const [preStock,setPreStock] = useState({materialName:"Natural Bottles",materialVariant:"Mixed",quantityKg:"",ratePerKg:"",stockDate:"2026-09-30",notes:""});
   const [showPreStock,setShowPreStock] = useState(false);
   const [adjust,setAdjust] = useState({materialId:"",materialName:"",quantityKg:"",amount:"",notes:""});
   const [creditPay,setCreditPay] = useState<{purchaseId:number; amount:string; paidBy:string; fundingSource:FundingSource} | null>(null);
@@ -160,20 +160,17 @@ export default function InventoryPage() {
     if (materialName === "Red Bottles" || materialVariant === "Red") {
       return { materialName: "Red Bottles", materialVariant: "Red" };
     }
-    if (materialName.startsWith("Natural Bottles - ")) {
-      return { materialName: "Natural Bottles", materialVariant: materialName.slice("Natural Bottles - ".length) || "Green" };
+    if (materialName.startsWith("Natural Bottles") || materialName === "Natural Bottles") {
+      return { materialName: "Natural Bottles", materialVariant: "Mixed" };
     }
-    if (materialName === "Natural Bottles") {
-      return { materialName: "Natural Bottles", materialVariant: materialVariant || "Green" };
-    }
-    return { materialName, materialVariant: materialVariant || "" };
+    return { materialName, materialVariant: materialVariant || "Mixed" };
   }
 
   async function addPurchase() {
     const m=materials.find((x:Material)=>String(x.id)===purchase.materialId);
     const ok=await post("addPurchase",{
       mode, materialId:m?.id, materialName:purchase.materialName||m?.name_en,
-      materialVariant:purchase.materialVariant||undefined,
+      materialVariant:purchase.materialName==="Red Bottles"?"Red":"Mixed",
       supplierId:purchase.supplierId?Number(purchase.supplierId):undefined,
       purchaseType:purchase.purchaseType, quantityKg:Number(purchase.quantityKg),
       ratePerKg:Number(purchase.ratePerKg), paidAmount:purchase.paidAmount===""?undefined:Number(purchase.paidAmount), paidBy:purchase.paidBy||undefined, fundingSource:purchase.fundingSource,
@@ -188,7 +185,7 @@ export default function InventoryPage() {
     const m=materials.find((x:Material)=>String(x.id)===purchase.materialId);
     const ok=await post("updatePurchase",{
       purchaseId:editingPurchase, mode, materialId:m?.id, materialName:purchase.materialName||m?.name_en,
-      materialVariant:purchase.materialVariant||undefined,
+      materialVariant:purchase.materialName==="Red Bottles"?"Red":"Mixed",
       supplierId:purchase.supplierId?Number(purchase.supplierId):undefined, purchaseType:purchase.purchaseType,
       quantityKg:Number(purchase.quantityKg), ratePerKg:Number(purchase.ratePerKg), paidBy:purchase.paidBy||undefined, purchaseDate:purchase.purchaseDate, notes:purchase.notes
     });
@@ -198,8 +195,14 @@ export default function InventoryPage() {
   function startEditPurchase(p:Purchase) {
     setEditingPurchase(p.id);
     const parsed = purchaseCategoryAndVariant(p.material_name, (p as Purchase & {material_variant?:string}).material_variant);
-    setPurchase({materialId:"",materialName:parsed.materialName,materialVariant:parsed.materialVariant || "Green",supplierId:p.supplierName ? String((data?.suppliers||[]).find((s:Supplier)=>s.name===p.supplierName)?.id||"") : "",purchaseType:p.purchase_type,quantityKg:String(p.quantity_kg),ratePerKg:String(p.rate_per_kg),paidAmount:String(p.paid_amount),paidBy:p.paid_by||"",fundingSource:"COMPANY",borrowingId:"",lenderId:"",purchaseDate:p.purchase_date,notes:""});
+    setPurchase({materialId:"",materialName:parsed.materialName,materialVariant:parsed.materialVariant || "Mixed",supplierId:p.supplierName ? String((data?.suppliers||[]).find((s:Supplier)=>s.name===p.supplierName)?.id||"") : "",purchaseType:p.purchase_type,quantityKg:String(p.quantity_kg),ratePerKg:String(p.rate_per_kg),paidAmount:String(p.paid_amount),paidBy:p.paid_by||"",fundingSource:"COMPANY",borrowingId:"",lenderId:"",purchaseDate:p.purchase_date,notes:""});
     window.scrollTo({top:0,behavior:"smooth"});
+  }
+
+  async function deletePurchase(p:Purchase) {
+    const yes=window.confirm(`Delete purchase #${p.id} (${p.material_name}, ${p.quantity_kg} kg)? This removes stock and linked payments for this purchase.`);
+    if(!yes) return;
+    await post("deletePurchase",{purchaseId:p.id, mode});
   }
 
   async function addPreStock() {
@@ -210,14 +213,14 @@ export default function InventoryPage() {
     const ok=await post("addPreStock",{
       mode,
       materialName:preStock.materialName,
-      materialVariant:preStock.materialVariant,
+      materialVariant:preStock.materialName==="Red Bottles"?"Red":"Mixed",
       quantityKg,
       ratePerKg,
       stockDate:preStock.stockDate||"2026-09-30",
       notes:preStock.notes,
     });
     if(ok) {
-      setPreStock({materialName:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:"",stockDate:"2026-09-30",notes:""});
+      setPreStock({materialName:"Natural Bottles",materialVariant:"Mixed",quantityKg:"",ratePerKg:"",stockDate:"2026-09-30",notes:""});
       setShowPreStock(false);
     }
   }
@@ -252,21 +255,16 @@ export default function InventoryPage() {
         <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
           <div>
             <h2 className="font-semibold">Add pre stock (before audit)</h2>
-            <p className="ad-muted text-xs">Physical stock already present before 30 Sept — material, weight and rate only. No vendor or payment.</p>
+            <p className="ad-muted text-xs">Physical stock already present before 30 Sept — Natural (mixed) or Red only. Weight + rate, no vendor/payment.</p>
           </div>
         </div>
-        <div className="grid gap-2 md:grid-cols-6">
+        <div className="grid gap-2 md:grid-cols-5">
           <select className="ad-input" value={preStock.materialName} onChange={e=>{
             const materialName=e.target.value;
-            setPreStock({...preStock,materialName,materialVariant:materialName==="Red Bottles"?"Red":materialName==="Natural Bottles"?(preStock.materialVariant==="Red"?"Green":preStock.materialVariant||"Green"):""});
+            setPreStock({...preStock,materialName,materialVariant:materialName==="Red Bottles"?"Red":"Mixed"});
           }}>
-            <option value="Natural Bottles">Natural Bottles</option>
-            <option value="Red Bottles">Red Bottles</option>
-          </select>
-          <select className="ad-input" value={preStock.materialVariant} onChange={e=>setPreStock({...preStock,materialVariant:e.target.value})}>
-            {preStock.materialName==="Red Bottles"
-              ? <option value="Red">Red</option>
-              : <><option value="Green">Green</option><option value="White">White</option><option value="White Milk">White Milk</option></>}
+            <option value="Natural Bottles">Natural (mixed)</option>
+            <option value="Red Bottles">Red</option>
           </select>
           <input className="ad-input" type="number" min="0" placeholder="Weight (kg)" value={preStock.quantityKg} onChange={e=>setPreStock({...preStock,quantityKg:e.target.value})}/>
           <input className="ad-input" type="number" min="0" placeholder="Rate / kg" value={preStock.ratePerKg} onChange={e=>setPreStock({...preStock,ratePerKg:e.target.value})}/>
@@ -317,16 +315,11 @@ export default function InventoryPage() {
           </select>
           <select className="ad-input" value={purchase.materialName} onChange={e=>{
             const materialName=e.target.value;
-            setPurchase({...purchase,materialName,materialVariant:materialName==="Red Bottles"?"Red":materialName==="Natural Bottles"?(purchase.materialVariant==="Red"?"Green":purchase.materialVariant||"Green"):""});
+            setPurchase({...purchase,materialName,materialVariant:materialName==="Red Bottles"?"Red":"Mixed"});
           }}>
             <option value="">Material</option>
-            <option value="Natural Bottles">Natural Bottles</option>
-            <option value="Red Bottles">Red Bottles</option>
-          </select>
-          <select className="ad-input" value={purchase.materialVariant} onChange={e=>setPurchase({...purchase,materialVariant:e.target.value})} disabled={!purchase.materialName}>
-            {purchase.materialName==="Red Bottles"
-              ? <option value="Red">Red</option>
-              : <><option value="Green">Green</option><option value="White">White</option><option value="White Milk">White Milk</option></>}
+            <option value="Natural Bottles">Natural (mixed)</option>
+            <option value="Red Bottles">Red</option>
           </select>
           <input className="ad-input" type="date" value={purchase.purchaseDate} onChange={e=>setPurchase({...purchase,purchaseDate:e.target.value})}/>
           <input className="ad-input" type="number" placeholder="Quantity (kg)" value={purchase.quantityKg} onChange={e=>setPurchase({...purchase,quantityKg:e.target.value})}/>
@@ -351,7 +344,7 @@ export default function InventoryPage() {
       </div>}
 
       <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Vendor</th><th>Material</th><th>Qty</th><th>Rate</th><th>Vendor Total</th><th>Paid</th><th>Unpaid</th><th>Payment done by</th><th>Status</th><th>Action</th></tr></thead><tbody>
-        {filteredPurchases.map((p:Purchase)=><tr key={p.id}><td>{p.purchase_date}</td><td>{p.supplierName||"—"}</td><td>{p.material_name}</td><td>{p.quantity_kg} kg</td><td>₹{p.rate_per_kg}</td><td>₹{p.total_amount}</td><td>₹{p.paid_amount}</td><td>₹{p.credit_amount}</td><td>{Number(p.paid_amount)>0?p.paid_by||"—":"—"}</td><td>{Number(p.paid_amount)>0?"PAID":"UNPAID"}</td><td><button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>startEditPurchase(p)}>Edit</button>{p.credit_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={()=>openCreditPayment(p)}>Pay credit</button>}</td></tr>)}
+        {filteredPurchases.map((p:Purchase)=><tr key={p.id}><td>{p.purchase_date}</td><td>{p.supplierName||"—"}</td><td>{p.material_name==="Natural Bottles"||String(p.material_name).startsWith("Natural Bottles")?"Natural (mixed)":p.material_name}</td><td>{p.quantity_kg} kg</td><td>₹{p.rate_per_kg}</td><td>₹{p.total_amount}</td><td>₹{p.paid_amount}</td><td>₹{p.credit_amount}</td><td>{Number(p.paid_amount)>0?p.paid_by||"—":"—"}</td><td>{Number(p.paid_amount)>0?"PAID":"UNPAID"}</td><td><button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>startEditPurchase(p)}>Edit</button>{p.credit_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>openCreditPayment(p)}>Pay credit</button>}<button className="text-xs font-semibold text-red-600" onClick={()=>void deletePurchase(p)}>Delete</button></td></tr>)}
       </tbody></table></div>
     </div>}
 

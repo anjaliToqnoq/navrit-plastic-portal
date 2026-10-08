@@ -103,29 +103,20 @@ if (!(attempted > outstanding + 0.005)) {
 }
 assert.equal(Number(db.prepare("SELECT credit_amount FROM purchases WHERE id=2").get().credit_amount), 50);
 
-// A9: purchase stock keys must match sale/processing keys (variant-aware).
+// A9: purchase/pre-stock use only Natural (mixed) and Red — no colour split.
 function purchaseStockName(materialName, materialVariant) {
   const name = String(materialName || "").trim();
   const variant = String(materialVariant || "").trim();
   if (name === "Red Bottles" || variant === "Red") return "Red Bottles";
-  if (name === "Natural Bottles" || name.startsWith("Natural Bottles - ")) {
-    const fromName = name.startsWith("Natural Bottles - ") ? name.slice("Natural Bottles - ".length) : "";
-    const resolved = variant || fromName;
-    if (!["Green", "White", "White Milk"].includes(resolved)) throw new Error("bad variant");
-    return "Natural Bottles - " + resolved;
-  }
+  if (name === "Natural Bottles" || name.startsWith("Natural Bottles")) return "Natural Bottles";
   return name;
 }
-assert.equal(purchaseStockName("Natural Bottles", "Green"), "Natural Bottles - Green");
-assert.equal(purchaseStockName("Natural Bottles", "White Milk"), "Natural Bottles - White Milk");
+assert.equal(purchaseStockName("Natural Bottles", "Green"), "Natural Bottles");
+assert.equal(purchaseStockName("Natural Bottles", "White Milk"), "Natural Bottles");
+assert.equal(purchaseStockName("Natural Bottles", "Mixed"), "Natural Bottles");
+assert.equal(purchaseStockName("Natural Bottles", ""), "Natural Bottles");
 assert.equal(purchaseStockName("Red Bottles", "Red"), "Red Bottles");
-assert.equal(purchaseStockName("Natural Bottles - White", ""), "Natural Bottles - White");
-try {
-  purchaseStockName("Natural Bottles", "");
-  assert.fail("expected variant validation");
-} catch (error) {
-  assert.equal(String(error.message).includes("bad variant"), true);
-}
+assert.equal(purchaseStockName("Natural Bottles - White", ""), "Natural Bottles");
 
 // A10: company cashflow only subtracts COMPANY-funded payments; OWN_POCKET becomes due-to-partner.
 db.exec(`
@@ -180,6 +171,17 @@ assert.equal(Number(preRow.amount), 2220);
 assert.equal(String(preRow.notes).startsWith("PRE-STOCK"), true);
 // Pre-stock must not create purchase/payment rows — only inventory_transactions.
 assert.equal(db.prepare("SELECT COUNT(*) n FROM purchases").get().n >= 0, true);
+
+// A12: delete purchase removes stock + linked vendor payment for that purchase.
+db.exec("INSERT INTO purchases(id,paid_amount,material_id,material_name,supplier_id,paid_by,credit_amount) VALUES(99,200,null,'Natural Bottles',1,'Rahul',0)");
+db.exec("INSERT INTO inventory_transactions(mode,material_name,transaction_type,quantity_kg,amount,purchase_id,transaction_date,notes) VALUES ('PET','Natural Bottles','PURCHASE',10,200,99,'2026-10-01','buy')");
+db.exec("INSERT INTO vendor_payments(supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,paid_by,funding_source,mode) VALUES(1,99,'PURCHASE',200,'2026-10-01','Cash','Rahul','COMPANY','PET')");
+db.prepare("DELETE FROM vendor_payments WHERE purchase_id=?").run(99);
+db.prepare("DELETE FROM inventory_transactions WHERE purchase_id=?").run(99);
+db.prepare("DELETE FROM purchases WHERE id=?").run(99);
+assert.equal(db.prepare("SELECT COUNT(*) n FROM purchases WHERE id=99").get().n, 0);
+assert.equal(db.prepare("SELECT COUNT(*) n FROM inventory_transactions WHERE purchase_id=99").get().n, 0);
+assert.equal(db.prepare("SELECT COUNT(*) n FROM vendor_payments WHERE purchase_id=99").get().n, 0);
 
 db.close();
 console.log("inventory regression tests: PASS");

@@ -174,22 +174,19 @@ export async function GET() {
   };
   const openingBalance = { PET: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PET'").get() as any)?.n || 0), PLASTIC: Number((sqlite.prepare("SELECT COALESCE(opening_balance,0) as n FROM company_balances WHERE mode='PLASTIC'").get() as any)?.n || 0) };
 
-  const personAccountTotals: Record<string, {
+  const personAccountTotals: Record<string, Record<string, {
     received:number; purchasesPaid:number; expensesPaid:number; processingPaid:number; saleProcessingPaid:number; paid:number; balance:number;
-  }> = {};
-  for (const person of ["Rahul","Nitin","Devesh"]) {
-    const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=? AND received_by=?").get("PET",person) as any)?.n || 0)
-      + Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=? AND received_by=?").get("PLASTIC",person) as any)?.n || 0);
-    const purchasesPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments WHERE mode=? AND paid_by=? AND payment_type<>'ADVANCE' AND COALESCE(payment_mode,'')<>'Advance'").get("PET",person) as any)?.n || 0)
-      + Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments WHERE mode=? AND paid_by=? AND payment_type<>'ADVANCE' AND COALESCE(payment_mode,'')<>'Advance'").get("PLASTIC",person) as any)?.n || 0);
-    const expensesPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND paid_by=?").get("PET",person) as any)?.n || 0)
-      + Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND paid_by=?").get("PLASTIC",person) as any)?.n || 0);
-    const processingPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND paid_by=?").get("PET",person) as any)?.n || 0)
-      + Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND paid_by=?").get("PLASTIC",person) as any)?.n || 0);
-    const saleProcessingPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND paid_by=?").get("PET",person) as any)?.n || 0)
-      + Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND paid_by=?").get("PLASTIC",person) as any)?.n || 0);
-    const paid = purchasesPaid + expensesPaid + processingPaid + saleProcessingPaid;
-    personAccountTotals[person] = { received, purchasesPaid, expensesPaid, processingPaid, saleProcessingPaid, paid, balance: received - paid };
+  }>> = { PET: {}, PLASTIC: {} };
+  for (const mode of ["PET","PLASTIC"]) {
+    for (const person of ["Rahul","Nitin","Devesh"]) {
+      const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=? AND received_by=?").get(mode,person) as any)?.n || 0);
+      const purchasesPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments WHERE mode=? AND paid_by=? AND payment_type<>'ADVANCE' AND COALESCE(payment_mode,'')<>'Advance'").get(mode,person) as any)?.n || 0);
+      const expensesPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
+      const processingPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
+      const saleProcessingPaid = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
+      const paid = purchasesPaid + expensesPaid + processingPaid + saleProcessingPaid;
+      personAccountTotals[mode][person] = { received, purchasesPaid, expensesPaid, processingPaid, saleProcessingPaid, paid, balance: received - paid };
+    }
   }
 
   return json({ materials, suppliers, lenders, inventory, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments, sales, saleItems, salePayments, processingBatches, processingBatchItems, processingBatchOutputs, processingExpenses, saleProcessingCosts, otherExpenses, totals, openingBalance, personAccountTotals, cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")} });

@@ -122,6 +122,7 @@ function createDb() {
       payment_date TEXT NOT NULL,
       payment_mode TEXT NOT NULL DEFAULT 'Cash',
       notes TEXT NOT NULL DEFAULT '',
+      task_type TEXT NOT NULL DEFAULT 'Manual Labour',
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS vendor_payments_supplier_idx

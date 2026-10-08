@@ -85,6 +85,14 @@ export async function GET() {
   const processingBatches = sqlite.prepare("SELECT * FROM processing_batches ORDER BY batch_date DESC, id DESC LIMIT 200").all();
   const processingBatchItems = sqlite.prepare("SELECT * FROM processing_batch_items ORDER BY batch_id, id").all();
   const processingBatchOutputs = sqlite.prepare("SELECT * FROM processing_batch_outputs ORDER BY batch_id, id").all();
+  const labourWorkers = sqlite.prepare("SELECT * FROM manual_labour_workers WHERE active=1 ORDER BY name, id").all();
+  const manualLabour = sqlite.prepare(`
+    SELECT ml.*, w.name as workerName
+    FROM processing_manual_labour ml
+    JOIN manual_labour_workers w ON w.id=ml.worker_id
+    ORDER BY ml.payment_date DESC, ml.id DESC
+    LIMIT 500
+  `).all();
   const processingExpenses = sqlite.prepare("SELECT * FROM processing_expenses ORDER BY expense_date DESC, id DESC LIMIT 500").all();
   const saleProcessingCosts = sqlite.prepare("SELECT * FROM sale_processing_costs ORDER BY payment_date DESC, id DESC LIMIT 500").all();
   const otherExpenses = sqlite.prepare("SELECT * FROM other_expenses WHERE mode IN ('PET','PLASTIC') ORDER BY expense_date DESC, id DESC LIMIT 500").all();

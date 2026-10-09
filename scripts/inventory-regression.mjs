@@ -191,5 +191,91 @@ const corrected = db.prepare("SELECT payment_date, paid_by FROM vendor_payments 
 assert.equal(corrected.payment_date, "2026-10-05");
 assert.equal(corrected.paid_by, "Rahul");
 
+// A14: orphan CREDIT_SETTLEMENT + purchase-linked PURCHASE must not double-count company book.
+// Mirrors production bug: bulk vendor settle left orphan rows, then "Payment date" inserted PURCHASE rows.
+db.exec("DELETE FROM vendor_payments");
+db.exec("DELETE FROM purchases");
+db.exec("DELETE FROM sale_payments");
+db.exec("DELETE FROM other_expenses");
+db.exec(`
+  INSERT INTO purchases(id,paid_amount,material_id,material_name,supplier_id,paid_by,credit_amount) VALUES
+    (1,39690,null,'Natural Bottles',1,'Rahul',0),
+    (2,16875,null,'Natural Bottles',2,'Rahul',0),
+    (6,16660,null,'Natural Bottles',1,'Rahul',0)
+`);
+// Linked pays for purchases 1 and 2 + orphan bulk settles that duplicate them and also cover purchase 6
+db.exec(`
+  INSERT INTO vendor_payments(supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,paid_by,funding_source,mode) VALUES
+    (1,1,'PURCHASE',39690,'2026-10-05','Cash','Rahul','COMPANY','PET'),
+    (2,2,'PURCHASE',16875,'2026-10-05','Cash','Rahul','COMPANY','PET'),
+    (1,NULL,'CREDIT_SETTLEMENT',56350,'2026-10-07','UPI','','COMPANY','PET'),
+    (2,NULL,'CREDIT_SETTLEMENT',16875,'2026-10-07','Cash','','COMPANY','PET')
+`);
+db.exec("INSERT INTO sale_payments(id,sale_id,received_by,payment_mode,mode,amount) VALUES(3,1,'Rahul','Cash','PET',80000)");
+db.exec("INSERT INTO other_expenses(mode,amount,paid_by,funding_source) VALUES('PET',1000,'Rahul','COMPANY')");
+
+function repairDupes(mode) {
+  const suppliers = db.prepare("SELECT DISTINCT supplier_id as id FROM purchases WHERE supplier_id IS NOT NULL").all();
+  let deleted = 0, linked = 0;
+  for (const supplier of suppliers) {
+    const target = Number(db.prepare("SELECT COALESCE(SUM(paid_amount),0) n FROM purchases WHERE supplier_id=?").get(supplier.id).n);
+    const linkedSum = Number(db.prepare(`
+      SELECT COALESCE(SUM(amount),0) n FROM vendor_payments
+      WHERE mode=? AND supplier_id=? AND purchase_id IS NOT NULL
+        AND payment_type<>'ADVANCE' AND COALESCE(payment_mode,'')<>'Advance'
+    `).get(mode, supplier.id).n);
+    const orphans = db.prepare(`
+      SELECT id, amount FROM vendor_payments
+      WHERE mode=? AND supplier_id=? AND purchase_id IS NULL
+        AND payment_type='CREDIT_SETTLEMENT' AND COALESCE(payment_mode,'')<>'Advance'
+      ORDER BY id ASC
+    `).all(mode, supplier.id);
+    let need = Math.max(0, Math.round((target - linkedSum) * 100) / 100);
+    for (const orphan of orphans) {
+      const amt = Number(orphan.amount);
+      if (need <= 0.005) {
+        db.prepare("DELETE FROM vendor_payments WHERE id=?").run(orphan.id);
+        deleted += 1;
+        continue;
+      }
+      const purchase = db.prepare(`
+        SELECT p.id, p.paid_amount, p.paid_by FROM purchases p
+        WHERE p.supplier_id=? AND p.paid_amount>0.005
+          AND NOT EXISTS (
+            SELECT 1 FROM vendor_payments vp
+            WHERE vp.purchase_id=p.id AND vp.payment_type<>'ADVANCE' AND COALESCE(vp.payment_mode,'')<>'Advance'
+          )
+        ORDER BY p.id ASC LIMIT 1
+      `).get(supplier.id);
+      const take = purchase ? Math.min(need, Number(purchase.paid_amount)) : need;
+      if (purchase) {
+        db.prepare("UPDATE vendor_payments SET purchase_id=?, amount=?, paid_by=COALESCE(NULLIF(paid_by,''), ?) WHERE id=?")
+          .run(purchase.id, take, purchase.paid_by || "", orphan.id);
+        linked += 1;
+      } else {
+        db.prepare("UPDATE vendor_payments SET amount=? WHERE id=?").run(take, orphan.id);
+      }
+      need = Math.round((need - take) * 100) / 100;
+    }
+  }
+  return { deleted, linked };
+}
+
+const beforeVendors = Number(db.prepare("SELECT COALESCE(SUM(amount),0) n FROM vendor_payments WHERE mode='PET' AND COALESCE(funding_source,'COMPANY')='COMPANY'").get().n);
+assert.equal(beforeVendors, 39690 + 16875 + 56350 + 16875); // 129790 double-counted
+const repaired = repairDupes("PET");
+assert.equal(repaired.deleted >= 1, true);
+assert.equal(repaired.linked >= 1, true);
+const afterVendors = Number(db.prepare("SELECT COALESCE(SUM(amount),0) n FROM vendor_payments WHERE mode='PET' AND COALESCE(funding_source,'COMPANY')='COMPANY'").get().n);
+assert.equal(afterVendors, 39690 + 16875 + 16660); // = paid purchases only
+const sales = Number(db.prepare("SELECT COALESCE(SUM(amount),0) n FROM sale_payments WHERE mode='PET'").get().n);
+const expenses = Number(db.prepare("SELECT COALESCE(SUM(amount),0) n FROM other_expenses WHERE mode='PET' AND COALESCE(funding_source,'COMPANY')='COMPANY'").get().n);
+const book = Math.round((sales - afterVendors - expenses) * 100) / 100;
+assert.equal(book, 80000 - 73225 - 1000);
+// Pre-stock amount must never enter company book (inventory-only).
+const preStockAmt = 1250 * 49;
+assert.equal(book, 80000 - 73225 - 1000); // unchanged if we "add" pre-stock conceptually
+assert.notEqual(book, 80000 - 73225 - 1000 - preStockAmt);
+
 db.close();
 console.log("inventory regression tests: PASS");

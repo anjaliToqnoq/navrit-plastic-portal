@@ -32,6 +32,18 @@ type Reconciliation = {
   dueToPartners: number;
   externalLoanOutstanding: number;
 };
+type CashflowBreakdown = {
+  salesReceived: number;
+  vendorPayments: number;
+  borrowed: number;
+  loanRepaid: number;
+  processingExpenses: number;
+  saleProcessing: number;
+  otherExpenses: number;
+  manualLabour: number;
+  partnerSettled: number;
+  book: number;
+};
 type Lender = { id: number; name: string; phone?: string; notes?: string; lender_kind?: string };
 type Borrowing = {
   id: number;
@@ -52,6 +64,7 @@ type AccountsData = {
   personAccountTotals?: Record<string, Record<string, PersonTotals>>;
   cashBalance?: Record<string, number>;
   reconciliation?: Record<string, Reconciliation>;
+  cashflowBreakdown?: Record<string, CashflowBreakdown>;
   externalLoanOutstanding?: Record<string, number>;
   partnerSettlements?: Row[];
   salePayments?: Row[];
@@ -280,6 +293,7 @@ export default function AccountsPage() {
 
   const companyBalance = Number(data?.cashBalance?.[mode] || 0);
   const recon = data?.reconciliation?.[mode];
+  const breakdown = data?.cashflowBreakdown?.[mode];
   const externalLoans = Number(data?.externalLoanOutstanding?.[mode] || recon?.externalLoanOutstanding || 0);
   const filteredBorrowings = (data?.borrowings || []).filter((b) => b.mode === mode);
   const openBorrowings = filteredBorrowings.filter((b) => Number(b.outstanding_amount) > 0);
@@ -458,8 +472,38 @@ export default function AccountsPage() {
         <p className="mt-1 text-3xl font-bold">{money(companyBalance)}</p>
         <p className="ad-muted mt-2 text-xs leading-relaxed">
           Sales receipts − Vendor payments (including later pays) − Expenses + Loans − Loan repayments − Partner settlements.
-          No opening balance. Vendor dues hit the book on the payment date when cash is actually paid.
+          No opening balance. Pre-stock is inventory only and never hits this book. Vendor dues hit the book on the payment date when cash is actually paid.
         </p>
+        {breakdown && (
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 text-xs">
+            <div className="rounded-lg border border-[var(--ad-border)] p-2">
+              <p className="ad-muted">Sales received</p>
+              <p className="mt-1 font-semibold text-[var(--ad-success)]">+{money(breakdown.salesReceived)}</p>
+            </div>
+            <div className="rounded-lg border border-[var(--ad-border)] p-2">
+              <p className="ad-muted">Vendor payments</p>
+              <p className="mt-1 font-semibold text-[var(--ad-danger)]">−{money(breakdown.vendorPayments)}</p>
+            </div>
+            <div className="rounded-lg border border-[var(--ad-border)] p-2">
+              <p className="ad-muted">Expenses + labour</p>
+              <p className="mt-1 font-semibold text-[var(--ad-danger)]">
+                −{money(breakdown.otherExpenses + breakdown.processingExpenses + breakdown.saleProcessing + breakdown.manualLabour)}
+              </p>
+            </div>
+            {(breakdown.borrowed > 0 || breakdown.loanRepaid > 0) && (
+              <div className="rounded-lg border border-[var(--ad-border)] p-2">
+                <p className="ad-muted">Loans net</p>
+                <p className="mt-1 font-semibold">{money(breakdown.borrowed - breakdown.loanRepaid)}</p>
+              </div>
+            )}
+            {breakdown.partnerSettled > 0 && (
+              <div className="rounded-lg border border-[var(--ad-border)] p-2">
+                <p className="ad-muted">Partner settlements</p>
+                <p className="mt-1 font-semibold text-[var(--ad-danger)]">−{money(breakdown.partnerSettled)}</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="mb-5 ad-card p-4">

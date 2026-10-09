@@ -108,8 +108,133 @@ function assertNoNegativeStock(mode: string, materialNames: string[]) {
   }
 }
 
+const companyFundedVendorSql = `SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments
+  WHERE mode=? AND NOT (payment_type='CREDIT_SETTLEMENT' AND payment_mode='Advance')
+  AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
+const companyFundedExpenseSql = `SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
+const companyFundedProcessingSql = `SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
+const companyFundedSaleProcSql = `SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
+const companyFundedLabourSql = `SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
+
+/** Company cash book parts. Pre-stock is inventory-only and never included. */
+function modeCashflowParts(m: string) {
+  const salesReceived = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=?").get(m) as any)?.n || 0);
+  const vendorPayments = Number((sqlite.prepare(companyFundedVendorSql).get(m) as any)?.n || 0);
+  const borrowed = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM borrowings WHERE mode=?").get(m) as any)?.n || 0);
+  const loanRepaid = Number((sqlite.prepare("SELECT COALESCE(SUM(br.amount),0) as n FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id WHERE b.mode=?").get(m) as any)?.n || 0);
+  const processingExpenses = Number((sqlite.prepare(companyFundedProcessingSql).get(m) as any)?.n || 0);
+  const saleProcessing = Number((sqlite.prepare(companyFundedSaleProcSql).get(m) as any)?.n || 0);
+  const otherExpenses = Number((sqlite.prepare(companyFundedExpenseSql).get(m) as any)?.n || 0);
+  const manualLabour = Number((sqlite.prepare(companyFundedLabourSql).get(m) as any)?.n || 0);
+  const partnerSettled = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE mode=?").get(m) as any)?.n || 0);
+  const book = Math.round((salesReceived - vendorPayments + borrowed - loanRepaid - processingExpenses - saleProcessing - otherExpenses - manualLabour - partnerSettled) * 100) / 100;
+  return {
+    salesReceived, vendorPayments, borrowed, loanRepaid, processingExpenses, saleProcessing,
+    otherExpenses, manualLabour, partnerSettled, book,
+  };
+}
+
+function modeCashflow(m: string) {
+  return modeCashflowParts(m).book;
+}
+
+/**
+ * Remove orphan CREDIT_SETTLEMENT rows that double-count purchase-linked pays.
+ * Keeps at most (sum of purchase.paid_amount − already-linked payments) as orphan cash.
+ */
+function repairDuplicateVendorPayments(mode: string) {
+  const suppliers = sqlite.prepare("SELECT DISTINCT supplier_id as id FROM purchases WHERE mode=? AND supplier_id IS NOT NULL").all(mode) as Array<{ id: number }>;
+  let deleted = 0;
+  let reduced = 0;
+  let linked = 0;
+  for (const supplier of suppliers) {
+    const target = Number((sqlite.prepare("SELECT COALESCE(SUM(paid_amount),0) as n FROM purchases WHERE mode=? AND supplier_id=?").get(mode, supplier.id) as any)?.n || 0);
+    const linkedSum = Number((sqlite.prepare(`
+      SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments
+      WHERE mode=? AND supplier_id=? AND purchase_id IS NOT NULL
+        AND payment_type<>'ADVANCE' AND COALESCE(payment_mode,'')<>'Advance'
+    `).get(mode, supplier.id) as any)?.n || 0);
+    const orphans = sqlite.prepare(`
+      SELECT id, amount, payment_date, paid_by FROM vendor_payments
+      WHERE mode=? AND supplier_id=? AND purchase_id IS NULL
+        AND payment_type='CREDIT_SETTLEMENT' AND COALESCE(payment_mode,'')<>'Advance'
+      ORDER BY payment_date ASC, id ASC
+    `).all(mode, supplier.id) as Array<{ id: number; amount: number; payment_date: string; paid_by: string }>;
+    if (!orphans.length) continue;
+
+    let need = Math.max(0, Math.round((target - linkedSum) * 100) / 100);
+    for (const orphan of orphans) {
+      const amt = Number(orphan.amount);
+      if (need <= 0.005) {
+        sqlite.prepare("DELETE FROM vendor_payments WHERE id=?").run(orphan.id);
+        deleted += 1;
+        continue;
+      }
+      const unlinkedPurchase = sqlite.prepare(`
+        SELECT p.id, p.paid_amount, p.paid_by FROM purchases p
+        WHERE p.mode=? AND p.supplier_id=? AND p.paid_amount>0.005
+          AND NOT EXISTS (
+            SELECT 1 FROM vendor_payments vp
+            WHERE vp.purchase_id=p.id AND vp.payment_type<>'ADVANCE' AND COALESCE(vp.payment_mode,'')<>'Advance'
+          )
+        ORDER BY p.purchase_date ASC, p.id ASC
+        LIMIT 1
+      `).get(mode, supplier.id) as { id: number; paid_amount: number; paid_by: string } | undefined;
+
+      if (amt <= need + 0.005) {
+        if (unlinkedPurchase && Math.abs(Number(unlinkedPurchase.paid_amount) - amt) < 0.02) {
+          sqlite.prepare(`
+            UPDATE vendor_payments
+            SET purchase_id=?, paid_by=COALESCE(NULLIF(paid_by,''), ?), notes=COALESCE(NULLIF(notes,''), 'Repaired link to purchase')
+            WHERE id=?
+          `).run(unlinkedPurchase.id, unlinkedPurchase.paid_by || "", orphan.id);
+          linked += 1;
+        }
+        need = Math.round((need - amt) * 100) / 100;
+      } else {
+        const take = unlinkedPurchase
+          ? Math.min(need, Number(unlinkedPurchase.paid_amount))
+          : need;
+        const leftover = Math.round((amt - take) * 100) / 100;
+        if (unlinkedPurchase) {
+          sqlite.prepare(`
+            UPDATE vendor_payments
+            SET purchase_id=?, amount=?, paid_by=COALESCE(NULLIF(paid_by,''), ?), notes=COALESCE(NULLIF(notes,''), 'Repaired link to purchase')
+            WHERE id=?
+          `).run(unlinkedPurchase.id, take, unlinkedPurchase.paid_by || "", orphan.id);
+          linked += 1;
+        } else {
+          sqlite.prepare("UPDATE vendor_payments SET amount=?, notes=COALESCE(NULLIF(notes,''), 'Reduced duplicate orphan') WHERE id=?")
+            .run(take, orphan.id);
+          reduced += 1;
+        }
+        if (leftover > 0.005) deleted += 1; // leftover discarded by shrinking amount
+        need = Math.round((need - take) * 100) / 100;
+      }
+    }
+  }
+  return { deleted, reduced, linked };
+}
+
+/** Orphan cash still needed for a supplier after purchase-linked rows. */
+function orphanVendorNeed(mode: string, supplierId: number) {
+  const target = Number((sqlite.prepare("SELECT COALESCE(SUM(paid_amount),0) as n FROM purchases WHERE mode=? AND supplier_id=?").get(mode, supplierId) as any)?.n || 0);
+  const linkedSum = Number((sqlite.prepare(`
+    SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments
+    WHERE mode=? AND supplier_id=? AND purchase_id IS NOT NULL
+      AND payment_type<>'ADVANCE' AND COALESCE(payment_mode,'')<>'Advance'
+  `).get(mode, supplierId) as any)?.n || 0);
+  return Math.max(0, Math.round((target - linkedSum) * 100) / 100);
+}
+
 export async function GET() {
   if (!(await guard())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Heal historical double-counts: orphan CREDIT_SETTLEMENT + Payment-date PURCHASE rows.
+  withTransaction(() => {
+    repairDuplicateVendorPayments("PET");
+    repairDuplicateVendorPayments("PLASTIC");
+  });
 
   const materials = listMaterials(true);
   const suppliers = sqlite.prepare("SELECT * FROM suppliers ORDER BY name").all();
@@ -255,29 +380,6 @@ export async function GET() {
     FROM inventory_transactions
   `).get();
 
-  const companyFundedVendorSql = `SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments
-    WHERE mode=? AND NOT (payment_type='CREDIT_SETTLEMENT' AND payment_mode='Advance')
-    AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
-  const companyFundedExpenseSql = `SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
-  const companyFundedProcessingSql = `SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
-  const companyFundedSaleProcSql = `SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
-  const companyFundedLabourSql = `SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
-
-  const modeCashflow = (m: string) => {
-    const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=?").get(m) as any)?.n || 0);
-    const paidVendors = Number((sqlite.prepare(companyFundedVendorSql).get(m) as any)?.n || 0);
-    // Loan principal received into company (not interest — interest is liability only)
-    const borrowed = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM borrowings WHERE mode=?").get(m) as any)?.n || 0);
-    const repaid = Number((sqlite.prepare("SELECT COALESCE(SUM(br.amount),0) as n FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id WHERE b.mode=?").get(m) as any)?.n || 0);
-    const monthlyProcessing = Number((sqlite.prepare(companyFundedProcessingSql).get(m) as any)?.n || 0);
-    const saleProcessing = Number((sqlite.prepare(companyFundedSaleProcSql).get(m) as any)?.n || 0);
-    const otherExpenses = Number((sqlite.prepare(companyFundedExpenseSql).get(m) as any)?.n || 0);
-    const manualLabour = Number((sqlite.prepare(companyFundedLabourSql).get(m) as any)?.n || 0);
-    const partnerSettled = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE mode=?").get(m) as any)?.n || 0);
-    // No opening balance — book starts from recorded receipts/payments only.
-    return Math.round((received - paidVendors + borrowed - repaid - monthlyProcessing - saleProcessing - otherExpenses - manualLabour - partnerSettled) * 100) / 100;
-  };
-
   const externalLoanOutstanding = {
     PET: Number((sqlite.prepare(`SELECT COALESCE(SUM(b.outstanding_amount),0) as n FROM borrowings b JOIN lenders l ON l.id=b.lender_id WHERE b.mode='PET' AND COALESCE(l.lender_kind,'EXTERNAL')='EXTERNAL'`).get() as any)?.n || 0),
     PLASTIC: Number((sqlite.prepare(`SELECT COALESCE(SUM(b.outstanding_amount),0) as n FROM borrowings b JOIN lenders l ON l.id=b.lender_id WHERE b.mode='PLASTIC' AND COALESCE(l.lender_kind,'EXTERNAL')='EXTERNAL'`).get() as any)?.n || 0),
@@ -320,15 +422,16 @@ export async function GET() {
     }
   }
 
+  const cashflowBreakdown = { PET: modeCashflowParts("PET"), PLASTIC: modeCashflowParts("PLASTIC") };
   const reconciliation = {
     PET: {
-      companyBook: modeCashflow("PET"),
+      companyBook: cashflowBreakdown.PET.book,
       cashWithPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Number(personAccountTotals.PET[p]?.cashWithPartner || 0), 0),
       dueToPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, Number(personAccountTotals.PET[p]?.companyOwesPartner || 0)), 0),
       externalLoanOutstanding: externalLoanOutstanding.PET,
     },
     PLASTIC: {
-      companyBook: modeCashflow("PLASTIC"),
+      companyBook: cashflowBreakdown.PLASTIC.book,
       cashWithPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Number(personAccountTotals.PLASTIC[p]?.cashWithPartner || 0), 0),
       dueToPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, Number(personAccountTotals.PLASTIC[p]?.companyOwesPartner || 0)), 0),
       externalLoanOutstanding: externalLoanOutstanding.PLASTIC,
@@ -339,8 +442,8 @@ export async function GET() {
     materials, suppliers, lenders, inventory, preStock, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments,
     sales, saleItems, salePayments, processingBatches, processingBatchItems, processingBatchOutputs, processingExpenses,
     saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, partnerSettlements, borrowingRepayments, totals,
-    personAccountTotals, externalLoanOutstanding, reconciliation,
-    cashBalance:{PET:modeCashflow("PET"),PLASTIC:modeCashflow("PLASTIC")},
+    personAccountTotals, externalLoanOutstanding, reconciliation, cashflowBreakdown,
+    cashBalance:{PET:cashflowBreakdown.PET.book,PLASTIC:cashflowBreakdown.PLASTIC.book},
   });
 }
 
@@ -613,8 +716,8 @@ export async function POST(req: NextRequest) {
         paymentDate: dateSchema,
         paidBy: optionalAccountPersonSchema,
       }).parse(body);
-      const existing = sqlite.prepare("SELECT id, paid_amount, supplier_id FROM purchases WHERE id=? AND mode=?").get(s.purchaseId, s.mode) as
-        | { id: number; paid_amount: number; supplier_id: number | null }
+      const existing = sqlite.prepare("SELECT id, paid_amount, supplier_id, paid_by FROM purchases WHERE id=? AND mode=?").get(s.purchaseId, s.mode) as
+        | { id: number; paid_amount: number; supplier_id: number | null; paid_by: string }
         | undefined;
       if (!existing) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
       if (!(Number(existing.paid_amount) > 0)) {
@@ -624,33 +727,53 @@ export async function POST(req: NextRequest) {
         SELECT id FROM vendor_payments
         WHERE purchase_id=? AND payment_type<>'ADVANCE' AND COALESCE(payment_mode,'')<>'Advance'
       `).all(s.purchaseId) as Array<{ id: number }>;
-      if (!payRows.length) {
-        // Legacy paid purchase with no vendor_payments row — create one so Accounts can use the date.
-        if (!existing.supplier_id) {
-          return NextResponse.json({ error: "Purchase has no vendor to attach payment" }, { status: 400 });
-        }
-        sqlite.prepare(`
-          INSERT INTO vendor_payments
-          (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?)
-        `).run(
-          s.mode,
-          existing.supplier_id,
-          s.purchaseId,
-          "PURCHASE",
-          existing.paid_amount,
-          s.paymentDate,
-          "Cash",
-          "Payment date corrected",
-          s.paidBy ?? "",
-          nowIso(),
-          "COMPANY"
-        );
-      } else {
+      if (payRows.length) {
         for (const row of payRows) {
           sqlite.prepare("UPDATE vendor_payments SET payment_date=?, paid_by=COALESCE(NULLIF(?, ''), paid_by) WHERE id=?")
             .run(s.paymentDate, s.paidBy ?? "", row.id);
         }
+      } else if (existing.supplier_id) {
+        // Prefer reclaiming an orphan supplier settlement instead of inserting a duplicate cash outflow.
+        const orphan = sqlite.prepare(`
+          SELECT id, amount FROM vendor_payments
+          WHERE mode=? AND supplier_id=? AND purchase_id IS NULL
+            AND payment_type='CREDIT_SETTLEMENT' AND COALESCE(payment_mode,'')<>'Advance'
+            AND amount+0.005 >= ?
+          ORDER BY payment_date ASC, id ASC
+          LIMIT 1
+        `).get(s.mode, existing.supplier_id, existing.paid_amount) as { id: number; amount: number } | undefined;
+        if (orphan) {
+          const paid = Number(existing.paid_amount);
+          const leftover = Math.round((Number(orphan.amount) - paid) * 100) / 100;
+          sqlite.prepare(`
+            UPDATE vendor_payments
+            SET purchase_id=?, amount=?, payment_date=?, paid_by=COALESCE(NULLIF(?, ''), paid_by), notes=COALESCE(NULLIF(notes,''), 'Linked to purchase')
+            WHERE id=?
+          `).run(s.purchaseId, paid, s.paymentDate, s.paidBy ?? existing.paid_by ?? "", orphan.id);
+          // Keep only orphan cash still needed for other unlinked paid purchases — discard double-count remainder.
+          if (leftover > 0.005) {
+            const stillNeed = orphanVendorNeed(s.mode, existing.supplier_id);
+            const keep = Math.min(leftover, stillNeed);
+            if (keep > 0.005) {
+              sqlite.prepare(`
+                INSERT INTO vendor_payments
+                (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source)
+                VALUES (?,?,NULL,'CREDIT_SETTLEMENT',?,?, 'Cash','Orphan remainder after linking',?,?,?)
+              `).run(s.mode, existing.supplier_id, keep, s.paymentDate, s.paidBy ?? "", nowIso(), "COMPANY");
+            }
+          }
+        } else {
+          sqlite.prepare(`
+            INSERT INTO vendor_payments
+            (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+          `).run(
+            s.mode, existing.supplier_id, s.purchaseId, "PURCHASE", existing.paid_amount,
+            s.paymentDate, "Cash", "Payment date corrected", s.paidBy ?? existing.paid_by ?? "", nowIso(), "COMPANY"
+          );
+        }
+      } else {
+        return NextResponse.json({ error: "Purchase has no vendor to attach payment" }, { status: 400 });
       }
       if (s.paidBy) {
         sqlite.prepare("UPDATE purchases SET paid_by=?, updated_at=? WHERE id=?").run(s.paidBy, nowIso(), s.purchaseId);
@@ -658,6 +781,13 @@ export async function POST(req: NextRequest) {
         sqlite.prepare("UPDATE purchases SET updated_at=? WHERE id=?").run(nowIso(), s.purchaseId);
       }
       return json({ ok: true, paymentDate: s.paymentDate });
+    }
+
+    // One-time / safe cleanup: remove orphan vendor settlements that double-count purchase-linked pays.
+    if (body.action === "repairDuplicateVendorPayments") {
+      const s = z.object({ mode: modeSchema }).parse(body);
+      const result = repairDuplicateVendorPayments(s.mode);
+      return json({ ok: true, ...result, cashBalance: modeCashflow(s.mode) });
     }
 
     if (body.action === "deletePurchase") {

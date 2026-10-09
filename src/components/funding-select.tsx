@@ -1,32 +1,32 @@
 "use client";
 
 import { FUNDING_SOURCES, type FundingSource } from "@/lib/funding";
+import { AdminSelect } from "@/components/admin-select";
 
 type Props = {
   value: FundingSource | "";
   onChange: (value: FundingSource) => void;
   className?: string;
+  label?: string;
 };
 
 const LABELS: Record<FundingSource, string> = {
-  COMPANY: "Paid from: Company cash",
-  OWN_POCKET: "Paid from: Own pocket",
+  COMPANY: "Company cash",
+  OWN_POCKET: "Own pocket",
 };
 
 /** Company cash vs partner's own pocket — drives Accounts due-to-partner math. */
-export function FundingSelect({ value, onChange, className = "ad-input" }: Props) {
+export function FundingSelect({ value, onChange, className = "", label = "Paid from" }: Props) {
   return (
-    <select
+    <AdminSelect
       className={className}
+      label={label}
       value={value || "COMPANY"}
-      onChange={(e) => onChange(e.target.value as FundingSource)}
-      aria-label="Paid from"
-    >
-      {FUNDING_SOURCES.map((source) => (
-        <option key={source} value={source}>
-          {LABELS[source]}
-        </option>
-      ))}
-    </select>
+      onChange={(v) => onChange((v || "COMPANY") as FundingSource)}
+      options={FUNDING_SOURCES.map((source) => ({
+        value: source,
+        label: LABELS[source],
+      }))}
+    />
   );
 }

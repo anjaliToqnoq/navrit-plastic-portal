@@ -2,7 +2,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Pencil, CalendarClock, Wallet, Trash2 } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
+import { AdminSelect } from "@/components/admin-select";
 import { FundingSelect } from "@/components/funding-select";
 import { PersonSelect } from "@/components/person-select";
 import { isAccountPerson } from "@/lib/account-persons";
@@ -376,7 +378,7 @@ export default function InventoryPage() {
       </div>
     )}
 
-    <div className="mb-5 grid gap-3 sm:grid-cols-3">
+    <div className="mb-5 grid gap-3 sm:grid-cols-3 ad-fade-in">
       <div className="ad-card p-4"><p className="ad-muted text-xs">Current {mode} stock</p><p className="mt-1 text-2xl font-bold">{currentKg.toFixed(2)} kg</p></div>
       <div className="ad-card p-4"><p className="ad-muted text-xs">Pre stock recorded</p><p className="mt-1 text-2xl font-bold">{preStockKg.toFixed(2)} kg</p></div>
       <div className="ad-card p-4"><p className="ad-muted text-xs">Supplier credit</p><p className="mt-1 text-2xl font-bold">₹{filteredPurchases.reduce((n:any,x:any)=>n+Number(x.credit_amount),0).toFixed(2)}</p></div>
@@ -386,87 +388,132 @@ export default function InventoryPage() {
       {[["purchases","Purchases"],["sales","Sales"],["inventory","Inventory"],["expenses","Expenses"]].map(([value,label])=><button key={value} onClick={()=>setTab(value)} className={tab===value?"ad-btn ad-btn-primary":"ad-btn ad-btn-ghost"}>{label}</button>)}
     </div>
 
-    {tab==="purchases" && <div className="space-y-5">
+    {tab==="purchases" && <div className="space-y-5 ad-fade-in">
       <div className="ad-card p-4">
         <h2 className="mb-3 font-semibold">{editingPurchase ? `Edit ${mode} purchase #${editingPurchase}` : `Add ${mode} purchase`}</h2>
-        <div className="grid gap-2 md:grid-cols-4">
-          <label className="ad-input flex flex-col gap-1 text-xs">
-            <span className="ad-muted">Vendor *</span>
-            <select className="bg-transparent" value={purchase.supplierId} onChange={e=>setPurchase({...purchase,supplierId:e.target.value})}>
-              <option value="">Select vendor</option>{(data.suppliers||[]).map((s:Supplier)=><option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </label>
-          <label className="ad-input flex flex-col gap-1 text-xs">
-            <span className="ad-muted">Material *</span>
-            <select className="bg-transparent" value={purchase.materialName} onChange={e=>{
-              const materialName=e.target.value;
+        <div className="grid gap-3 md:grid-cols-4">
+          <AdminSelect
+            label="Vendor"
+            required
+            placeholder="Select vendor"
+            value={purchase.supplierId}
+            onChange={(v)=>setPurchase({...purchase,supplierId:v})}
+            options={[
+              { value: "", label: "Select vendor" },
+              ...(data.suppliers||[]).map((s:Supplier)=>({ value: String(s.id), label: s.name })),
+            ]}
+          />
+          <AdminSelect
+            label="Material"
+            required
+            placeholder="Select material"
+            value={purchase.materialName}
+            onChange={(materialName)=>{
               setPurchase({...purchase,materialName,materialVariant:materialName==="Red Bottles"?"Red":"Mixed"});
-            }}>
-              <option value="">Select material</option>
-              <option value="Natural Bottles">Natural (mixed)</option>
-              <option value="Red Bottles">Red</option>
-            </select>
+            }}
+            options={[
+              { value: "", label: "Select material" },
+              { value: "Natural Bottles", label: "Natural (mixed)" },
+              { value: "Red Bottles", label: "Red" },
+            ]}
+          />
+          <label className="ad-field">
+            <span className="ad-field-label">Purchase date *</span>
+            <input className="ad-input" type="date" value={purchase.purchaseDate} onChange={e=>setPurchase({...purchase,purchaseDate:e.target.value})}/>
           </label>
-          <label className="ad-input flex flex-col gap-1 text-xs">
-            <span className="ad-muted">Purchase date *</span>
-            <input className="bg-transparent" type="date" value={purchase.purchaseDate} onChange={e=>setPurchase({...purchase,purchaseDate:e.target.value})}/>
+          <label className="ad-field">
+            <span className="ad-field-label">Quantity (kg) *</span>
+            <input className="ad-input" type="number" min="0" step="any" placeholder="e.g. 100" value={purchase.quantityKg} onChange={e=>setPurchase({...purchase,quantityKg:e.target.value})}/>
           </label>
-          <label className="ad-input flex flex-col gap-1 text-xs">
-            <span className="ad-muted">Quantity (kg) *</span>
-            <input className="bg-transparent" type="number" min="0" step="any" placeholder="e.g. 100" value={purchase.quantityKg} onChange={e=>setPurchase({...purchase,quantityKg:e.target.value})}/>
+          <label className="ad-field">
+            <span className="ad-field-label">Rate / kg *</span>
+            <input className="ad-input" type="number" min="0" step="any" placeholder="e.g. 49" value={purchase.ratePerKg} onChange={e=>setPurchase({...purchase,ratePerKg:e.target.value})}/>
           </label>
-          <label className="ad-input flex flex-col gap-1 text-xs">
-            <span className="ad-muted">Rate / kg *</span>
-            <input className="bg-transparent" type="number" min="0" step="any" placeholder="e.g. 49" value={purchase.ratePerKg} onChange={e=>setPurchase({...purchase,ratePerKg:e.target.value})}/>
-          </label>
-          <span className="ad-input flex items-center text-sm">Total: ₹{((Number(purchase.quantityKg)||0)*(Number(purchase.ratePerKg)||0)).toFixed(2)}</span>
-          <label className="ad-input flex flex-col gap-1 text-xs">
-            <span className="ad-muted">Paid to vendor</span>
-            <input className="bg-transparent" type="number" min="0" step="any" placeholder="0 if pay later" value={purchase.paidAmount} onChange={e=>setPurchase({...purchase,paidAmount:e.target.value})}/>
+          <div className="ad-field">
+            <span className="ad-field-label">Total</span>
+            <div className="ad-input flex items-center text-sm font-semibold">₹{((Number(purchase.quantityKg)||0)*(Number(purchase.ratePerKg)||0)).toFixed(2)}</div>
+          </div>
+          <label className="ad-field">
+            <span className="ad-field-label">Paid to vendor</span>
+            <input className="ad-input" type="number" min="0" step="any" placeholder="0 if pay later" value={purchase.paidAmount} onChange={e=>setPurchase({...purchase,paidAmount:e.target.value})}/>
           </label>
           {(Number(purchase.paidAmount)>0 || editingPurchase!==null) && (
-            <label className="ad-input flex flex-col gap-1 text-xs">
-              <span className="ad-muted">Payment date (when cash paid)</span>
-              <input className="bg-transparent" type="date" value={purchase.paymentDate} onChange={e=>setPurchase({...purchase,paymentDate:e.target.value})}/>
+            <label className="ad-field">
+              <span className="ad-field-label">Payment date</span>
+              <input className="ad-input" type="date" value={purchase.paymentDate} onChange={e=>setPurchase({...purchase,paymentDate:e.target.value})}/>
             </label>
           )}
           <PersonSelect value={purchase.paidBy} onChange={(v)=>setPurchase({...purchase,paidBy:v})} />
           <FundingSelect value={purchase.fundingSource} onChange={(v)=>setPurchase({...purchase,fundingSource:v})} />
-          {purchase.purchaseType==="BORROWED_FUND" && <select className="ad-input" value={purchase.borrowingId} onChange={e=>setPurchase({...purchase,borrowingId:e.target.value})}><option value="">Select borrowing</option>{openBorrowings.map((b:Borrowing)=><option key={b.id} value={b.id}>#{b.id} {b.lenderName} — ₹{Number(b.outstanding_amount).toFixed(2)} due</option>)}</select>}
-          <input className="ad-input md:col-span-2" placeholder="Notes" value={purchase.notes} onChange={e=>setPurchase({...purchase,notes:e.target.value})}/>
-          <button className="ad-btn ad-btn-primary" onClick={editingPurchase ? editPurchase : addPurchase}>{editingPurchase ? "Update purchase" : "Save purchase"}</button>{editingPurchase&&<button className="ad-btn ad-btn-ghost" onClick={()=>{setEditingPurchase(null);setPurchase({...emptyPurchase})}}>Cancel</button>}
+          {purchase.purchaseType==="BORROWED_FUND" && (
+            <AdminSelect
+              label="Borrowing"
+              placeholder="Select borrowing"
+              value={purchase.borrowingId}
+              onChange={(v)=>setPurchase({...purchase,borrowingId:v})}
+              options={[
+                { value: "", label: "Select borrowing" },
+                ...openBorrowings.map((b:Borrowing)=>({
+                  value: String(b.id),
+                  label: `#${b.id} ${b.lenderName} — ₹${Number(b.outstanding_amount).toFixed(2)} due`,
+                })),
+              ]}
+            />
+          )}
+          <label className="ad-field md:col-span-2">
+            <span className="ad-field-label">Notes</span>
+            <input className="ad-input" placeholder="Optional notes" value={purchase.notes} onChange={e=>setPurchase({...purchase,notes:e.target.value})}/>
+          </label>
+          <div className="flex flex-wrap items-end gap-2 md:col-span-2">
+            <button className="ad-btn ad-btn-primary" onClick={editingPurchase ? editPurchase : addPurchase}>{editingPurchase ? "Update purchase" : "Save purchase"}</button>
+            {editingPurchase&&<button className="ad-btn ad-btn-ghost" onClick={()=>{setEditingPurchase(null);setPurchase({...emptyPurchase})}}>Cancel</button>}
+          </div>
         </div>
-        <p className="mt-2 text-xs ad-muted">Purchase date = material aaya. Payment date = vendor ko paisa diya (often after sale cash). Accounts uses payment date.</p>
+        <p className="mt-3 text-xs ad-muted">Purchase date = material aaya. Payment date = vendor ko paisa diya (often after sale cash). Accounts uses payment date.</p>
       </div>
 
-      {paymentEdit && <div className="ad-card p-4 border border-[var(--ad-accent)]">
+      {paymentEdit && <div className="ad-card p-4 border border-[var(--ad-accent)] ad-fade-in">
         <h3 className="mb-1 text-sm font-semibold">Update payment date — purchase #{paymentEdit.purchaseId}</h3>
         <p className="ad-muted mb-3 text-xs">Correct the date when vendor was actually paid. This fixes Accounts / partner cash calculation.</p>
-        <div className="grid gap-2 md:grid-cols-4">
-          <input className="ad-input" type="date" value={paymentEdit.paymentDate} onChange={e=>setPaymentEdit({...paymentEdit,paymentDate:e.target.value})}/>
+        <div className="grid gap-3 md:grid-cols-4">
+          <label className="ad-field">
+            <span className="ad-field-label">Payment date</span>
+            <input className="ad-input" type="date" value={paymentEdit.paymentDate} onChange={e=>setPaymentEdit({...paymentEdit,paymentDate:e.target.value})}/>
+          </label>
           <PersonSelect value={paymentEdit.paidBy} onChange={(v)=>setPaymentEdit({...paymentEdit,paidBy:v})} />
-          <button className="ad-btn ad-btn-primary" onClick={()=>void submitPaymentEdit()}>Save payment date</button>
-          <button className="ad-btn ad-btn-ghost" onClick={()=>setPaymentEdit(null)}>Cancel</button>
+          <div className="flex flex-wrap items-end gap-2 md:col-span-2">
+            <button className="ad-btn ad-btn-primary" onClick={()=>void submitPaymentEdit()}>Save payment date</button>
+            <button className="ad-btn ad-btn-ghost" onClick={()=>setPaymentEdit(null)}>Cancel</button>
+          </div>
         </div>
       </div>}
 
-      {creditPay && <div className="ad-card p-4 border border-[var(--ad-accent)]">
+      {creditPay && <div className="ad-card p-4 border border-[var(--ad-accent)] ad-fade-in">
         <h3 className="mb-1 text-sm font-semibold">Pay vendor later — purchase #{creditPay.purchaseId}</h3>
         <p className="ad-muted mb-3 text-xs">Use when payment is made after cash comes into company. Payment done by is required for Accounts.</p>
-        <div className="grid gap-2 md:grid-cols-6">
-          <input className="ad-input" type="number" min="0" placeholder="Payment amount" value={creditPay.amount} onChange={e=>setCreditPay({...creditPay,amount:e.target.value})}/>
-          <input className="ad-input" type="date" value={creditPay.paymentDate} onChange={e=>setCreditPay({...creditPay,paymentDate:e.target.value})}/>
+        <div className="grid gap-3 md:grid-cols-6">
+          <label className="ad-field">
+            <span className="ad-field-label">Amount</span>
+            <input className="ad-input" type="number" min="0" placeholder="Payment amount" value={creditPay.amount} onChange={e=>setCreditPay({...creditPay,amount:e.target.value})}/>
+          </label>
+          <label className="ad-field">
+            <span className="ad-field-label">Payment date</span>
+            <input className="ad-input" type="date" value={creditPay.paymentDate} onChange={e=>setCreditPay({...creditPay,paymentDate:e.target.value})}/>
+          </label>
           <PersonSelect value={creditPay.paidBy} onChange={(v)=>setCreditPay({...creditPay,paidBy:v})} required />
           <FundingSelect value={creditPay.fundingSource} onChange={(v)=>setCreditPay({...creditPay,fundingSource:v})} />
-          <button className="ad-btn ad-btn-primary" onClick={submitCreditPayment}>Save payment</button>
-          <button className="ad-btn ad-btn-ghost" onClick={()=>setCreditPay(null)}>Cancel</button>
+          <div className="flex flex-wrap items-end gap-2 md:col-span-2">
+            <button className="ad-btn ad-btn-primary" onClick={submitCreditPayment}>Save payment</button>
+            <button className="ad-btn ad-btn-ghost" onClick={()=>setCreditPay(null)}>Cancel</button>
+          </div>
         </div>
       </div>}
 
-      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Purchase date</th><th>Payment date</th><th>Vendor</th><th>Material</th><th>Qty</th><th>Rate</th><th>Vendor Total</th><th>Paid</th><th>Unpaid</th><th>Payment done by</th><th>Status</th><th>Action</th></tr></thead><tbody>
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Purchase date</th><th>Payment date</th><th>Vendor</th><th>Material</th><th>Qty</th><th>Rate</th><th>Vendor Total</th><th>Paid</th><th>Unpaid</th><th>Payment done by</th><th>Status</th><th>Actions</th></tr></thead><tbody>
         {filteredPurchases.map((p:Purchase)=>{
           const payDate=p.payment_date|| (Number(p.paid_amount)>0 ? p.purchase_date : "");
           const payer=p.payment_done_by||p.paid_by||"—";
+          const paid=Number(p.paid_amount)>0;
           return <tr key={p.id}>
             <td>{p.purchase_date}</td>
             <td>{payDate||"—"}</td>
@@ -477,13 +524,27 @@ export default function InventoryPage() {
             <td>₹{p.total_amount}</td>
             <td>₹{p.paid_amount}</td>
             <td>₹{p.credit_amount}</td>
-            <td>{Number(p.paid_amount)>0?payer:"—"}</td>
-            <td>{Number(p.paid_amount)>0?"PAID":"UNPAID"}</td>
+            <td>{paid?payer:"—"}</td>
+            <td><span className={paid?"ad-status-paid":"ad-status-unpaid"}>{paid?"PAID":"UNPAID"}</span></td>
             <td>
-              <button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>startEditPurchase(p)}>Edit</button>
-              {Number(p.paid_amount)>0&&<button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>openPaymentEdit(p)}>Payment date</button>}
-              {p.credit_amount>0&&<button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>openCreditPayment(p)}>Pay credit</button>}
-              <button className="text-xs font-semibold text-red-600" onClick={()=>void deletePurchase(p)}>Delete</button>
+              <div className="ad-row-actions">
+                <button type="button" className="ad-icon-btn ad-icon-btn-accent" onClick={()=>startEditPurchase(p)} title="Edit purchase">
+                  <Pencil size={13} /> Edit
+                </button>
+                {paid && (
+                  <button type="button" className="ad-icon-btn" onClick={()=>openPaymentEdit(p)} title="Update payment date">
+                    <CalendarClock size={13} /> Pay date
+                  </button>
+                )}
+                {p.credit_amount>0 && (
+                  <button type="button" className="ad-icon-btn ad-icon-btn-accent" onClick={()=>openCreditPayment(p)} title="Pay remaining credit">
+                    <Wallet size={13} /> Pay
+                  </button>
+                )}
+                <button type="button" className="ad-icon-btn ad-icon-btn-danger" onClick={()=>void deletePurchase(p)} title="Delete purchase">
+                  <Trash2 size={13} /> Delete
+                </button>
+              </div>
             </td>
           </tr>;
         })}

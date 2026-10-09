@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AdminShell } from "@/components/admin-shell";
 import { useBusinessMode } from "@/components/business-mode-provider";
 import { ACCOUNT_PERSONS, isAccountPerson, type AccountPerson } from "@/lib/account-persons";
+import { AdminSelect } from "@/components/admin-select";
 import { FundingSelect } from "@/components/funding-select";
 import { PersonSelect } from "@/components/person-select";
 import type { FundingSource } from "@/lib/funding";
@@ -746,20 +747,33 @@ export default function AccountsPage() {
             ))}
           </div>
         )}
-        <div className="grid gap-2 md:grid-cols-6">
-          <select className="ad-input" value={vendorPay.supplierId} onChange={(e) => setVendorPay({ ...vendorPay, supplierId: e.target.value })}>
-            <option value="">Vendor</option>
-            {(data?.suppliers || []).map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-          <input className="ad-input" type="number" min="0" placeholder="Amount" value={vendorPay.amount} onChange={(e) => setVendorPay({ ...vendorPay, amount: e.target.value })} />
-          <input className="ad-input" type="date" value={vendorPay.paymentDate} onChange={(e) => setVendorPay({ ...vendorPay, paymentDate: e.target.value })} />
+        <div className="grid gap-3 md:grid-cols-6">
+          <AdminSelect
+            label="Vendor"
+            required
+            placeholder="Select vendor"
+            value={vendorPay.supplierId}
+            onChange={(v) => setVendorPay({ ...vendorPay, supplierId: v })}
+            options={[
+              { value: "", label: "Select vendor" },
+              ...(data?.suppliers || []).map((s) => ({ value: String(s.id), label: s.name })),
+            ]}
+          />
+          <label className="ad-field">
+            <span className="ad-field-label">Amount</span>
+            <input className="ad-input" type="number" min="0" placeholder="Amount" value={vendorPay.amount} onChange={(e) => setVendorPay({ ...vendorPay, amount: e.target.value })} />
+          </label>
+          <label className="ad-field">
+            <span className="ad-field-label">Date</span>
+            <input className="ad-input" type="date" value={vendorPay.paymentDate} onChange={(e) => setVendorPay({ ...vendorPay, paymentDate: e.target.value })} />
+          </label>
           <PersonSelect value={vendorPay.paidBy} onChange={(v) => setVendorPay({ ...vendorPay, paidBy: v })} required />
           <FundingSelect value={vendorPay.fundingSource} onChange={(v) => setVendorPay({ ...vendorPay, fundingSource: v })} />
-          <button className="ad-btn ad-btn-primary" onClick={() => void payVendorLater()} disabled={vendorPayBusy}>
-            {vendorPayBusy ? "Saving…" : "Record vendor pay"}
-          </button>
+          <div className="flex items-end">
+            <button className="ad-btn ad-btn-primary w-full" onClick={() => void payVendorLater()} disabled={vendorPayBusy}>
+              {vendorPayBusy ? "Saving…" : "Record vendor pay"}
+            </button>
+          </div>
         </div>
       </div>
 

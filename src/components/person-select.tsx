@@ -1,6 +1,7 @@
 "use client";
 
 import { ACCOUNT_PERSONS, type AccountPerson } from "@/lib/account-persons";
+import { AdminSelect } from "@/components/admin-select";
 
 type Props = {
   value: string;
@@ -19,25 +20,23 @@ export function PersonSelect({
   value,
   onChange,
   label = "Payment done by",
-  className = "ad-input",
+  className = "",
   required = false,
   id,
 }: Props) {
   return (
-    <select
+    <AdminSelect
       id={id}
       className={className}
-      value={value}
+      label={label}
       required={required}
-      onChange={(e) => onChange(e.target.value as AccountPerson | "")}
-      aria-label={label}
-    >
-      <option value="">{label}</option>
-      {ACCOUNT_PERSONS.map((person) => (
-        <option key={person} value={person}>
-          {person}
-        </option>
-      ))}
-    </select>
+      placeholder={label}
+      value={value}
+      onChange={(v) => onChange(v as AccountPerson | "")}
+      options={[
+        { value: "", label: label },
+        ...ACCOUNT_PERSONS.map((person) => ({ value: person, label: person })),
+      ]}
+    />
   );
 }

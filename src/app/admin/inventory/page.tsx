@@ -68,11 +68,25 @@ export default function InventoryPage() {
 
   async function post(action:string, body:any) {
     const r=await fetch("/api/admin/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...body})});
-    const j=await r.json();
-    if(!r.ok){setMessage(j.error||"Operation failed");return false;}
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){setMessage(j.error||"Could not save — please check the form and try again");return false;}
     setMessage("Saved successfully");
     await load();
     return true;
+  }
+
+  function validatePurchaseForm() {
+    if (!purchase.supplierId) return "Please select a Vendor";
+    if (!purchase.materialName) return "Please select Material (Natural or Red)";
+    const qty = Number(purchase.quantityKg);
+    if (!(qty > 0)) return "Please enter Quantity (kg) greater than 0";
+    const rate = Number(purchase.ratePerKg);
+    if (purchase.ratePerKg === "" || Number.isNaN(rate) || rate < 0) return "Please enter Rate / kg";
+    const paid = purchase.paidAmount === "" ? 0 : Number(purchase.paidAmount);
+    if (purchase.paidAmount !== "" && (Number.isNaN(paid) || paid < 0)) return "Paid to vendor must be a valid amount (0 or more)";
+    if (paid > 0 && !purchase.paidBy) return "Please select Payment done by when paying the vendor";
+    if (!purchase.purchaseDate) return "Please select Purchase date";
+    return "";
   }
 
   function resetSaleForm() {
@@ -170,6 +184,8 @@ export default function InventoryPage() {
   }
 
   async function addPurchase() {
+    const clientError = validatePurchaseForm();
+    if (clientError) { setMessage(clientError); return; }
     const m=materials.find((x:Material)=>String(x.id)===purchase.materialId);
     const cashPaid=purchase.paidAmount===""?undefined:Number(purchase.paidAmount);
     const ok=await post("addPurchase",{
@@ -189,6 +205,8 @@ export default function InventoryPage() {
 
   async function editPurchase() {
     if (editingPurchase===null) return;
+    const clientError = validatePurchaseForm();
+    if (clientError) { setMessage(clientError); return; }
     const m=materials.find((x:Material)=>String(x.id)===purchase.materialId);
     const ok=await post("updatePurchase",{
       purchaseId:editingPurchase, mode, materialId:m?.id, materialName:purchase.materialName||m?.name_en,
@@ -297,9 +315,20 @@ export default function InventoryPage() {
     <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className="ml-2 text-xs text-[var(--ad-muted)]">Current stock: <b>{currentKg.toFixed(2)} kg</b></span>
-        {message && <span className="text-xs text-[var(--ad-accent)]">{message}</span>}
       </div>
     </div>
+    {message && (
+      <div
+        className={`mb-4 rounded-lg border px-3 py-2 text-sm ${
+          message === "Saved successfully"
+            ? "border-[var(--ad-success)] text-[var(--ad-success)]"
+            : "border-[var(--ad-danger)] bg-[color-mix(in_srgb,var(--ad-danger)_12%,transparent)] text-[var(--ad-danger)]"
+        }`}
+        role="alert"
+      >
+        {message}
+      </div>
+    )}
 
     {showPreStock && (
       <div className="mb-5 ad-card border border-[var(--ad-accent)] p-4">
@@ -361,25 +390,40 @@ export default function InventoryPage() {
       <div className="ad-card p-4">
         <h2 className="mb-3 font-semibold">{editingPurchase ? `Edit ${mode} purchase #${editingPurchase}` : `Add ${mode} purchase`}</h2>
         <div className="grid gap-2 md:grid-cols-4">
-          <select className="ad-input" value={purchase.supplierId} onChange={e=>setPurchase({...purchase,supplierId:e.target.value})}>
-            <option value="">Select vendor</option>{(data.suppliers||[]).map((s:Supplier)=><option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-          <select className="ad-input" value={purchase.materialName} onChange={e=>{
-            const materialName=e.target.value;
-            setPurchase({...purchase,materialName,materialVariant:materialName==="Red Bottles"?"Red":"Mixed"});
-          }}>
-            <option value="">Material</option>
-            <option value="Natural Bottles">Natural (mixed)</option>
-            <option value="Red Bottles">Red</option>
-          </select>
           <label className="ad-input flex flex-col gap-1 text-xs">
-            <span className="ad-muted">Purchase date</span>
+            <span className="ad-muted">Vendor *</span>
+            <select className="bg-transparent" value={purchase.supplierId} onChange={e=>setPurchase({...purchase,supplierId:e.target.value})}>
+              <option value="">Select vendor</option>{(data.suppliers||[]).map((s:Supplier)=><option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </label>
+          <label className="ad-input flex flex-col gap-1 text-xs">
+            <span className="ad-muted">Material *</span>
+            <select className="bg-transparent" value={purchase.materialName} onChange={e=>{
+              const materialName=e.target.value;
+              setPurchase({...purchase,materialName,materialVariant:materialName==="Red Bottles"?"Red":"Mixed"});
+            }}>
+              <option value="">Select material</option>
+              <option value="Natural Bottles">Natural (mixed)</option>
+              <option value="Red Bottles">Red</option>
+            </select>
+          </label>
+          <label className="ad-input flex flex-col gap-1 text-xs">
+            <span className="ad-muted">Purchase date *</span>
             <input className="bg-transparent" type="date" value={purchase.purchaseDate} onChange={e=>setPurchase({...purchase,purchaseDate:e.target.value})}/>
           </label>
-          <input className="ad-input" type="number" placeholder="Quantity (kg)" value={purchase.quantityKg} onChange={e=>setPurchase({...purchase,quantityKg:e.target.value})}/>
-          <input className="ad-input" type="number" placeholder="Rate / kg" value={purchase.ratePerKg} onChange={e=>setPurchase({...purchase,ratePerKg:e.target.value})}/>
+          <label className="ad-input flex flex-col gap-1 text-xs">
+            <span className="ad-muted">Quantity (kg) *</span>
+            <input className="bg-transparent" type="number" min="0" step="any" placeholder="e.g. 100" value={purchase.quantityKg} onChange={e=>setPurchase({...purchase,quantityKg:e.target.value})}/>
+          </label>
+          <label className="ad-input flex flex-col gap-1 text-xs">
+            <span className="ad-muted">Rate / kg *</span>
+            <input className="bg-transparent" type="number" min="0" step="any" placeholder="e.g. 49" value={purchase.ratePerKg} onChange={e=>setPurchase({...purchase,ratePerKg:e.target.value})}/>
+          </label>
           <span className="ad-input flex items-center text-sm">Total: ₹{((Number(purchase.quantityKg)||0)*(Number(purchase.ratePerKg)||0)).toFixed(2)}</span>
-          <input className="ad-input" type="number" min="0" placeholder="Paid to vendor" value={purchase.paidAmount} onChange={e=>setPurchase({...purchase,paidAmount:e.target.value})}/>
+          <label className="ad-input flex flex-col gap-1 text-xs">
+            <span className="ad-muted">Paid to vendor</span>
+            <input className="bg-transparent" type="number" min="0" step="any" placeholder="0 if pay later" value={purchase.paidAmount} onChange={e=>setPurchase({...purchase,paidAmount:e.target.value})}/>
+          </label>
           {(Number(purchase.paidAmount)>0 || editingPurchase!==null) && (
             <label className="ad-input flex flex-col gap-1 text-xs">
               <span className="ad-muted">Payment date (when cash paid)</span>

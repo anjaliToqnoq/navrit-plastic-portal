@@ -6,6 +6,7 @@ import { sqlite } from "@/db";
 import { listMaterials, nowIso, todayStr } from "@/lib/rates";
 import { ACCOUNT_PERSONS, optionalAccountPersonSchema, accountPersonSchema } from "@/lib/account-persons";
 import { optionalFundingSourceSchema } from "@/lib/funding";
+import { friendlyZodError } from "@/lib/api-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -403,7 +404,9 @@ export async function GET() {
       const labourCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(mode,person) as any)?.n || 0);
       const labourPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(mode,person) as any)?.n || 0);
       const settled = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE mode=? AND person=?").get(mode,person) as any)?.n || 0);
-      const companyPaid = purchasesCompany + expensesCompany + processingCompany + saleProcCompany + labourCompany;
+      // Settlements paid out by this person (on behalf of company) count as company cash they spent.
+      const settlementsPaidOut = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
+      const companyPaid = purchasesCompany + expensesCompany + processingCompany + saleProcCompany + labourCompany + settlementsPaidOut;
       const ownPocketPaid = purchasesPocket + expensesPocket + processingPocket + saleProcPocket + labourPocket;
       const purchasesPaid = purchasesCompany + purchasesPocket;
       const expensesPaid = expensesCompany + expensesPocket;
@@ -413,7 +416,8 @@ export async function GET() {
       const paid = companyPaid + ownPocketPaid;
       const cashWithPartner = Math.round((received - companyPaid) * 100) / 100;
       const companyOwesPartner = Math.round((ownPocketPaid - settled) * 100) / 100;
-      // Display balance: positive = company cash with partner; negative = company owes partner (own pocket net)
+      // Positive = partner holds company cash; negative = company needs to pay partner
+      // (own-pocket advances and/or overspend vs receipts, after settlements).
       const balance = Math.round((cashWithPartner - companyOwesPartner) * 100) / 100;
       personAccountTotals[mode][person] = {
         received, purchasesPaid, expensesPaid, processingPaid, saleProcessingPaid, labourPaid,
@@ -426,14 +430,14 @@ export async function GET() {
   const reconciliation = {
     PET: {
       companyBook: cashflowBreakdown.PET.book,
-      cashWithPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Number(personAccountTotals.PET[p]?.cashWithPartner || 0), 0),
-      dueToPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, Number(personAccountTotals.PET[p]?.companyOwesPartner || 0)), 0),
+      cashWithPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, Number(personAccountTotals.PET[p]?.balance || 0)), 0),
+      dueToPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, -Number(personAccountTotals.PET[p]?.balance || 0)), 0),
       externalLoanOutstanding: externalLoanOutstanding.PET,
     },
     PLASTIC: {
       companyBook: cashflowBreakdown.PLASTIC.book,
-      cashWithPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Number(personAccountTotals.PLASTIC[p]?.cashWithPartner || 0), 0),
-      dueToPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, Number(personAccountTotals.PLASTIC[p]?.companyOwesPartner || 0)), 0),
+      cashWithPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, Number(personAccountTotals.PLASTIC[p]?.balance || 0)), 0),
+      dueToPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, -Number(personAccountTotals.PLASTIC[p]?.balance || 0)), 0),
       externalLoanOutstanding: externalLoanOutstanding.PLASTIC,
     },
   };
@@ -572,10 +576,11 @@ export async function POST(req: NextRequest) {
         person: accountPersonSchema,
         amount: z.number().positive(),
         settlementDate: dateSchema.optional().default(todayStr()),
+        paidBy: accountPersonSchema,
         notes: z.string().trim().optional().default(""),
       }).parse(body);
-      sqlite.prepare(`INSERT INTO partner_settlements (mode, person, amount, settlement_date, notes, created_at) VALUES (?,?,?,?,?,?)`)
-        .run(s.mode, s.person, s.amount, s.settlementDate, s.notes, nowIso());
+      sqlite.prepare(`INSERT INTO partner_settlements (mode, person, amount, settlement_date, notes, paid_by, created_at) VALUES (?,?,?,?,?,?,?)`)
+        .run(s.mode, s.person, s.amount, s.settlementDate, s.notes, s.paidBy, nowIso());
       return json({ ok: true });
     }
 
@@ -583,13 +588,13 @@ export async function POST(req: NextRequest) {
       const s = z.object({
         mode: modeSchema,
         materialId: z.number().int().positive().optional(),
-        materialName: z.string().trim().min(1),
+        materialName: z.string().trim().min(1, "Please select Material (Natural or Red)"),
         materialVariant: z.string().trim().optional().default(""),
         supplierId: z.number().int().positive().optional(),
         purchaseType: z.enum(["NORMAL", "SUPPLIER_CREDIT", "BORROWED_FUND"]),
-        quantityKg: z.number().positive(),
-        ratePerKg: z.number().nonnegative(),
-        paidAmount: z.number().nonnegative().optional(),
+        quantityKg: z.number({ required_error: "Please enter Quantity (kg)", invalid_type_error: "Quantity (kg) must be a valid number" }).positive("Quantity (kg) must be greater than 0"),
+        ratePerKg: z.number({ required_error: "Please enter Rate / kg", invalid_type_error: "Rate / kg must be a valid number" }).nonnegative("Rate / kg cannot be negative"),
+        paidAmount: z.number({ invalid_type_error: "Paid to vendor must be a valid number" }).nonnegative("Paid to vendor cannot be negative").optional(),
         paidBy: optionalAccountPersonSchema,
         fundingSource: optionalFundingSourceSchema,
         lenderId: z.number().int().positive().optional(),
@@ -601,7 +606,10 @@ export async function POST(req: NextRequest) {
       const paymentDoneDate = s.paymentDate || s.purchaseDate;
 
       if (!s.supplierId) {
-        return NextResponse.json({ error: "Vendor is required for every purchase" }, { status: 400 });
+        return NextResponse.json({ error: "Please select a Vendor before saving the purchase" }, { status: 400 });
+      }
+      if ((s.paidAmount ?? 0) > 0 && !s.paidBy) {
+        return NextResponse.json({ error: "Please select Payment done by when paying the vendor" }, { status: 400 });
       }
       if (s.purchaseType === "SUPPLIER_CREDIT" && !s.supplierId) {
         return NextResponse.json({ error: "Supplier is required for supplier credit" }, { status: 400 });
@@ -1209,7 +1217,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     });
   } catch (e) {
-    if (e instanceof z.ZodError) return NextResponse.json({ error: e.issues[0]?.message || "Invalid data" }, { status: 400 });
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Operation failed" }, { status: 500 });
+    if (e instanceof z.ZodError) return NextResponse.json({ error: friendlyZodError(e) }, { status: 400 });
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Something went wrong — please try again" }, { status: 500 });
   }
 }

@@ -190,6 +190,7 @@ function createDb() {
       amount REAL NOT NULL CHECK(amount > 0),
       settlement_date TEXT NOT NULL,
       notes TEXT NOT NULL DEFAULT '',
+      paid_by TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS partner_settlements_mode_person_idx
@@ -420,6 +421,7 @@ function createDb() {
     "ALTER TABLE borrowings ADD COLUMN interest_amount REAL NOT NULL DEFAULT 0",
     "ALTER TABLE borrowings ADD COLUMN due_date TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE borrowing_repayments ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE partner_settlements ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
   ]) {
     try { sqlite.exec(migration); } catch { /* column already exists */ }
   }
@@ -431,6 +433,7 @@ function createDb() {
       amount REAL NOT NULL CHECK(amount > 0),
       settlement_date TEXT NOT NULL,
       notes TEXT NOT NULL DEFAULT '',
+      paid_by TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS partner_settlements_mode_person_idx

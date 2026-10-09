@@ -5,8 +5,8 @@ import { ACCOUNT_PERSONS, type AccountPerson } from "@/lib/account-persons";
 type Props = {
   value: string;
   onChange: (value: AccountPerson | "") => void;
-  /** Unified label used across purchases, sales, expenses, labour. */
-  label?: "Payment done by" | "Received by";
+  /** Unified label used across purchases, sales, expenses, labour, settlements. */
+  label?: "Payment done by" | "Received by" | "Partner";
   className?: string;
   required?: boolean;
   id?: string;

@@ -533,10 +533,24 @@ export default function AccountsPage() {
         {accounts.map((account) => {
           const cashWith = account.cashWithPartner;
           const owes = account.companyOwesPartner;
-          const primaryLabel = account.balance >= 0
-            ? `Company cash with ${account.person}`
-            : `Company owes ${account.person}`;
-          const primaryValue = Math.abs(account.balance);
+          // Positive cash-with = company money still held by partner.
+          // Positive own-pocket = company owes partner.
+          // Negative cash-with = partner spent more company cash than they collected (shortfall).
+          let primaryLabel: string;
+          let primaryValue: number;
+          if (cashWith > 0.005) {
+            primaryLabel = `Company cash with ${account.person}`;
+            primaryValue = cashWith;
+          } else if (owes > 0.005) {
+            primaryLabel = `Company owes ${account.person}`;
+            primaryValue = owes;
+          } else if (cashWith < -0.005) {
+            primaryLabel = `${account.person} overspent company cash`;
+            primaryValue = Math.abs(cashWith);
+          } else {
+            primaryLabel = `Settled with ${account.person}`;
+            primaryValue = 0;
+          }
           return (
             <div key={account.person} className="ad-card p-4">
               <div className="flex items-start justify-between gap-2">
@@ -565,7 +579,10 @@ export default function AccountsPage() {
                 </div>
               </div>
               <div className="mt-3 space-y-1 text-xs">
-                <p>Cash with {account.person}: <span className="font-semibold">{money(cashWith)}</span></p>
+                <p>Cash with {account.person}: <span className="font-semibold">{money(Math.max(0, cashWith))}</span></p>
+                {cashWith < -0.005 && (
+                  <p>Overspent vs receipts: <span className="font-semibold">{money(Math.abs(cashWith))}</span></p>
+                )}
                 <p>Company owes {account.person}: <span className="font-semibold">{money(Math.max(0, owes))}</span></p>
               </div>
             </div>

@@ -35,7 +35,8 @@ Default login (from `.env.local`): `admin` / `admin123`
 ### Admin (dual modes: PET / PLASTIC)
 - Secure login; mode toggle isolates every ledger row
 - Inventory & finance: purchases, sales, expenses, borrowings, vendor credit/advances
-- Labour management / processing batches (PET)
+- Labour management: attendance (full/half/custom hours), wage vs advance, editable entries
+- PET processing contractor at ₹/kg: earns on batch complete and on sale; advances/settlements sync to Accounts
 - Material & profit analysis, accounts by person (Rahul / Devesh / Nitin)
 - Backup create / download / restore (both modes)
 - Rates catalog + historical `rate_snapshots` still available under admin

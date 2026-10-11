@@ -115,7 +115,12 @@ const companyFundedVendorSql = `SELECT COALESCE(SUM(amount),0) as n FROM vendor_
 const companyFundedExpenseSql = `SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
 const companyFundedProcessingSql = `SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
 const companyFundedSaleProcSql = `SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
-const companyFundedLabourSql = `SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
+// Attendance-only rows do not hit cash; WAGE + ADVANCE (+ legacy blank kind) do.
+const companyFundedLabourSql = `SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour
+  WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'
+  AND COALESCE(NULLIF(payment_kind,''),'WAGE') IN ('WAGE','ADVANCE')`;
+const companyFundedContractorCashSql = `SELECT COALESCE(SUM(amount),0) as n FROM processing_contractor_ledger
+  WHERE mode=? AND entry_type IN ('ADVANCE','SETTLEMENT') AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
 
 /** Company cash book parts. Pre-stock is inventory-only and never included. */
 function modeCashflowParts(m: string) {
@@ -127,12 +132,67 @@ function modeCashflowParts(m: string) {
   const saleProcessing = Number((sqlite.prepare(companyFundedSaleProcSql).get(m) as any)?.n || 0);
   const otherExpenses = Number((sqlite.prepare(companyFundedExpenseSql).get(m) as any)?.n || 0);
   const manualLabour = Number((sqlite.prepare(companyFundedLabourSql).get(m) as any)?.n || 0);
+  const contractorCash = Number((sqlite.prepare(companyFundedContractorCashSql).get(m) as any)?.n || 0);
   const partnerSettled = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE mode=?").get(m) as any)?.n || 0);
-  const book = Math.round((salesReceived - vendorPayments + borrowed - loanRepaid - processingExpenses - saleProcessing - otherExpenses - manualLabour - partnerSettled) * 100) / 100;
+  const book = Math.round((salesReceived - vendorPayments + borrowed - loanRepaid - processingExpenses - saleProcessing - otherExpenses - manualLabour - contractorCash - partnerSettled) * 100) / 100;
   return {
     salesReceived, vendorPayments, borrowed, loanRepaid, processingExpenses, saleProcessing,
-    otherExpenses, manualLabour, partnerSettled, book,
+    otherExpenses, manualLabour, contractorCash, partnerSettled, book,
   };
+}
+
+function currentProcessingContractor(mode: string) {
+  return sqlite.prepare(`
+    SELECT * FROM processing_contractors
+    WHERE mode=? AND active=1 AND is_current=1
+    ORDER BY id DESC LIMIT 1
+  `).get(mode) as
+    | { id: number; mode: string; name: string; rate_per_kg: number }
+    | undefined;
+}
+
+function contractorBalance(contractorId: number) {
+  const earned = Number((sqlite.prepare(`
+    SELECT COALESCE(SUM(amount),0) as n FROM processing_contractor_ledger
+    WHERE contractor_id=? AND entry_type IN ('EARN_BATCH','EARN_SALE')
+  `).get(contractorId) as any)?.n || 0);
+  const advances = Number((sqlite.prepare(`
+    SELECT COALESCE(SUM(amount),0) as n FROM processing_contractor_ledger
+    WHERE contractor_id=? AND entry_type='ADVANCE'
+  `).get(contractorId) as any)?.n || 0);
+  const settled = Number((sqlite.prepare(`
+    SELECT COALESCE(SUM(amount),0) as n FROM processing_contractor_ledger
+    WHERE contractor_id=? AND entry_type='SETTLEMENT'
+  `).get(contractorId) as any)?.n || 0);
+  // Advances reduce what company still owes; netDue can be negative if advance > earned.
+  const netDue = Math.round((earned - advances - settled) * 100) / 100;
+  return { earned, advances, settled, netDue };
+}
+
+function creditContractorEarn(opts: {
+  mode: string;
+  entryType: "EARN_BATCH" | "EARN_SALE";
+  kg: number;
+  batchId?: number | null;
+  saleId?: number | null;
+  entryDate: string;
+  notes?: string;
+}) {
+  const contractor = currentProcessingContractor(opts.mode);
+  if (!contractor || !(opts.kg > 0.005)) return null;
+  const rate = Number(contractor.rate_per_kg || 2);
+  const amount = Math.round(opts.kg * rate * 100) / 100;
+  if (!(amount > 0)) return null;
+  sqlite.prepare(`
+    INSERT INTO processing_contractor_ledger
+    (mode,contractor_id,entry_type,amount,kg,rate_per_kg,batch_id,sale_id,entry_date,paid_by,funding_source,notes,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,'','COMPANY',?,?)
+  `).run(
+    opts.mode, contractor.id, opts.entryType, amount, opts.kg, rate,
+    opts.batchId ?? null, opts.saleId ?? null, opts.entryDate,
+    opts.notes || "", nowIso()
+  );
+  return { contractorId: contractor.id, amount, rate };
 }
 
 function modeCashflow(m: string) {
@@ -273,6 +333,14 @@ export async function GET() {
     ORDER BY ml.payment_date DESC, ml.id DESC
     LIMIT 500
   `).all();
+  const processingContractors = sqlite.prepare("SELECT * FROM processing_contractors ORDER BY is_current DESC, active DESC, name, id").all();
+  const processingContractorLedger = sqlite.prepare(`
+    SELECT l.*, c.name as contractorName
+    FROM processing_contractor_ledger l
+    JOIN processing_contractors c ON c.id=l.contractor_id
+    ORDER BY l.entry_date DESC, l.id DESC
+    LIMIT 500
+  `).all();
   const processingExpenses = sqlite.prepare("SELECT * FROM processing_expenses ORDER BY expense_date DESC, id DESC LIMIT 500").all();
   const saleProcessingCosts = sqlite.prepare("SELECT * FROM sale_processing_costs ORDER BY payment_date DESC, id DESC LIMIT 500").all();
   const otherExpenses = sqlite.prepare("SELECT * FROM other_expenses WHERE mode IN ('PET','PLASTIC') ORDER BY expense_date DESC, id DESC LIMIT 500").all();
@@ -387,7 +455,7 @@ export async function GET() {
   };
 
   const personAccountTotals: Record<string, Record<string, {
-    received:number; purchasesPaid:number; expensesPaid:number; processingPaid:number; saleProcessingPaid:number; labourPaid:number;
+    received:number; purchasesPaid:number; expensesPaid:number; processingPaid:number; saleProcessingPaid:number; labourPaid:number; contractorPaid:number;
     companyPaid:number; ownPocketPaid:number; settled:number; cashWithPartner:number; companyOwesPartner:number; paid:number; balance:number;
   }>> = { PET: {}, PLASTIC: {} };
   for (const mode of ["PET","PLASTIC"]) {
@@ -401,18 +469,37 @@ export async function GET() {
       const processingPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(mode,person) as any)?.n || 0);
       const saleProcCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(mode,person) as any)?.n || 0);
       const saleProcPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(mode,person) as any)?.n || 0);
-      const labourCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(mode,person) as any)?.n || 0);
-      const labourPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(mode,person) as any)?.n || 0);
+      const labourCompany = Number((sqlite.prepare(`
+        SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour
+        WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'
+          AND COALESCE(NULLIF(payment_kind,''),'WAGE') IN ('WAGE','ADVANCE')
+      `).get(mode,person) as any)?.n || 0);
+      const labourPocket = Number((sqlite.prepare(`
+        SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour
+        WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'
+          AND COALESCE(NULLIF(payment_kind,''),'WAGE') IN ('WAGE','ADVANCE')
+      `).get(mode,person) as any)?.n || 0);
+      const contractorCompany = Number((sqlite.prepare(`
+        SELECT COALESCE(SUM(amount),0) as n FROM processing_contractor_ledger
+        WHERE mode=? AND paid_by=? AND entry_type IN ('ADVANCE','SETTLEMENT')
+          AND COALESCE(funding_source,'COMPANY')='COMPANY'
+      `).get(mode,person) as any)?.n || 0);
+      const contractorPocket = Number((sqlite.prepare(`
+        SELECT COALESCE(SUM(amount),0) as n FROM processing_contractor_ledger
+        WHERE mode=? AND paid_by=? AND entry_type IN ('ADVANCE','SETTLEMENT')
+          AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'
+      `).get(mode,person) as any)?.n || 0);
       const settled = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE mode=? AND person=?").get(mode,person) as any)?.n || 0);
       // Settlements paid out by this person (on behalf of company) count as company cash they spent.
       const settlementsPaidOut = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
-      const companyPaid = purchasesCompany + expensesCompany + processingCompany + saleProcCompany + labourCompany + settlementsPaidOut;
-      const ownPocketPaid = purchasesPocket + expensesPocket + processingPocket + saleProcPocket + labourPocket;
+      const companyPaid = purchasesCompany + expensesCompany + processingCompany + saleProcCompany + labourCompany + contractorCompany + settlementsPaidOut;
+      const ownPocketPaid = purchasesPocket + expensesPocket + processingPocket + saleProcPocket + labourPocket + contractorPocket;
       const purchasesPaid = purchasesCompany + purchasesPocket;
       const expensesPaid = expensesCompany + expensesPocket;
       const processingPaid = processingCompany + processingPocket;
       const saleProcessingPaid = saleProcCompany + saleProcPocket;
       const labourPaid = labourCompany + labourPocket;
+      const contractorPaid = contractorCompany + contractorPocket;
       const paid = companyPaid + ownPocketPaid;
       const cashWithPartner = Math.round((received - companyPaid) * 100) / 100;
       const companyOwesPartner = Math.round((ownPocketPaid - settled) * 100) / 100;
@@ -420,7 +507,7 @@ export async function GET() {
       // (own-pocket advances and/or overspend vs receipts, after settlements).
       const balance = Math.round((cashWithPartner - companyOwesPartner) * 100) / 100;
       personAccountTotals[mode][person] = {
-        received, purchasesPaid, expensesPaid, processingPaid, saleProcessingPaid, labourPaid,
+        received, purchasesPaid, expensesPaid, processingPaid, saleProcessingPaid, labourPaid, contractorPaid,
         companyPaid, ownPocketPaid, settled, cashWithPartner, companyOwesPartner, paid, balance,
       };
     }
@@ -442,10 +529,16 @@ export async function GET() {
     },
   };
 
+  const processingContractorSummaries = (processingContractors as Array<{ id: number; mode: string }>).map((c) => ({
+    ...c,
+    ...contractorBalance(c.id),
+  }));
+
   return json({
     materials, suppliers, lenders, inventory, preStock, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments,
     sales, saleItems, salePayments, processingBatches, processingBatchItems, processingBatchOutputs, processingExpenses,
-    saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, partnerSettlements, borrowingRepayments, totals,
+    saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, processingContractors, processingContractorLedger,
+    processingContractorSummaries, partnerSettlements, borrowingRepayments, totals,
     personAccountTotals, externalLoanOutstanding, reconciliation, cashflowBreakdown,
     cashBalance:{PET:cashflowBreakdown.PET.book,PLASTIC:cashflowBreakdown.PLASTIC.book},
   });
@@ -884,17 +977,40 @@ export async function POST(req: NextRequest) {
     }
 
     if (body.action === "addLabourWorker") {
-      const s = z.object({ name: z.string().trim().min(2).max(100) }).parse(body);
+      const s = z.object({
+        name: z.string().trim().min(2).max(100),
+        dailyRate: z.number().nonnegative().optional().default(0),
+        halfDayRate: z.number().nonnegative().optional().default(0),
+      }).parse(body);
+      const half = s.halfDayRate > 0 ? s.halfDayRate : Math.round((s.dailyRate / 2) * 100) / 100;
       const existing = sqlite.prepare("SELECT * FROM manual_labour_workers WHERE lower(name)=lower(?)").get(s.name) as any;
       if (existing) {
         if (!existing.active) {
-          sqlite.prepare("UPDATE manual_labour_workers SET active=1, updated_at=? WHERE id=?").run(nowIso(), existing.id);
+          sqlite.prepare("UPDATE manual_labour_workers SET active=1, daily_rate=?, half_day_rate=?, updated_at=? WHERE id=?")
+            .run(s.dailyRate, half, nowIso(), existing.id);
           return json({ ok: true, id: existing.id, reactivated: true });
         }
         return NextResponse.json({ error: "Worker already exists" }, { status: 400 });
       }
-      const r = sqlite.prepare("INSERT INTO manual_labour_workers (name,active,created_at,updated_at) VALUES (?,1,?,?)").run(s.name,nowIso(),nowIso());
+      const r = sqlite.prepare("INSERT INTO manual_labour_workers (name,active,daily_rate,half_day_rate,created_at,updated_at) VALUES (?,1,?,?,?,?)")
+        .run(s.name, s.dailyRate, half, nowIso(), nowIso());
       return json({ ok: true, id: Number(r.lastInsertRowid) });
+    }
+
+    if (body.action === "updateLabourWorker") {
+      const s = z.object({
+        workerId: z.number().int().positive(),
+        name: z.string().trim().min(2).max(100).optional(),
+        dailyRate: z.number().nonnegative().optional(),
+        halfDayRate: z.number().nonnegative().optional(),
+      }).parse(body);
+      const existing = sqlite.prepare("SELECT * FROM manual_labour_workers WHERE id=?").get(s.workerId) as any;
+      if (!existing) return NextResponse.json({ error: "Worker not found" }, { status: 404 });
+      const daily = s.dailyRate ?? Number(existing.daily_rate || 0);
+      const half = s.halfDayRate ?? (Number(existing.half_day_rate || 0) || Math.round((daily / 2) * 100) / 100);
+      sqlite.prepare("UPDATE manual_labour_workers SET name=?, daily_rate=?, half_day_rate=?, updated_at=? WHERE id=?")
+        .run(s.name ?? existing.name, daily, half, nowIso(), s.workerId);
+      return json({ ok: true });
     }
 
     if (body.action === "setLabourWorkerStatus") {
@@ -909,22 +1025,180 @@ export async function POST(req: NextRequest) {
         mode: modeSchema,
         workerIds: z.array(z.number().int().positive()).min(1),
         taskType: z.enum(["Cap Removal","Sorting","Other"]),
-        amountPerWorker: z.number().positive(),
+        attendanceType: z.enum(["FULL_DAY","HALF_DAY","CUSTOM_HOURS"]).optional().default("FULL_DAY"),
+        hours: z.number().nonnegative().optional().default(0),
+        amountPerWorker: z.number().nonnegative().optional(),
+        paymentKind: z.enum(["ATTENDANCE","WAGE","ADVANCE"]).optional().default("WAGE"),
         paymentDate: dateSchema.optional(),
         paidBy: optionalAccountPersonSchema,
         fundingSource: optionalFundingSourceSchema,
         notes: z.string().trim().max(500).optional().default("")
       }).parse(body);
-      if (!s.paidBy) return NextResponse.json({error:"Payment done by is required"},{status:400});
+      if (s.paymentKind !== "ATTENDANCE" && !s.paidBy) {
+        return NextResponse.json({ error: "Payment done by is required for wage or advance payments" }, { status: 400 });
+      }
+      if (s.attendanceType === "CUSTOM_HOURS" && !(s.hours > 0) && s.paymentKind !== "ADVANCE") {
+        return NextResponse.json({ error: "Please enter custom hours greater than 0" }, { status: 400 });
+      }
       const ids=[...new Set(s.workerIds)];
       const placeholders=ids.map(()=>"?").join(",");
-      const workers=sqlite.prepare("SELECT id,name FROM manual_labour_workers WHERE active=1 AND id IN ("+placeholders+")");
-      const found=workers.all(...ids) as any[];
+      const workers=sqlite.prepare("SELECT id,name,daily_rate,half_day_rate FROM manual_labour_workers WHERE active=1 AND id IN ("+placeholders+")");
+      const found=workers.all(...ids) as Array<{id:number;name:string;daily_rate:number;half_day_rate:number}>;
       if (found.length !== ids.length) return NextResponse.json({error:"One or more selected workers are inactive or missing"},{status:400});
-      const existing=sqlite.prepare("SELECT worker_id FROM processing_manual_labour WHERE batch_id IS NULL AND mode=? AND payment_date=? AND task_type=? AND worker_id IN ("+placeholders+")").all(s.mode,s.paymentDate ?? todayStr(),s.taskType,...ids) as any[];
-      if (existing.length) return NextResponse.json({error:"Labour already recorded for one or more selected workers for this task and date"},{status:400});
-      for (const id of ids) sqlite.prepare("INSERT INTO processing_manual_labour (mode,batch_id,worker_id,amount,payment_date,paid_by,notes,task_type,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?)").run(s.mode,null,id,s.amountPerWorker,s.paymentDate ?? todayStr(),s.paidBy,s.notes,s.taskType,nowIso(),s.fundingSource);
-      return json({ok:true,totalAmount:Math.round(ids.length*s.amountPerWorker*100)/100,count:ids.length});
+
+      if (s.paymentKind !== "ADVANCE") {
+        const existing=sqlite.prepare(`
+          SELECT worker_id FROM processing_manual_labour
+          WHERE batch_id IS NULL AND mode=? AND payment_date=? AND task_type=?
+            AND COALESCE(NULLIF(payment_kind,''),'WAGE') IN ('ATTENDANCE','WAGE')
+            AND worker_id IN (${placeholders})
+        `).all(s.mode,s.paymentDate ?? todayStr(),s.taskType,...ids) as any[];
+        if (existing.length) return NextResponse.json({error:"Attendance/wage already recorded for one or more selected workers for this task and date"},{status:400});
+      }
+
+      let total = 0;
+      for (const worker of found) {
+        let amount = Number(s.amountPerWorker || 0);
+        if (s.paymentKind === "ADVANCE") {
+          if (!(amount > 0)) return NextResponse.json({ error: "Enter advance amount per worker" }, { status: 400 });
+        } else if (!(amount > 0)) {
+          const daily = Number(worker.daily_rate || 0);
+          const half = Number(worker.half_day_rate || 0) || Math.round((daily / 2) * 100) / 100;
+          if (s.attendanceType === "FULL_DAY") amount = daily;
+          else if (s.attendanceType === "HALF_DAY") amount = half;
+          else amount = Math.round((daily / 8) * Number(s.hours || 0) * 100) / 100;
+          if (!(amount > 0)) {
+            return NextResponse.json({
+              error: `Set a daily rate for ${worker.name} or enter the wage amount`,
+            }, { status: 400 });
+          }
+        }
+        total += amount;
+        sqlite.prepare(`
+          INSERT INTO processing_manual_labour
+          (mode,batch_id,worker_id,amount,payment_date,paid_by,notes,task_type,created_at,funding_source,attendance_type,hours,payment_kind)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `).run(
+          s.mode, null, worker.id, amount, s.paymentDate ?? todayStr(), s.paidBy ?? "", s.notes, s.taskType,
+          nowIso(), s.fundingSource, s.paymentKind === "ADVANCE" ? "" : s.attendanceType,
+          s.attendanceType === "CUSTOM_HOURS" ? s.hours : 0, s.paymentKind
+        );
+      }
+      return json({ok:true,totalAmount:Math.round(total*100)/100,count:ids.length,paymentKind:s.paymentKind});
+    }
+
+    if (body.action === "updateManualLabour") {
+      const s = z.object({
+        labourId: z.number().int().positive(),
+        mode: modeSchema,
+        taskType: z.enum(["Cap Removal","Sorting","Other"]).optional(),
+        attendanceType: z.enum(["FULL_DAY","HALF_DAY","CUSTOM_HOURS",""]).optional(),
+        hours: z.number().nonnegative().optional(),
+        amount: z.number().positive().optional(),
+        paymentKind: z.enum(["ATTENDANCE","WAGE","ADVANCE"]).optional(),
+        paymentDate: dateSchema.optional(),
+        paidBy: optionalAccountPersonSchema,
+        fundingSource: optionalFundingSourceSchema,
+        notes: z.string().trim().max(500).optional(),
+      }).parse(body);
+      const existing = sqlite.prepare("SELECT * FROM processing_manual_labour WHERE id=? AND mode=?").get(s.labourId, s.mode) as any;
+      if (!existing) return NextResponse.json({ error: "Attendance / payment entry not found" }, { status: 404 });
+      const kind = s.paymentKind ?? (existing.payment_kind || "WAGE");
+      if (kind !== "ATTENDANCE" && !(s.paidBy ?? existing.paid_by)) {
+        return NextResponse.json({ error: "Payment done by is required for wage or advance payments" }, { status: 400 });
+      }
+      sqlite.prepare(`
+        UPDATE processing_manual_labour SET
+          task_type=COALESCE(?, task_type),
+          attendance_type=COALESCE(?, attendance_type),
+          hours=COALESCE(?, hours),
+          amount=COALESCE(?, amount),
+          payment_kind=?,
+          payment_date=COALESCE(?, payment_date),
+          paid_by=COALESCE(NULLIF(?, ''), paid_by),
+          funding_source=COALESCE(?, funding_source),
+          notes=COALESCE(?, notes)
+        WHERE id=?
+      `).run(
+        s.taskType ?? null,
+        s.attendanceType ?? null,
+        s.hours ?? null,
+        s.amount ?? null,
+        kind,
+        s.paymentDate ?? null,
+        s.paidBy ?? "",
+        s.fundingSource ?? null,
+        s.notes ?? null,
+        s.labourId
+      );
+      return json({ ok: true });
+    }
+
+    if (body.action === "deleteManualLabour") {
+      const s = z.object({ labourId: z.number().int().positive(), mode: modeSchema }).parse(body);
+      const r = sqlite.prepare("DELETE FROM processing_manual_labour WHERE id=? AND mode=?").run(s.labourId, s.mode);
+      if (!r.changes) return NextResponse.json({ error: "Entry not found" }, { status: 404 });
+      return json({ ok: true });
+    }
+
+    if (body.action === "upsertProcessingContractor") {
+      const s = z.object({
+        mode: modeSchema,
+        contractorId: z.number().int().positive().optional(),
+        name: z.string().trim().min(2).max(100),
+        phone: z.string().trim().optional().default(""),
+        ratePerKg: z.number().nonnegative().optional().default(2),
+        setCurrent: z.boolean().optional().default(true),
+        notes: z.string().trim().optional().default(""),
+      }).parse(body);
+      if (s.contractorId) {
+        sqlite.prepare("UPDATE processing_contractors SET name=?, phone=?, rate_per_kg=?, notes=?, updated_at=? WHERE id=? AND mode=?")
+          .run(s.name, s.phone, s.ratePerKg, s.notes, nowIso(), s.contractorId, s.mode);
+        if (s.setCurrent) {
+          sqlite.prepare("UPDATE processing_contractors SET is_current=0 WHERE mode=?").run(s.mode);
+          sqlite.prepare("UPDATE processing_contractors SET is_current=1, active=1, updated_at=? WHERE id=?").run(nowIso(), s.contractorId);
+        }
+        return json({ ok: true, id: s.contractorId });
+      }
+      if (s.setCurrent) sqlite.prepare("UPDATE processing_contractors SET is_current=0 WHERE mode=?").run(s.mode);
+      const r = sqlite.prepare(`
+        INSERT INTO processing_contractors (mode,name,phone,rate_per_kg,active,is_current,notes,created_at,updated_at)
+        VALUES (?,?,?,?,1,?,?,?,?)
+      `).run(s.mode, s.name, s.phone, s.ratePerKg, s.setCurrent ? 1 : 0, s.notes, nowIso(), nowIso());
+      return json({ ok: true, id: Number(r.lastInsertRowid) });
+    }
+
+    if (body.action === "setCurrentProcessingContractor") {
+      const s = z.object({ mode: modeSchema, contractorId: z.number().int().positive() }).parse(body);
+      const existing = sqlite.prepare("SELECT id FROM processing_contractors WHERE id=? AND mode=?").get(s.contractorId, s.mode);
+      if (!existing) return NextResponse.json({ error: "Contractor not found" }, { status: 404 });
+      sqlite.prepare("UPDATE processing_contractors SET is_current=0 WHERE mode=?").run(s.mode);
+      sqlite.prepare("UPDATE processing_contractors SET is_current=1, active=1, updated_at=? WHERE id=?").run(nowIso(), s.contractorId);
+      return json({ ok: true });
+    }
+
+    if (body.action === "addContractorAdvance" || body.action === "settleContractor") {
+      const isAdvance = body.action === "addContractorAdvance";
+      const s = z.object({
+        mode: modeSchema,
+        contractorId: z.number().int().positive().optional(),
+        amount: z.number().positive(),
+        entryDate: dateSchema.optional().default(todayStr()),
+        paidBy: accountPersonSchema,
+        fundingSource: optionalFundingSourceSchema,
+        notes: z.string().trim().optional().default(""),
+      }).parse(body);
+      const contractorId = s.contractorId || currentProcessingContractor(s.mode)?.id;
+      if (!contractorId) return NextResponse.json({ error: "Add / select a current processing contractor first" }, { status: 400 });
+      sqlite.prepare(`
+        INSERT INTO processing_contractor_ledger
+        (mode,contractor_id,entry_type,amount,kg,rate_per_kg,batch_id,sale_id,entry_date,paid_by,funding_source,notes,created_at)
+        VALUES (?,?,?,?,0,2,NULL,NULL,?,?,?,?,?)
+      `).run(
+        s.mode, contractorId, isAdvance ? "ADVANCE" : "SETTLEMENT", s.amount, s.entryDate,
+        s.paidBy, s.fundingSource, s.notes || (isAdvance ? "Contractor advance" : "Contractor settlement"), nowIso()
+      );
+      return json({ ok: true, balance: contractorBalance(contractorId) });
     }
 
     if (body.action === "addProcessingBatch") {
@@ -997,7 +1271,16 @@ export async function POST(req: NextRequest) {
         }
         sqlite.prepare("UPDATE processing_batches SET total_output_kg=?, waste_kg=?, processing_cost=?, status='SOLD' WHERE id=?")
           .run(outputKg,Math.max(0,wasteKg),s.processingCost,s.batchId);
-      return json({ok:true,batchId:s.batchId,inputKg,outputKg,wasteKg:Math.max(0,wasteKg)});
+      // Contractor earns ₹2/kg on completed processing batch (input kg).
+      const earn = creditContractorEarn({
+        mode: s.mode,
+        entryType: "EARN_BATCH",
+        kg: inputKg,
+        batchId: s.batchId,
+        entryDate: batch.batch_date,
+        notes: `Processing batch #${s.batchId} earn`,
+      });
+      return json({ok:true,batchId:s.batchId,inputKg,outputKg,wasteKg:Math.max(0,wasteKg),contractorEarn:earn});
     }
 
     if (body.action === "addProcessingExpense") {
@@ -1078,7 +1361,16 @@ export async function POST(req: NextRequest) {
           .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],null,saleId,s.saleDate,"SALE #"+saleId+(s.notes ? " - "+s.notes : ""),nowIso());
       }
       if (received > 0) sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,saleId,received,receiptDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
-      return json({ok:true,id:saleId,grossAmount,labourCharges,loadingCharges,total,received,credit});
+      // Contractor earns ₹2/kg on PET/PLASTIC sale labour charges.
+      const earn = creditContractorEarn({
+        mode: s.mode,
+        entryType: "EARN_SALE",
+        kg: totalWeight,
+        saleId,
+        entryDate: s.saleDate,
+        notes: `Sale #${saleId} labour earn`,
+      });
+      return json({ok:true,id:saleId,grossAmount,labourCharges,loadingCharges,total,received,credit,contractorEarn:earn});
     }
 
     if (body.action === "updateSale") {
@@ -1155,7 +1447,18 @@ export async function POST(req: NextRequest) {
             .run(s.receivedBy ?? null,s.paymentMode ?? null,s.saleId);
         }
 
-      return json({ok:true,id:s.saleId,grossAmount,labourCharges,loadingCharges,total,received:Number(existing.received_amount),credit:Math.round((total-Number(existing.received_amount))*100)/100});
+      // Keep sale-linked contractor earn in sync with updated kg.
+      sqlite.prepare("DELETE FROM processing_contractor_ledger WHERE sale_id=? AND entry_type='EARN_SALE'").run(s.saleId);
+      const earn = creditContractorEarn({
+        mode: s.mode,
+        entryType: "EARN_SALE",
+        kg: totalWeight,
+        saleId: s.saleId,
+        entryDate: s.saleDate,
+        notes: `Sale #${s.saleId} labour earn`,
+      });
+
+      return json({ok:true,id:s.saleId,grossAmount,labourCharges,loadingCharges,total,received:Number(existing.received_amount),credit:Math.round((total-Number(existing.received_amount))*100)/100,contractorEarn:earn});
     }
 
     if (body.action === "receiveSalePayment") {

@@ -422,9 +422,48 @@ function createDb() {
     "ALTER TABLE borrowings ADD COLUMN due_date TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE borrowing_repayments ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE partner_settlements ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE manual_labour_workers ADD COLUMN daily_rate REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE manual_labour_workers ADD COLUMN half_day_rate REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE processing_manual_labour ADD COLUMN attendance_type TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE processing_manual_labour ADD COLUMN hours REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE processing_manual_labour ADD COLUMN payment_kind TEXT NOT NULL DEFAULT 'WAGE'",
   ]) {
     try { sqlite.exec(migration); } catch { /* column already exists */ }
   }
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS processing_contractors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      name TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      rate_per_kg REAL NOT NULL DEFAULT 2 CHECK(rate_per_kg >= 0),
+      active INTEGER NOT NULL DEFAULT 1,
+      is_current INTEGER NOT NULL DEFAULT 0,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS processing_contractors_mode_idx
+      ON processing_contractors(mode, active, is_current);
+    CREATE TABLE IF NOT EXISTS processing_contractor_ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      contractor_id INTEGER NOT NULL REFERENCES processing_contractors(id),
+      entry_type TEXT NOT NULL CHECK(entry_type IN ('ADVANCE','EARN_BATCH','EARN_SALE','SETTLEMENT')),
+      amount REAL NOT NULL CHECK(amount > 0),
+      kg REAL NOT NULL DEFAULT 0,
+      rate_per_kg REAL NOT NULL DEFAULT 2,
+      batch_id INTEGER REFERENCES processing_batches(id),
+      sale_id INTEGER REFERENCES sales(id),
+      entry_date TEXT NOT NULL,
+      paid_by TEXT NOT NULL DEFAULT '',
+      funding_source TEXT NOT NULL DEFAULT 'COMPANY',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS processing_contractor_ledger_contractor_idx
+      ON processing_contractor_ledger(contractor_id, entry_date);
+  `);
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS partner_settlements (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

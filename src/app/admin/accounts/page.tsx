@@ -38,6 +38,7 @@ type PersonTotals = {
   processingPaid: number;
   saleProcessingPaid: number;
   labourPaid?: number;
+  contractorPaid?: number;
   companyPaid?: number;
   ownPocketPaid?: number;
   settled?: number;
@@ -61,6 +62,7 @@ type CashflowBreakdown = {
   saleProcessing: number;
   otherExpenses: number;
   manualLabour: number;
+  contractorCash: number;
   partnerSettled: number;
   book: number;
 };
@@ -94,6 +96,7 @@ type AccountsData = {
   processingExpenses?: Row[];
   saleProcessingCosts?: Row[];
   manualLabour?: Row[];
+  processingContractorLedger?: Row[];
   lenders?: Lender[];
   borrowings?: Borrowing[];
   suppliers?: Supplier[];
@@ -363,7 +366,8 @@ export default function AccountsPage() {
             Number(serverTotals.expensesPaid || 0) +
             Number(serverTotals.processingPaid || 0) +
             Number(serverTotals.saleProcessingPaid || 0) +
-            Number(serverTotals.labourPaid || 0),
+            Number(serverTotals.labourPaid || 0) +
+            Number(serverTotals.contractorPaid || 0),
           companyPaid: Number(serverTotals.companyPaid || 0),
           ownPocketPaid: Number(serverTotals.ownPocketPaid || 0),
           settled: Number(serverTotals.settled || 0),
@@ -386,8 +390,21 @@ export default function AccountsPage() {
       const saleProcessingPaid = (data?.saleProcessingCosts || [])
         .filter((row) => row.mode === mode && String(row.paid_by || "") === person)
         .reduce((total, row) => total + Number(row.labour_cost || 0) + Number(row.loading_cost || 0), 0);
-      const labourPaid = sumBy(data?.manualLabour, "paid_by", person, mode);
-      const paid = purchasesPaid + expensesPaid + processingPaid + saleProcessingPaid + labourPaid;
+      const labourPaid = (data?.manualLabour || [])
+        .filter((row) =>
+          row.mode === mode &&
+          String(row.paid_by || "") === person &&
+          ["WAGE", "ADVANCE", ""].includes(String(row.payment_kind || "WAGE"))
+        )
+        .reduce((total, row) => total + Number(row.amount ?? 0), 0);
+      const contractorPaid = (data?.processingContractorLedger || [])
+        .filter((row) =>
+          row.mode === mode &&
+          String(row.paid_by || "") === person &&
+          ["ADVANCE", "SETTLEMENT"].includes(String(row.entry_type || ""))
+        )
+        .reduce((total, row) => total + Number(row.amount ?? 0), 0);
+      const paid = purchasesPaid + expensesPaid + processingPaid + saleProcessingPaid + labourPaid + contractorPaid;
       const cashWithPartner = received - paid;
       return {
         person,
@@ -395,7 +412,7 @@ export default function AccountsPage() {
         paid,
         balance: cashWithPartner,
         purchasesPaid,
-        expensesPaid: expensesPaid + processingPaid + saleProcessingPaid + labourPaid,
+        expensesPaid: expensesPaid + processingPaid + saleProcessingPaid + labourPaid + contractorPaid,
         companyPaid: paid,
         ownPocketPaid: 0,
         settled: 0,
@@ -454,16 +471,41 @@ export default function AccountsPage() {
       });
 
     (data?.manualLabour || [])
-      .filter((x) => x.mode === mode && x.paid_by && Number(x.amount) > 0)
+      .filter((x) =>
+        x.mode === mode &&
+        x.paid_by &&
+        Number(x.amount) > 0 &&
+        String(x.payment_kind || "WAGE") !== "ATTENDANCE"
+      )
       .forEach((x) => rows.push({
         date: String(x.payment_date ?? ""),
-        type: "Labour wage",
+        type: String(x.payment_kind || "") === "ADVANCE" ? "Labour advance" : "Labour wage",
         description: `${x.workerName || "Worker"} — ${x.task_type || "Labour"}`,
         person: String(x.paid_by ?? ""),
         amount: Number(x.amount || 0),
         direction: "out",
         funding: String(x.funding_source || "COMPANY") === "OWN_POCKET" ? "Own pocket" : "Company cash",
       }));
+
+    (data?.processingContractorLedger || [])
+      .filter((x) =>
+        x.mode === mode &&
+        x.paid_by &&
+        Number(x.amount) > 0 &&
+        ["ADVANCE", "SETTLEMENT"].includes(String(x.entry_type || ""))
+      )
+      .forEach((x) => {
+        const isAdvance = String(x.entry_type) === "ADVANCE";
+        rows.push({
+          date: String(x.entry_date ?? ""),
+          type: isAdvance ? "Contractor advance" : "Contractor settlement",
+          description: `${x.contractorName || "Contractor"} — ${isAdvance ? "advance" : "settlement"}`,
+          person: String(x.paid_by ?? ""),
+          amount: Number(x.amount || 0),
+          direction: "out",
+          funding: String(x.funding_source || "COMPANY") === "OWN_POCKET" ? "Own pocket" : "Company cash",
+        });
+      });
 
     (data?.partnerSettlements || [])
       .filter((x) => x.mode === mode)
@@ -554,8 +596,8 @@ export default function AccountsPage() {
           <p className="ad-muted text-xs">Company Account (book) · tap for recent activity</p>
           <p className={`mt-1 text-3xl font-bold ${companyBalance < 0 ? "text-[var(--ad-danger)]" : ""}`}>{money(companyBalance)}</p>
           <p className="ad-muted mt-2 text-xs leading-relaxed">
-            Sales receipts − Vendor payments (including later pays) − Expenses + Loans − Loan repayments − Partner settlements.
-            No opening balance. Pre-stock is inventory only and never hits this book. Vendor dues hit the book on the payment date when cash is actually paid.
+            Sales receipts − Vendor payments − Expenses − Labour wages/advances − Contractor advances/settlements + Loans − Loan repayments − Partner settlements.
+            Attendance-only labour and contractor earn liabilities do not hit this book. Pre-stock is inventory only.
           </p>
         </button>
         {breakdown && (
@@ -579,11 +621,29 @@ export default function AccountsPage() {
             <button
               type="button"
               className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)]"
-              onClick={() => openDetail("Expenses + labour", allTransactions.filter((t) => t.type === "Expense" || t.type === "Labour wage"), "/admin/inventory", "Open Inventory → Expenses", "Company-funded expenses and wages")}
+              onClick={() => openDetail(
+                "Expenses + labour + contractor cash",
+                allTransactions.filter((t) =>
+                  t.type === "Expense" ||
+                  t.type === "Labour wage" ||
+                  t.type === "Labour advance" ||
+                  t.type === "Contractor advance" ||
+                  t.type === "Contractor settlement"
+                ),
+                "/admin/processing",
+                "Open Labour Management",
+                "Company-funded expenses, wages, advances, and contractor cash"
+              )}
             >
-              <p className="ad-muted">Expenses + labour</p>
+              <p className="ad-muted">Expenses + labour + contractor</p>
               <p className="mt-1 font-semibold text-[var(--ad-danger)]">
-                −{money(breakdown.otherExpenses + breakdown.processingExpenses + breakdown.saleProcessing + breakdown.manualLabour)}
+                −{money(
+                  breakdown.otherExpenses +
+                  breakdown.processingExpenses +
+                  breakdown.saleProcessing +
+                  breakdown.manualLabour +
+                  Number(breakdown.contractorCash || 0)
+                )}
               </p>
             </button>
             {(breakdown.borrowed > 0 || breakdown.loanRepaid > 0) && (
@@ -596,7 +656,12 @@ export default function AccountsPage() {
               <button
                 type="button"
                 className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)]"
-                onClick={() => openDetail("Partner settlements", allTransactions.filter((t) => t.type.toLowerCase().includes("settlement")), "#account-transactions", "See transactions below")}
+                onClick={() => openDetail(
+                  "Partner settlements",
+                  allTransactions.filter((t) => t.type === "Partner settlement" || t.type === "Settlement payout"),
+                  "#account-transactions",
+                  "See transactions below"
+                )}
               >
                 <p className="ad-muted">Partner settlements</p>
                 <p className="mt-1 font-semibold text-[var(--ad-danger)]">−{money(breakdown.partnerSettled)}</p>

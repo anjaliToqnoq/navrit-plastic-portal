@@ -598,8 +598,25 @@ export default function AccountsPage() {
           <p className="ad-muted mt-2 text-xs leading-relaxed">
             Sales receipts − Vendor payments − Expenses − Labour wages/advances − Contractor advances/settlements + Loans − Loan repayments − Partner settlements.
             Attendance-only labour and contractor earn liabilities do not hit this book. Pre-stock is inventory only.
+            Unpaid purchases stay as vendor dues until payment date — they do not reduce this cash book.
           </p>
         </button>
+        {vendorOutstandingTotal > 0.005 && (
+          <button
+            type="button"
+            className="mt-3 flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--ad-warning)] bg-[color-mix(in_srgb,var(--ad-warning)_12%,transparent)] px-3 py-2 text-left text-sm"
+            onClick={() => {
+              const el = document.getElementById("pay-vendor-later");
+              el?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+          >
+            <span>
+              <span className="font-semibold">Vendor dues outstanding</span>
+              <span className="ad-muted ml-2 text-xs">Material received, not paid yet — not in company book</span>
+            </span>
+            <span className="text-lg font-bold text-[var(--ad-warning)]">{money(vendorOutstandingTotal)}</span>
+          </button>
+        )}
         {breakdown && (
           <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 text-xs">
             <button
@@ -673,17 +690,36 @@ export default function AccountsPage() {
 
       <div className="mb-5 ad-card p-4">
         <h2 className="font-semibold">Reconciliation</h2>
-        <p className="ad-muted mt-1 text-xs">Positive partner balance = holds company cash. Negative = company needs to pay that partner.</p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <p className="ad-muted mt-1 text-xs">Positive partner balance = holds company cash. Negative = company needs to pay that partner. Vendor dues are separate from the cash book.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <button
             type="button"
             className="rounded-lg border border-[var(--ad-border)] p-3 text-left"
             onClick={() => openDetail("Company book", allTransactions, "#account-transactions", "See full list below")}
           >
-            <p className="ad-muted text-xs">Company book</p>
+            <p className="ad-muted text-xs">Company book (cash)</p>
             <p className={`mt-1 text-lg font-bold ${(recon?.companyBook ?? companyBalance) < 0 ? "text-[var(--ad-danger)]" : ""}`}>
               {money(recon?.companyBook ?? companyBalance)}
             </p>
+          </button>
+          <button
+            type="button"
+            className={`rounded-lg border p-3 text-left ${vendorOutstandingTotal > 0.005 ? "border-[var(--ad-warning)]" : "border-[var(--ad-border)]"}`}
+            onClick={() => {
+              const el = document.getElementById("pay-vendor-later");
+              el?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+          >
+            <p className="ad-muted text-xs">Vendor dues outstanding</p>
+            <p className={`mt-1 text-lg font-bold ${vendorOutstandingTotal > 0.005 ? "text-[var(--ad-warning)]" : ""}`}>
+              {money(vendorOutstandingTotal)}
+            </p>
+            {outstandingByVendor.length > 0 && (
+              <p className="ad-muted mt-1 text-[10px] leading-snug">
+                {outstandingByVendor.slice(0, 3).map((v) => `${v.name} ${money(v.outstanding)}`).join(" · ")}
+                {outstandingByVendor.length > 3 ? " · …" : ""}
+              </p>
+            )}
           </button>
           <div className="rounded-lg border border-[var(--ad-border)] p-3">
             <p className="ad-muted text-xs">Cash with partners</p>
@@ -789,12 +825,12 @@ export default function AccountsPage() {
         })}
       </div>
 
-      <div className="mb-5 ad-card p-4">
+      <div id="pay-vendor-later" className="mb-5 ad-card p-4 scroll-mt-4">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
           <div>
             <h2 className="font-semibold">Pay vendor later</h2>
             <p className="ad-muted text-xs">
-              When purchase was unpaid and cash comes in later — record payment here with Payment done by. Outstanding now: {money(vendorOutstandingTotal)}.
+              Unpaid material (vendor dues outstanding: {money(vendorOutstandingTotal)}). Paying here hits the company book on payment date.
             </p>
           </div>
         </div>

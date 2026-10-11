@@ -115,6 +115,7 @@ export default function ProcessingPage() {
   const [paymentDate, setPaymentDate] = useState(today);
   const [paidBy, setPaidBy] = useState("");
   const [fundingSource, setFundingSource] = useState<FundingSource>("COMPANY");
+  const [wagePayMode, setWagePayMode] = useState<"FULL" | "CUSTOM">("FULL");
   const [notes, setNotes] = useState("");
   const [selected, setSelected] = useState<number[]>([]);
   const [editEntry, setEditEntry] = useState<Labour | null>(null);
@@ -197,17 +198,42 @@ export default function ProcessingPage() {
     };
   }, [active.length, labour, today, monthKey]);
 
-  const suggestedAmount = useMemo(() => {
-    if (paymentKind === "ADVANCE") return Number(amount || 0);
-    if (selected.length !== 1) return Number(amount || 0);
-    const worker = active.find((w) => w.id === selected[0]);
-    if (!worker) return Number(amount || 0);
+  function workerDayAmount(worker: Worker): number {
     const daily = Number(worker.daily_rate || 0);
     const half = Number(worker.half_day_rate || 0) || Math.round((daily / 2) * 100) / 100;
     if (attendanceType === "FULL_DAY") return daily;
     if (attendanceType === "HALF_DAY") return half;
     return Math.round((daily / 8) * Number(hours || 0) * 100) / 100;
-  }, [paymentKind, selected, active, attendanceType, hours, amount]);
+  }
+
+  const wageBreakdown = useMemo(() => {
+    const rows = selected.map((id) => {
+      const worker = active.find((w) => w.id === id);
+      const rateAmount = worker ? workerDayAmount(worker) : 0;
+      return {
+        id,
+        name: worker?.name || `#${id}`,
+        rateAmount,
+      };
+    });
+    const rateTotal = Math.round(rows.reduce((n, r) => n + r.rateAmount, 0) * 100) / 100;
+    const customPer = Number(amount || 0);
+    const customTotal = Math.round(customPer * selected.length * 100) / 100;
+    const missingRates = rows.filter((r) => !(r.rateAmount > 0)).length;
+    return { rows, rateTotal, customPer, customTotal, missingRates };
+  }, [selected, active, attendanceType, hours, amount]);
+
+  const suggestedAmount = useMemo(() => {
+    if (paymentKind === "ADVANCE") return Number(amount || 0);
+    if (selected.length === 1) return wageBreakdown.rows[0]?.rateAmount || Number(amount || 0);
+    return Number(amount || 0);
+  }, [paymentKind, selected.length, wageBreakdown, amount]);
+
+  const wageTotalDisplay = paymentKind === "WAGE"
+    ? (wagePayMode === "FULL" ? wageBreakdown.rateTotal : wageBreakdown.customTotal)
+    : paymentKind === "ADVANCE"
+      ? Math.round(Number(amount || 0) * selected.length * 100) / 100
+      : wageBreakdown.rateTotal;
 
   async function post(body: PostBody): Promise<boolean> {
     setBusy(true);
@@ -264,10 +290,40 @@ export default function ProcessingPage() {
       setMessage("Enter custom hours greater than 0.");
       return;
     }
-    const amountPerWorker = Number(amount || suggestedAmount || 0);
-    if (!(amountPerWorker > 0) && selected.length !== 1) {
-      setMessage("Enter wage / advance amount per worker.");
-      return;
+
+    let amountPerWorker: number | undefined;
+    if (paymentKind === "ADVANCE") {
+      amountPerWorker = Number(amount || 0);
+      if (!(amountPerWorker > 0)) {
+        setMessage("Enter advance amount per worker.");
+        return;
+      }
+    } else if (paymentKind === "WAGE") {
+      if (wagePayMode === "CUSTOM") {
+        amountPerWorker = Number(amount || 0);
+        if (!(amountPerWorker > 0)) {
+          setMessage("Enter custom wage amount per worker.");
+          return;
+        }
+      } else {
+        // Full payment: let API use each worker's rate. If any rate is missing, require custom amount.
+        if (wageBreakdown.missingRates > 0) {
+          amountPerWorker = Number(amount || 0);
+          if (!(amountPerWorker > 0)) {
+            setMessage("Some workers have ₹0 rate — set daily rate or enter a custom amount.");
+            return;
+          }
+        } else {
+          amountPerWorker = undefined;
+        }
+      }
+    } else {
+      // Attendance: blank amount uses rates; optional override.
+      amountPerWorker = amount ? Number(amount) : undefined;
+      if (amountPerWorker === undefined && selected.length !== 1 && wageBreakdown.missingRates > 0) {
+        setMessage("Set worker daily rates or enter amount per worker.");
+        return;
+      }
     }
 
     const ok = await post({
@@ -277,12 +333,12 @@ export default function ProcessingPage() {
       taskType,
       attendanceType,
       hours: Number(hours || 0),
-      amountPerWorker: amount ? Number(amount) : undefined,
+      amountPerWorker,
       paymentKind,
       paymentDate,
       paidBy: paidBy || undefined,
       fundingSource,
-      notes,
+      notes: paymentKind === "WAGE" ? "" : notes,
     });
 
     if (ok) {
@@ -292,6 +348,7 @@ export default function ProcessingPage() {
       setPaymentDate(today);
       setPaidBy("");
       setFundingSource("COMPANY");
+      setWagePayMode("FULL");
       setNotes("");
       setPaymentKind("ATTENDANCE");
       setAttendanceType("FULL_DAY");
@@ -747,23 +804,32 @@ export default function ProcessingPage() {
                 <AdminSelect
                   label="Record as"
                   value={paymentKind}
-                  onChange={(v) => setPaymentKind(v as PaymentKind)}
+                  onChange={(v) => {
+                    const kind = v as PaymentKind;
+                    setPaymentKind(kind);
+                    if (kind === "WAGE") {
+                      setWagePayMode("FULL");
+                      setAmount("");
+                    }
+                  }}
                   options={[
                     { value: "ATTENDANCE", label: "Attendance only (no cash)" },
                     { value: "WAGE", label: "Wage paid (cash → Accounts)" },
                     { value: "ADVANCE", label: "Advance payment (cash → Accounts)" },
                   ]}
                 />
-                <AdminSelect
-                  label="Day type"
-                  value={attendanceType}
-                  onChange={(v) => setAttendanceType(v as AttendanceType)}
-                  options={[
-                    { value: "FULL_DAY", label: "Full day" },
-                    { value: "HALF_DAY", label: "Half day" },
-                    { value: "CUSTOM_HOURS", label: "Custom hours" },
-                  ]}
-                />
+                {paymentKind !== "ADVANCE" && (
+                  <AdminSelect
+                    label="Day type"
+                    value={attendanceType}
+                    onChange={(v) => setAttendanceType(v as AttendanceType)}
+                    options={[
+                      { value: "FULL_DAY", label: "Full day" },
+                      { value: "HALF_DAY", label: "Half day" },
+                      { value: "CUSTOM_HOURS", label: "Custom hours" },
+                    ]}
+                  />
+                )}
                 <AdminSelect
                   label="Task"
                   value={taskType}
@@ -781,22 +847,22 @@ export default function ProcessingPage() {
                   </label>
                 )}
                 <label className="ad-field">
-                  <span className="ad-field-label">{paymentKind === "ADVANCE" ? "Advance / worker" : "Amount / worker (blank = from rate)"}</span>
-                  <input className="ad-input" type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={suggestedAmount > 0 ? String(suggestedAmount) : "₹"} />
-                </label>
-                <label className="ad-field">
                   <span className="ad-field-label">Date</span>
                   <input className="ad-input" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} required />
                 </label>
-                {paymentKind !== "ATTENDANCE" && (
-                  <>
-                    <PersonSelect value={paidBy} onChange={setPaidBy} required />
-                    <FundingSelect value={fundingSource} onChange={setFundingSource} />
-                  </>
+                {paymentKind === "ATTENDANCE" && (
+                  <label className="ad-field">
+                    <span className="ad-field-label">Amount / worker (blank = from rate)</span>
+                    <input className="ad-input" type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={suggestedAmount > 0 ? String(suggestedAmount) : "₹"} />
+                  </label>
+                )}
+                {paymentKind === "ADVANCE" && (
+                  <label className="ad-field">
+                    <span className="ad-field-label">Advance / worker</span>
+                    <input className="ad-input" type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="₹" required />
+                  </label>
                 )}
               </div>
-
-              <input className="ad-input w-full" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes (optional)" />
 
               <div className="rounded-lg border border-[var(--ad-border)] p-3">
                 <div className="mb-2 flex items-center justify-between gap-2 text-sm font-medium">
@@ -822,10 +888,72 @@ export default function ProcessingPage() {
                 </div>
               </div>
 
+              {paymentKind === "WAGE" && (
+                <div className="space-y-3 rounded-xl border border-[var(--ad-accent)] bg-[var(--ad-accent-dim)] p-4">
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-[var(--ad-muted)]">Wage total (auto)</p>
+                      <p className="mt-1 text-3xl font-bold text-[var(--ad-accent)]">{money(wageTotalDisplay)}</p>
+                      <p className="ad-muted mt-1 text-xs">
+                        {selected.length} worker{selected.length === 1 ? "" : "s"}
+                        {wagePayMode === "FULL"
+                          ? (wageBreakdown.missingRates
+                            ? " · some rates missing — enter custom amount"
+                            : " · from daily / half / hour rates")
+                          : " · custom amount × workers"}
+                      </p>
+                    </div>
+                    <AdminSelect
+                      label="Payment"
+                      value={wagePayMode}
+                      onChange={(v) => {
+                        setWagePayMode(v as "FULL" | "CUSTOM");
+                        if (v === "FULL") setAmount("");
+                      }}
+                      options={[
+                        { value: "FULL", label: "Full payment (from rates)" },
+                        { value: "CUSTOM", label: "Custom amount" },
+                      ]}
+                    />
+                  </div>
+                  {(wagePayMode === "CUSTOM" || wageBreakdown.missingRates > 0) && (
+                    <label className="ad-field max-w-xs">
+                      <span className="ad-field-label">Amount / worker</span>
+                      <input
+                        className="ad-input"
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        placeholder="₹"
+                        required={wagePayMode === "CUSTOM" || wageBreakdown.missingRates > 0}
+                      />
+                    </label>
+                  )}
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <PersonSelect value={paidBy} onChange={setPaidBy} required />
+                    <FundingSelect value={fundingSource} onChange={setFundingSource} />
+                  </div>
+                </div>
+              )}
+
+              {paymentKind === "ADVANCE" && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <PersonSelect value={paidBy} onChange={setPaidBy} required />
+                  <FundingSelect value={fundingSource} onChange={setFundingSource} />
+                </div>
+              )}
+
+              {paymentKind !== "WAGE" && (
+                <input className="ad-input w-full" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes (optional)" />
+              )}
+
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm">
                   Selected <b>{selected.length}</b>
-                  {selected.length === 1 && suggestedAmount > 0 && !amount ? <> · suggested {money(suggestedAmount)}</> : null}
+                  {paymentKind !== "ATTENDANCE" && selected.length > 0 ? <> · total {money(wageTotalDisplay)}</> : null}
+                  {paymentKind === "ATTENDANCE" && selected.length === 1 && suggestedAmount > 0 && !amount ? <> · suggested {money(suggestedAmount)}</> : null}
                 </p>
                 <button type="submit" className="ad-btn ad-btn-primary" disabled={busy}>
                   {paymentKind === "ADVANCE" ? "Save advance" : paymentKind === "ATTENDANCE" ? "Save attendance" : "Save wage payment"}

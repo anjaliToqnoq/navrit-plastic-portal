@@ -111,7 +111,7 @@ export default function ProcessingPage() {
   const [attendanceType, setAttendanceType] = useState<AttendanceType>("FULL_DAY");
   const [hours, setHours] = useState("");
   const [amount, setAmount] = useState("");
-  const [paymentKind, setPaymentKind] = useState<PaymentKind>("WAGE");
+  const [paymentKind, setPaymentKind] = useState<PaymentKind>("ATTENDANCE");
   const [paymentDate, setPaymentDate] = useState(today);
   const [paidBy, setPaidBy] = useState("");
   const [fundingSource, setFundingSource] = useState<FundingSource>("COMPANY");
@@ -293,15 +293,20 @@ export default function ProcessingPage() {
       setPaidBy("");
       setFundingSource("COMPANY");
       setNotes("");
-      setPaymentKind("WAGE");
+      setPaymentKind("ATTENDANCE");
       setAttendanceType("FULL_DAY");
     }
   }
 
   async function saveEdit() {
     if (!editEntry) return;
-    if ((editEntry.payment_kind || "WAGE") !== "ATTENDANCE" && !editEntry.paid_by) {
-      setMessage("Payment done by is required for wage or advance.");
+    const kind = (editEntry.payment_kind || "WAGE") as PaymentKind;
+    if (kind !== "ATTENDANCE" && !editEntry.paid_by) {
+      setMessage("For wage or advance, choose who paid — or switch Kind to “Attendance only (no cash)”.");
+      return;
+    }
+    if (!(Number(editEntry.amount) > 0)) {
+      setMessage("Enter an amount greater than 0 (use the daily/half rate for attendance).");
       return;
     }
     const ok = await post({
@@ -309,12 +314,14 @@ export default function ProcessingPage() {
       labourId: editEntry.id,
       mode,
       taskType: editEntry.task_type as "Cap Removal" | "Sorting" | "Other",
-      attendanceType: (editEntry.attendance_type || "") as AttendanceType | "",
+      attendanceType: kind === "ADVANCE" ? "" : ((editEntry.attendance_type || "FULL_DAY") as AttendanceType | ""),
       hours: Number(editEntry.hours || 0),
       amount: Number(editEntry.amount),
-      paymentKind: (editEntry.payment_kind || "WAGE") as PaymentKind,
+      paymentKind: kind,
       paymentDate: editEntry.payment_date,
-      paidBy: editEntry.paid_by || undefined,
+      ...(kind === "ATTENDANCE"
+        ? { clearPaidBy: true }
+        : { paidBy: editEntry.paid_by }),
       fundingSource: (editEntry.funding_source as FundingSource) || "COMPANY",
       notes: editEntry.notes || "",
     });
@@ -662,40 +669,60 @@ export default function ProcessingPage() {
           {editEntry && (
             <div className="ad-card border border-[var(--ad-accent)] p-5 ad-fade-in">
               <h3 className="mb-3 font-semibold">Edit attendance / payment #{editEntry.id}</h3>
+              <p className="ad-muted mb-3 text-sm">
+                Use <strong>Attendance only</strong> to change day type / hours without any payment person.
+                Wage or Advance needs “Payment done by” so Accounts stays correct.
+              </p>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <AdminSelect
                   label="Kind"
                   value={editEntry.payment_kind || "WAGE"}
-                  onChange={(v) => setEditEntry({ ...editEntry, payment_kind: v })}
+                  onChange={(v) => setEditEntry({
+                    ...editEntry,
+                    payment_kind: v,
+                    paid_by: v === "ATTENDANCE" ? "" : editEntry.paid_by,
+                  })}
                   options={[
                     { value: "ATTENDANCE", label: "Attendance only (no cash)" },
                     { value: "WAGE", label: "Wage paid (Accounts)" },
                     { value: "ADVANCE", label: "Advance (Accounts)" },
                   ]}
                 />
-                <AdminSelect
-                  label="Day type"
-                  value={editEntry.attendance_type || "FULL_DAY"}
-                  onChange={(v) => setEditEntry({ ...editEntry, attendance_type: v })}
-                  options={[
-                    { value: "FULL_DAY", label: "Full day" },
-                    { value: "HALF_DAY", label: "Half day" },
-                    { value: "CUSTOM_HOURS", label: "Custom hours" },
-                  ]}
-                />
+                {(editEntry.payment_kind || "WAGE") !== "ADVANCE" && (
+                  <AdminSelect
+                    label="Day type"
+                    value={editEntry.attendance_type || "FULL_DAY"}
+                    onChange={(v) => setEditEntry({ ...editEntry, attendance_type: v })}
+                    options={[
+                      { value: "FULL_DAY", label: "Full day" },
+                      { value: "HALF_DAY", label: "Half day" },
+                      { value: "CUSTOM_HOURS", label: "Custom hours" },
+                    ]}
+                  />
+                )}
+                {(editEntry.attendance_type || "") === "CUSTOM_HOURS" && (editEntry.payment_kind || "WAGE") !== "ADVANCE" && (
+                  <label className="ad-field">
+                    <span className="ad-field-label">Hours</span>
+                    <input className="ad-input" type="number" min="0" step="0.5" value={String(editEntry.hours || "")} onChange={(e) => setEditEntry({ ...editEntry, hours: Number(e.target.value) })} />
+                  </label>
+                )}
                 <label className="ad-field">
-                  <span className="ad-field-label">Hours</span>
-                  <input className="ad-input" type="number" min="0" step="0.5" value={String(editEntry.hours || "")} onChange={(e) => setEditEntry({ ...editEntry, hours: Number(e.target.value) })} />
-                </label>
-                <label className="ad-field">
-                  <span className="ad-field-label">Amount</span>
+                  <span className="ad-field-label">
+                    {(editEntry.payment_kind || "WAGE") === "ATTENDANCE" ? "Day value (not paid)" : "Amount"}
+                  </span>
                   <input className="ad-input" type="number" min="0.01" step="0.01" value={String(editEntry.amount)} onChange={(e) => setEditEntry({ ...editEntry, amount: Number(e.target.value) })} />
                 </label>
                 <label className="ad-field">
                   <span className="ad-field-label">Date</span>
                   <input className="ad-input" type="date" value={editEntry.payment_date} onChange={(e) => setEditEntry({ ...editEntry, payment_date: e.target.value })} />
                 </label>
-                <PersonSelect value={editEntry.paid_by || ""} onChange={(v) => setEditEntry({ ...editEntry, paid_by: v })} />
+                {(editEntry.payment_kind || "WAGE") !== "ATTENDANCE" && (
+                  <PersonSelect
+                    value={editEntry.paid_by || ""}
+                    onChange={(v) => setEditEntry({ ...editEntry, paid_by: v })}
+                    required
+                  />
+                )}
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" className="ad-btn ad-btn-primary" onClick={() => void saveEdit()} disabled={busy}>Save changes</button>
@@ -722,8 +749,8 @@ export default function ProcessingPage() {
                   value={paymentKind}
                   onChange={(v) => setPaymentKind(v as PaymentKind)}
                   options={[
-                    { value: "WAGE", label: "Wage paid (cash → Accounts)" },
                     { value: "ATTENDANCE", label: "Attendance only (no cash)" },
+                    { value: "WAGE", label: "Wage paid (cash → Accounts)" },
                     { value: "ADVANCE", label: "Advance payment (cash → Accounts)" },
                   ]}
                 />

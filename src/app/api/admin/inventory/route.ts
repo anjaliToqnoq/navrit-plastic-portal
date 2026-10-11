@@ -1098,15 +1098,22 @@ export async function POST(req: NextRequest) {
         paymentKind: z.enum(["ATTENDANCE","WAGE","ADVANCE"]).optional(),
         paymentDate: dateSchema.optional(),
         paidBy: optionalAccountPersonSchema,
+        clearPaidBy: z.boolean().optional().default(false),
         fundingSource: optionalFundingSourceSchema,
         notes: z.string().trim().max(500).optional(),
       }).parse(body);
       const existing = sqlite.prepare("SELECT * FROM processing_manual_labour WHERE id=? AND mode=?").get(s.labourId, s.mode) as any;
       if (!existing) return NextResponse.json({ error: "Attendance / payment entry not found" }, { status: 404 });
       const kind = s.paymentKind ?? (existing.payment_kind || "WAGE");
-      if (kind !== "ATTENDANCE" && !(s.paidBy ?? existing.paid_by)) {
-        return NextResponse.json({ error: "Payment done by is required for wage or advance payments" }, { status: 400 });
+      // Attendance-only never needs a payer; wage/advance do.
+      if (kind !== "ATTENDANCE" && !(s.paidBy || (!s.clearPaidBy && existing.paid_by))) {
+        return NextResponse.json({
+          error: "Payment done by is required for wage or advance. Switch Kind to Attendance only if this is not a cash payment.",
+        }, { status: 400 });
       }
+      const nextPaidBy = kind === "ATTENDANCE" || s.clearPaidBy
+        ? ""
+        : (s.paidBy || existing.paid_by || "");
       sqlite.prepare(`
         UPDATE processing_manual_labour SET
           task_type=COALESCE(?, task_type),
@@ -1115,7 +1122,7 @@ export async function POST(req: NextRequest) {
           amount=COALESCE(?, amount),
           payment_kind=?,
           payment_date=COALESCE(?, payment_date),
-          paid_by=COALESCE(NULLIF(?, ''), paid_by),
+          paid_by=?,
           funding_source=COALESCE(?, funding_source),
           notes=COALESCE(?, notes)
         WHERE id=?
@@ -1126,7 +1133,7 @@ export async function POST(req: NextRequest) {
         s.amount ?? null,
         kind,
         s.paymentDate ?? null,
-        s.paidBy ?? "",
+        nextPaidBy,
         s.fundingSource ?? null,
         s.notes ?? null,
         s.labourId

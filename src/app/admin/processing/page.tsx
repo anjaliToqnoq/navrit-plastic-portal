@@ -7,6 +7,7 @@ import { FundingSelect } from "@/components/funding-select";
 import { PersonSelect } from "@/components/person-select";
 import { useBusinessMode } from "@/components/business-mode-provider";
 import type { FundingSource } from "@/lib/funding";
+import { LABOUR_TASKS, type LabourTask } from "@/lib/labour-tasks";
 import {
   CheckSquare, Pencil, Plus, Square, Trash2, Users, WalletCards, Factory, X,
 } from "lucide-react";
@@ -370,7 +371,7 @@ export default function ProcessingPage() {
       action: "updateManualLabour",
       labourId: editEntry.id,
       mode,
-      taskType: editEntry.task_type as "Cap Removal" | "Sorting" | "Other",
+      taskType: editEntry.task_type as LabourTask,
       attendanceType: kind === "ADVANCE" ? "" : ((editEntry.attendance_type || "FULL_DAY") as AttendanceType | ""),
       hours: Number(editEntry.hours || 0),
       amount: Number(editEntry.amount),
@@ -745,6 +746,12 @@ export default function ProcessingPage() {
                     { value: "ADVANCE", label: "Advance (Accounts)" },
                   ]}
                 />
+                <AdminSelect
+                  label="Task"
+                  value={editEntry.task_type || "Cap Removal"}
+                  onChange={(v) => setEditEntry({ ...editEntry, task_type: v })}
+                  options={LABOUR_TASKS.map((t) => ({ value: t, label: t }))}
+                />
                 {(editEntry.payment_kind || "WAGE") !== "ADVANCE" && (
                   <AdminSelect
                     label="Day type"
@@ -834,11 +841,7 @@ export default function ProcessingPage() {
                   label="Task"
                   value={taskType}
                   onChange={setTaskType}
-                  options={[
-                    { value: "Cap Removal", label: "Cap Removal" },
-                    { value: "Sorting", label: "Sorting" },
-                    { value: "Other", label: "Other" },
-                  ]}
+                  options={LABOUR_TASKS.map((t) => ({ value: t, label: t }))}
                 />
                 {attendanceType === "CUSTOM_HOURS" && paymentKind !== "ADVANCE" && (
                   <label className="ad-field">

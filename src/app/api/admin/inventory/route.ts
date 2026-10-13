@@ -7,6 +7,7 @@ import { listMaterials, nowIso, todayStr } from "@/lib/rates";
 import { ACCOUNT_PERSONS, optionalAccountPersonSchema, accountPersonSchema } from "@/lib/account-persons";
 import { optionalFundingSourceSchema } from "@/lib/funding";
 import { friendlyZodError } from "@/lib/api-errors";
+import { LABOUR_TASKS } from "@/lib/labour-tasks";
 
 export const dynamic = "force-dynamic";
 
@@ -1024,7 +1025,7 @@ export async function POST(req: NextRequest) {
       const s = z.object({
         mode: modeSchema,
         workerIds: z.array(z.number().int().positive()).min(1),
-        taskType: z.enum(["Cap Removal","Sorting","Other"]),
+        taskType: z.enum(LABOUR_TASKS),
         attendanceType: z.enum(["FULL_DAY","HALF_DAY","CUSTOM_HOURS"]).optional().default("FULL_DAY"),
         hours: z.number().nonnegative().optional().default(0),
         amountPerWorker: z.number().nonnegative().optional(),
@@ -1091,7 +1092,7 @@ export async function POST(req: NextRequest) {
       const s = z.object({
         labourId: z.number().int().positive(),
         mode: modeSchema,
-        taskType: z.enum(["Cap Removal","Sorting","Other"]).optional(),
+        taskType: z.enum(LABOUR_TASKS).optional(),
         attendanceType: z.enum(["FULL_DAY","HALF_DAY","CUSTOM_HOURS",""]).optional(),
         hours: z.number().nonnegative().optional(),
         amount: z.number().positive().optional(),

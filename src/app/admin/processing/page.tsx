@@ -27,6 +27,15 @@ type Labour = {
   notes?: string;
   attendance_type?: string;
   payment_kind?: string;
+  hours?: number;
+};
+type WorkerSummary = {
+  worker: Worker;
+  days: number;
+  earned: number;
+  wagesPaid: number;
+  advances: number;
+  due: number;
 };
 type ApiResponse = {
   ok?: boolean;
@@ -48,10 +57,21 @@ function kindLabel(kind?: string) {
   return "Wage";
 }
 
-function dayLabel(type?: string) {
-  if (type === "HALF_DAY") return "Half day";
-  if (type === "FULL_DAY") return "Full day";
-  return "—";
+function dayLabel(type?: string, hours?: number) {
+  const ot = Number(hours || 0);
+  const otText = ot > 0 ? ` + ${ot}h OT` : "";
+  if (type === "HALF_DAY") return `Half day${otText}`;
+  if (type === "FULL_DAY") return `Full day${otText}`;
+  if (type === "CUSTOM_HOURS") return `${ot || 0}h`;
+  return ot > 0 ? `${ot}h OT` : "—";
+}
+
+function attendanceDays(entry: Labour) {
+  const kind = entry.payment_kind || "WAGE";
+  if (kind !== "ATTENDANCE") return 0;
+  if (entry.attendance_type === "HALF_DAY") return 0.5;
+  if (entry.attendance_type === "CUSTOM_HOURS") return Number(entry.hours || 0) / 8;
+  return 1;
 }
 
 export default function ProcessingPage() {
@@ -67,10 +87,12 @@ export default function ProcessingPage() {
   const [selected, setSelected] = useState<number[]>([]);
   const [taskType, setTaskType] = useState<string>(tasks[0]);
   const [attendanceType, setAttendanceType] = useState<AttendanceType>("FULL_DAY");
+  const [overtimeHours, setOvertimeHours] = useState("");
   const [paymentKind, setPaymentKind] = useState<PaymentKind>("ATTENDANCE");
   const [paymentDate, setPaymentDate] = useState(today);
   const [paidBy, setPaidBy] = useState("");
   const [amount, setAmount] = useState("");
+  const [payOutstanding, setPayOutstanding] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [editEntry, setEditEntry] = useState<Labour | null>(null);
@@ -89,8 +111,10 @@ export default function ProcessingPage() {
     setEditEntry(null);
     setPaymentKind("ATTENDANCE");
     setAttendanceType("FULL_DAY");
+    setOvertimeHours("");
     setAmount("");
     setPaidBy("");
+    setPayOutstanding(true);
   }, [mode]);
 
   useEffect(() => {
@@ -104,18 +128,74 @@ export default function ProcessingPage() {
   const active = workers.filter((w) => w.active);
   const inactive = workers.filter((w) => !w.active);
 
+  const summaries = useMemo(() => {
+    const byId = new Map<number, WorkerSummary>();
+    for (const worker of active) {
+      byId.set(worker.id, {
+        worker,
+        days: 0,
+        earned: 0,
+        wagesPaid: 0,
+        advances: 0,
+        due: 0,
+      });
+    }
+    for (const entry of labour) {
+      const row = byId.get(entry.worker_id);
+      if (!row) continue;
+      const kind = entry.payment_kind || "WAGE";
+      const amt = Number(entry.amount || 0);
+      if (kind === "ATTENDANCE") {
+        row.days += attendanceDays(entry);
+        row.earned += amt;
+      } else if (kind === "ADVANCE") {
+        row.advances += amt;
+      } else {
+        row.wagesPaid += amt;
+      }
+    }
+    for (const row of byId.values()) {
+      row.days = Math.round(row.days * 100) / 100;
+      row.earned = Math.round(row.earned * 100) / 100;
+      row.wagesPaid = Math.round(row.wagesPaid * 100) / 100;
+      row.advances = Math.round(row.advances * 100) / 100;
+      row.due = Math.round((row.earned - row.wagesPaid - row.advances) * 100) / 100;
+    }
+    return Array.from(byId.values()).sort((a, b) => b.due - a.due || a.worker.name.localeCompare(b.worker.name));
+  }, [active, labour]);
+
+  const summaryById = useMemo(() => {
+    const map = new Map<number, WorkerSummary>();
+    for (const row of summaries) map.set(row.worker.id, row);
+    return map;
+  }, [summaries]);
+
   function rateFor(worker: Worker) {
     const daily = Number(worker.daily_rate || 0);
     const half = Number(worker.half_day_rate || 0) || Math.round((daily / 2) * 100) / 100;
-    return attendanceType === "HALF_DAY" ? half : daily;
+    const ot = Number(overtimeHours || 0);
+    const otPay = ot > 0 ? Math.round((daily / 8) * ot * 100) / 100 : 0;
+    const base = attendanceType === "HALF_DAY" ? half : daily;
+    return Math.round((base + otPay) * 100) / 100;
   }
 
   const totalPreview = useMemo(() => {
     if (paymentKind === "ADVANCE") {
       return Math.round(Number(amount || 0) * selected.length * 100) / 100;
     }
-    if (paymentKind === "WAGE" && amount) {
-      return Math.round(Number(amount) * selected.length * 100) / 100;
+    if (paymentKind === "WAGE") {
+      if (payOutstanding && !amount) {
+        return Math.round(
+          selected.reduce((n, id) => n + Math.max(0, summaryById.get(id)?.due || 0), 0) * 100
+        ) / 100;
+      }
+      if (amount) return Math.round(Number(amount) * selected.length * 100) / 100;
+      return Math.round(
+        selected.reduce((n, id) => {
+          const worker = active.find((w) => w.id === id);
+          return n + (worker ? rateFor(worker) : 0);
+        }, 0) * 100
+      ) / 100;
     }
     return Math.round(
       selected.reduce((n, id) => {
@@ -123,12 +203,9 @@ export default function ProcessingPage() {
         return n + (worker ? rateFor(worker) : 0);
       }, 0) * 100
     ) / 100;
-  }, [paymentKind, amount, selected, active, attendanceType]);
+  }, [paymentKind, amount, selected, active, attendanceType, overtimeHours, payOutstanding, summaryById]);
 
-  const recent = useMemo(
-    () => labour.slice(0, 40),
-    [labour]
-  );
+  const recent = useMemo(() => labour.slice(0, 40), [labour]);
 
   async function post(body: PostBody): Promise<boolean> {
     setBusy(true);
@@ -184,7 +261,10 @@ export default function ProcessingPage() {
       return;
     }
 
+    const ot = Number(overtimeHours || 0);
     let amountPerWorker: number | undefined;
+    let useOutstanding = false;
+
     if (paymentKind === "ADVANCE") {
       amountPerWorker = Number(amount || 0);
       if (!(amountPerWorker > 0)) {
@@ -192,14 +272,21 @@ export default function ProcessingPage() {
         return;
       }
     } else if (paymentKind === "WAGE") {
-      const missing = selected.some((id) => {
-        const worker = active.find((w) => w.id === id);
-        return !worker || !(rateFor(worker) > 0);
-      });
-      if (missing || amount) {
-        amountPerWorker = Number(amount || 0);
+      if (amount) {
+        amountPerWorker = Number(amount);
         if (!(amountPerWorker > 0)) {
-          setMessage(missing ? "Set daily rates or enter wage amount per worker." : "Enter wage amount.");
+          setMessage("Enter wage amount.");
+          return;
+        }
+      } else if (payOutstanding) {
+        useOutstanding = true;
+      } else {
+        const missing = selected.some((id) => {
+          const worker = active.find((w) => w.id === id);
+          return !worker || !(rateFor(worker) > 0);
+        });
+        if (missing) {
+          setMessage("Set daily rates or enter wage amount per worker.");
           return;
         }
       }
@@ -210,9 +297,10 @@ export default function ProcessingPage() {
       mode,
       workerIds: selected,
       taskType,
-      attendanceType: paymentKind === "ADVANCE" ? "" : attendanceType,
-      hours: 0,
+      ...(paymentKind === "ADVANCE" ? {} : { attendanceType }),
+      hours: paymentKind === "ATTENDANCE" ? ot : 0,
       amountPerWorker,
+      payOutstanding: useOutstanding,
       paymentKind,
       paymentDate,
       paidBy: paidBy || undefined,
@@ -222,8 +310,10 @@ export default function ProcessingPage() {
       setSelected([]);
       setAmount("");
       setPaidBy("");
+      setOvertimeHours("");
       setPaymentKind("ATTENDANCE");
       setAttendanceType("FULL_DAY");
+      setPayOutstanding(true);
     }
   }
 
@@ -244,7 +334,7 @@ export default function ProcessingPage() {
       mode,
       taskType: editEntry.task_type,
       attendanceType: kind === "ADVANCE" ? "" : (editEntry.attendance_type || "FULL_DAY"),
-      hours: 0,
+      hours: Number(editEntry.hours || 0),
       amount: Number(editEntry.amount),
       paymentKind: kind,
       paymentDate: editEntry.payment_date,
@@ -268,6 +358,22 @@ export default function ProcessingPage() {
     await post({ action: "setLabourWorkerStatus", workerId: worker.id, active: true });
   }
 
+  async function deleteWorker(worker: Worker) {
+    const due = summaryById.get(worker.id)?.due ?? 0;
+    if (Math.abs(due) > 0.009) {
+      setMessage(
+        due > 0
+          ? `Cannot delete ${worker.name} — ${money(due)} wage still due. Pay wage first.`
+          : `Cannot delete ${worker.name} — ${money(Math.abs(due))} advance still open.`
+      );
+      return;
+    }
+    if (!window.confirm(`Delete ${worker.name}? Only allowed when dues are clear. History for this worker will be removed.`)) {
+      return;
+    }
+    await post({ action: "deleteLabourWorker", workerId: worker.id });
+  }
+
   async function editRates(worker: Worker) {
     const daily = window.prompt(`Daily rate for ${worker.name}`, String(worker.daily_rate || 0));
     if (daily == null) return;
@@ -282,6 +388,14 @@ export default function ProcessingPage() {
 
   function toggleAll() {
     setSelected(selected.length === active.length ? [] : active.map((w) => w.id));
+  }
+
+  function selectWorkerForPay(workerId: number) {
+    setPaymentKind("WAGE");
+    setSelected([workerId]);
+    setPayOutstanding(true);
+    setAmount("");
+    setOvertimeHours("");
   }
 
   return (
@@ -306,34 +420,65 @@ export default function ProcessingPage() {
         </div>
       )}
 
-      <div className="grid gap-5 lg:grid-cols-[260px_minmax(0,1fr)]">
+      <div className="grid gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="ad-card p-4">
           <div className="mb-3 flex items-center justify-between">
             <div>
-              <h2 className="font-semibold">Workers</h2>
-              <p className="ad-muted text-xs">{active.length} active</p>
+              <h2 className="font-semibold">Workers overview</h2>
+              <p className="ad-muted text-xs">{mode} · {active.length} active</p>
             </div>
             <button type="button" className="ad-btn ad-btn-ghost !px-2" onClick={() => setShowAdd(true)}>
               <Plus size={15} />
             </button>
           </div>
           <div className="space-y-2">
-            {active.map((worker) => (
+            {summaries.map(({ worker, days, earned, wagesPaid, advances, due }) => (
               <div key={worker.id} className="rounded-xl border border-[var(--ad-border)] p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="font-medium">{worker.name}</p>
                     <p className="ad-muted text-xs">₹{Number(worker.daily_rate || 0)}/day</p>
                   </div>
-                  <div className="flex gap-1">
+                  <div className="flex flex-wrap justify-end gap-1">
                     <button type="button" className="ad-btn ad-btn-ghost !px-2 !py-1 text-xs" onClick={() => void editRates(worker)}>
                       Rate
                     </button>
                     <button type="button" className="ad-btn ad-btn-ghost !px-2 !py-1 text-xs" onClick={() => void disableWorker(worker)}>
                       Off
                     </button>
+                    <button
+                      type="button"
+                      className="ad-btn ad-btn-ghost !px-2 !py-1 text-xs text-[var(--ad-danger)]"
+                      title={Math.abs(due) > 0.009 ? "Clear dues before delete" : "Delete worker"}
+                      onClick={() => void deleteWorker(worker)}
+                    >
+                      Delete
+                    </button>
                   </div>
                 </div>
+                <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                  <span className="ad-muted">Attendance</span>
+                  <span className="text-right font-medium">{days} day{days === 1 ? "" : "s"}</span>
+                  <span className="ad-muted">Earned</span>
+                  <span className="text-right">{money(earned)}</span>
+                  <span className="ad-muted">Wage paid</span>
+                  <span className="text-right">{money(wagesPaid)}</span>
+                  <span className="ad-muted">Advance</span>
+                  <span className="text-right">{money(advances)}</span>
+                  <span className="ad-muted font-medium">Due to pay</span>
+                  <span className={`text-right font-semibold ${due > 0.009 ? "text-[var(--ad-danger)]" : due < -0.009 ? "text-[var(--ad-accent)]" : ""}`}>
+                    {money(due)}
+                  </span>
+                </div>
+                {due > 0.009 && (
+                  <button
+                    type="button"
+                    className="ad-btn ad-btn-primary mt-2 w-full !py-1 text-xs"
+                    onClick={() => selectWorkerForPay(worker.id)}
+                  >
+                    Pay due {money(due)}
+                  </button>
+                )}
               </div>
             ))}
             {!active.length && (
@@ -350,9 +495,14 @@ export default function ProcessingPage() {
               {inactive.map((worker) => (
                 <div key={worker.id} className="mb-2 flex items-center justify-between gap-2 text-sm">
                   <span className="ad-muted">{worker.name}</span>
-                  <button type="button" className="ad-btn ad-btn-ghost !px-2 !py-1 text-xs" onClick={() => void reactivateWorker(worker)}>
-                    Reactivate
-                  </button>
+                  <div className="flex gap-1">
+                    <button type="button" className="ad-btn ad-btn-ghost !px-2 !py-1 text-xs" onClick={() => void reactivateWorker(worker)}>
+                      Reactivate
+                    </button>
+                    <button type="button" className="ad-btn ad-btn-ghost !px-2 !py-1 text-xs text-[var(--ad-danger)]" onClick={() => void deleteWorker(worker)}>
+                      Delete
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -363,7 +513,11 @@ export default function ProcessingPage() {
           <form onSubmit={save} className="ad-card space-y-4 p-5">
             <div>
               <h2 className="text-lg font-semibold">Today&apos;s entry</h2>
-              <p className="ad-muted text-sm">1) Choose type · 2) Select workers · 3) Save</p>
+              <p className="ad-muted text-sm">
+                {paymentKind === "ATTENDANCE" && "Mark who worked today (optional overtime)."}
+                {paymentKind === "WAGE" && "Pay what is due — pick workers and who paid."}
+                {paymentKind === "ADVANCE" && "Give cash advance — enter amount and who paid."}
+              </p>
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -381,7 +535,9 @@ export default function ProcessingPage() {
                   onClick={() => {
                     setPaymentKind(value);
                     setAmount("");
+                    setOvertimeHours("");
                     if (value === "ATTENDANCE") setPaidBy("");
+                    if (value === "WAGE") setPayOutstanding(true);
                   }}
                 >
                   {label}
@@ -390,23 +546,92 @@ export default function ProcessingPage() {
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <AdminSelect
-                label="Task"
-                value={taskType}
-                onChange={setTaskType}
-                options={tasks.map((t) => ({ value: t, label: t }))}
-              />
-              {paymentKind !== "ADVANCE" && (
-                <AdminSelect
-                  label="Day"
-                  value={attendanceType}
-                  onChange={(v) => setAttendanceType(v as AttendanceType)}
-                  options={[
-                    { value: "FULL_DAY", label: "Full day" },
-                    { value: "HALF_DAY", label: "Half day" },
-                  ]}
-                />
+              {paymentKind === "ATTENDANCE" && (
+                <>
+                  <AdminSelect
+                    label="Task"
+                    value={taskType}
+                    onChange={setTaskType}
+                    options={tasks.map((t) => ({ value: t, label: t }))}
+                  />
+                  <AdminSelect
+                    label="Day"
+                    value={attendanceType}
+                    onChange={(v) => setAttendanceType(v as AttendanceType)}
+                    options={[
+                      { value: "FULL_DAY", label: "Full day" },
+                      { value: "HALF_DAY", label: "Half day" },
+                    ]}
+                  />
+                  <label className="ad-field">
+                    <span className="ad-field-label">Overtime hours</span>
+                    <input
+                      className="ad-input"
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      value={overtimeHours}
+                      onChange={(e) => setOvertimeHours(e.target.value)}
+                      placeholder="0"
+                    />
+                  </label>
+                </>
               )}
+
+              {paymentKind === "WAGE" && (
+                <>
+                  <AdminSelect
+                    label="Task (for record)"
+                    value={taskType}
+                    onChange={setTaskType}
+                    options={tasks.map((t) => ({ value: t, label: t }))}
+                  />
+                  <label className="ad-field sm:col-span-2">
+                    <span className="ad-field-label">How much to pay</span>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className={`ad-btn ${payOutstanding && !amount ? "ad-btn-primary" : "ad-btn-ghost"}`}
+                        onClick={() => {
+                          setPayOutstanding(true);
+                          setAmount("");
+                        }}
+                      >
+                        Pay outstanding due
+                      </button>
+                      <input
+                        className="ad-input min-w-[10rem] flex-1"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={amount}
+                        onChange={(e) => {
+                          setAmount(e.target.value);
+                          if (e.target.value) setPayOutstanding(false);
+                        }}
+                        placeholder="Or custom ₹ / worker"
+                      />
+                    </div>
+                  </label>
+                </>
+              )}
+
+              {paymentKind === "ADVANCE" && (
+                <label className="ad-field sm:col-span-2">
+                  <span className="ad-field-label">Advance / worker *</span>
+                  <input
+                    className="ad-input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    placeholder="₹"
+                    required
+                  />
+                </label>
+              )}
+
               <label className="ad-field">
                 <span className="ad-field-label">Date</span>
                 <input
@@ -417,24 +642,13 @@ export default function ProcessingPage() {
                   required
                 />
               </label>
-              {(paymentKind === "ADVANCE" || paymentKind === "WAGE") && (
-                <label className="ad-field">
-                  <span className="ad-field-label">
-                    {paymentKind === "ADVANCE" ? "Advance / worker *" : "Custom wage / worker (optional)"}
-                  </span>
-                  <input
-                    className="ad-input"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    placeholder={paymentKind === "WAGE" ? "Blank = use daily rate" : "₹"}
-                    required={paymentKind === "ADVANCE"}
-                  />
-                </label>
-              )}
             </div>
+
+            {paymentKind === "ATTENDANCE" && Number(overtimeHours || 0) > 0 && (
+              <p className="ad-muted text-xs">
+                OT is added on top of full/half day at (daily rate ÷ 8) × hours.
+              </p>
+            )}
 
             <div className="rounded-xl border border-[var(--ad-border)] p-3">
               <div className="mb-2 flex items-center justify-between text-sm font-medium">
@@ -446,23 +660,29 @@ export default function ProcessingPage() {
                 </button>
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
-                {active.map((worker) => (
-                  <label key={worker.id} className="flex items-center gap-2 rounded-md p-2 hover:bg-[var(--ad-hover)]">
-                    <input
-                      type="checkbox"
-                      checked={selected.includes(worker.id)}
-                      onChange={(e) =>
-                        setSelected(
-                          e.target.checked
-                            ? [...selected, worker.id]
-                            : selected.filter((id) => id !== worker.id)
-                        )
-                      }
-                    />
-                    <span className="text-sm">{worker.name}</span>
-                    <span className="ad-muted text-xs">₹{Number(worker.daily_rate || 0)}/d</span>
-                  </label>
-                ))}
+                {active.map((worker) => {
+                  const due = summaryById.get(worker.id)?.due || 0;
+                  return (
+                    <label key={worker.id} className="flex items-center gap-2 rounded-md p-2 hover:bg-[var(--ad-hover)]">
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(worker.id)}
+                        onChange={(e) =>
+                          setSelected(
+                            e.target.checked
+                              ? [...selected, worker.id]
+                              : selected.filter((id) => id !== worker.id)
+                          )
+                        }
+                      />
+                      <span className="text-sm">{worker.name}</span>
+                      <span className="ad-muted text-xs">₹{Number(worker.daily_rate || 0)}/d</span>
+                      {paymentKind === "WAGE" && due > 0.009 && (
+                        <span className="ml-auto text-xs text-[var(--ad-danger)]">due {money(due)}</span>
+                      )}
+                    </label>
+                  );
+                })}
                 {!active.length && <p className="ad-muted text-sm">Add a worker first.</p>}
               </div>
             </div>
@@ -480,7 +700,9 @@ export default function ProcessingPage() {
                 {paymentKind === "ADVANCE"
                   ? "Save advance"
                   : paymentKind === "WAGE"
-                    ? "Save wage"
+                    ? payOutstanding && !amount
+                      ? "Pay outstanding"
+                      : "Save wage"
                     : "Save attendance"}
               </button>
             </div>
@@ -513,15 +735,28 @@ export default function ProcessingPage() {
                   options={tasks.map((t) => ({ value: t, label: t }))}
                 />
                 {(editEntry.payment_kind || "WAGE") !== "ADVANCE" && (
-                  <AdminSelect
-                    label="Day"
-                    value={editEntry.attendance_type || "FULL_DAY"}
-                    onChange={(v) => setEditEntry({ ...editEntry, attendance_type: v })}
-                    options={[
-                      { value: "FULL_DAY", label: "Full day" },
-                      { value: "HALF_DAY", label: "Half day" },
-                    ]}
-                  />
+                  <>
+                    <AdminSelect
+                      label="Day"
+                      value={editEntry.attendance_type || "FULL_DAY"}
+                      onChange={(v) => setEditEntry({ ...editEntry, attendance_type: v })}
+                      options={[
+                        { value: "FULL_DAY", label: "Full day" },
+                        { value: "HALF_DAY", label: "Half day" },
+                      ]}
+                    />
+                    <label className="ad-field">
+                      <span className="ad-field-label">Overtime hours</span>
+                      <input
+                        className="ad-input"
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={String(editEntry.hours || "")}
+                        onChange={(e) => setEditEntry({ ...editEntry, hours: Number(e.target.value) })}
+                      />
+                    </label>
+                  </>
                 )}
                 <label className="ad-field">
                   <span className="ad-field-label">Date</span>
@@ -585,7 +820,7 @@ export default function ProcessingPage() {
                       <td>{entry.payment_date}</td>
                       <td>{entry.workerName}</td>
                       <td>{kindLabel(entry.payment_kind)}</td>
-                      <td>{dayLabel(entry.attendance_type)}</td>
+                      <td>{dayLabel(entry.attendance_type, entry.hours)}</td>
                       <td>{entry.task_type || "—"}</td>
                       <td>{money(entry.amount)}</td>
                       <td>{entry.paid_by || "—"}</td>
@@ -648,7 +883,7 @@ export default function ProcessingPage() {
               value={dailyRate}
               onChange={(e) => setDailyRate(e.target.value)}
             />
-            <p className="ad-muted text-xs">Half-day rate is set to half of daily automatically.</p>
+            <p className="ad-muted text-xs">Half-day rate is set to half of daily automatically. OT = daily ÷ 8 × hours.</p>
             <button type="submit" className="ad-btn ad-btn-primary w-full" disabled={busy}>
               Save worker
             </button>

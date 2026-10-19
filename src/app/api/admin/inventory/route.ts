@@ -432,13 +432,13 @@ export async function GET() {
   const processingBatches = sqlite.prepare("SELECT * FROM processing_batches ORDER BY batch_date DESC, id DESC LIMIT 200").all();
   const processingBatchItems = sqlite.prepare("SELECT * FROM processing_batch_items ORDER BY batch_id, id").all();
   const processingBatchOutputs = sqlite.prepare("SELECT * FROM processing_batch_outputs ORDER BY batch_id, id").all();
-  const labourWorkers = sqlite.prepare("SELECT * FROM manual_labour_workers WHERE active=1 ORDER BY name, id").all();
+  const labourWorkers = sqlite.prepare("SELECT * FROM manual_labour_workers ORDER BY active DESC, name, id").all();
   const manualLabour = sqlite.prepare(`
     SELECT ml.*, w.name as workerName
     FROM processing_manual_labour ml
     JOIN manual_labour_workers w ON w.id=ml.worker_id
     ORDER BY ml.payment_date DESC, ml.id DESC
-    LIMIT 500
+    LIMIT 1000
   `).all();
   const processingContractors = sqlite.prepare("SELECT * FROM processing_contractors ORDER BY is_current DESC, active DESC, name, id").all();
   const processingContractorLedger = sqlite.prepare(`
@@ -1162,6 +1162,30 @@ export async function POST(req: NextRequest) {
       return json({ ok: true });
     }
 
+    if (body.action === "deleteLabourWorker") {
+      const s = z.object({ workerId: z.number().int().positive() }).parse(body);
+      const existing = sqlite.prepare("SELECT * FROM manual_labour_workers WHERE id=?").get(s.workerId) as any;
+      if (!existing) return NextResponse.json({ error: "Worker not found" }, { status: 404 });
+      const bal = sqlite.prepare(`
+        SELECT
+          ROUND(COALESCE(SUM(CASE WHEN COALESCE(NULLIF(payment_kind,''),'WAGE')='ATTENDANCE' THEN amount ELSE 0 END),0),2) as earned,
+          ROUND(COALESCE(SUM(CASE WHEN COALESCE(NULLIF(payment_kind,''),'WAGE')='WAGE' THEN amount ELSE 0 END),0),2) as wagesPaid,
+          ROUND(COALESCE(SUM(CASE WHEN COALESCE(NULLIF(payment_kind,''),'WAGE')='ADVANCE' THEN amount ELSE 0 END),0),2) as advances
+        FROM processing_manual_labour WHERE worker_id=?
+      `).get(s.workerId) as { earned: number; wagesPaid: number; advances: number };
+      const due = Math.round((Number(bal.earned) - Number(bal.wagesPaid) - Number(bal.advances)) * 100) / 100;
+      if (Math.abs(due) > 0.009) {
+        return NextResponse.json({
+          error: due > 0
+            ? `Cannot delete — ₹${due.toFixed(2)} wage still due. Pay wage or clear dues first.`
+            : `Cannot delete — ₹${Math.abs(due).toFixed(2)} advance still open. Clear dues first.`,
+        }, { status: 400 });
+      }
+      sqlite.prepare("DELETE FROM processing_manual_labour WHERE worker_id=?").run(s.workerId);
+      sqlite.prepare("DELETE FROM manual_labour_workers WHERE id=?").run(s.workerId);
+      return json({ ok: true });
+    }
+
     if (body.action === "addManualLabour") {
       const s = z.object({
         mode: modeSchema,
@@ -1170,6 +1194,7 @@ export async function POST(req: NextRequest) {
         attendanceType: z.enum(["FULL_DAY","HALF_DAY","CUSTOM_HOURS"]).optional().default("FULL_DAY"),
         hours: z.number().nonnegative().optional().default(0),
         amountPerWorker: z.number().nonnegative().optional(),
+        payOutstanding: z.boolean().optional().default(false),
         paymentKind: z.enum(["ATTENDANCE","WAGE","ADVANCE"]).optional().default("WAGE"),
         paymentDate: dateSchema.optional(),
         paidBy: optionalAccountPersonSchema,
@@ -1179,7 +1204,7 @@ export async function POST(req: NextRequest) {
       if (s.paymentKind !== "ATTENDANCE" && !s.paidBy) {
         return NextResponse.json({ error: "Payment done by is required for wage or advance payments" }, { status: 400 });
       }
-      if (s.attendanceType === "CUSTOM_HOURS" && !(s.hours > 0) && s.paymentKind !== "ADVANCE") {
+      if (s.attendanceType === "CUSTOM_HOURS" && !(s.hours > 0) && s.paymentKind !== "ADVANCE" && !s.payOutstanding) {
         return NextResponse.json({ error: "Please enter custom hours greater than 0" }, { status: 400 });
       }
       const ids=[...new Set(s.workerIds)];
@@ -1188,27 +1213,43 @@ export async function POST(req: NextRequest) {
       const found=workers.all(...ids) as Array<{id:number;name:string;daily_rate:number;half_day_rate:number}>;
       if (found.length !== ids.length) return NextResponse.json({error:"One or more selected workers are inactive or missing"},{status:400});
 
-      if (s.paymentKind !== "ADVANCE") {
+      // Only block double attendance for the same task+date. Wage/advance settle dues anytime.
+      if (s.paymentKind === "ATTENDANCE") {
         const existing=sqlite.prepare(`
           SELECT worker_id FROM processing_manual_labour
           WHERE batch_id IS NULL AND mode=? AND payment_date=? AND task_type=?
-            AND COALESCE(NULLIF(payment_kind,''),'WAGE') IN ('ATTENDANCE','WAGE')
+            AND COALESCE(NULLIF(payment_kind,''),'WAGE')='ATTENDANCE'
             AND worker_id IN (${placeholders})
         `).all(s.mode,s.paymentDate ?? todayStr(),s.taskType,...ids) as any[];
-        if (existing.length) return NextResponse.json({error:"Attendance/wage already recorded for one or more selected workers for this task and date"},{status:400});
+        if (existing.length) return NextResponse.json({error:"Attendance already marked for one or more selected workers for this task and date"},{status:400});
       }
 
+      const dueStmt = sqlite.prepare(`
+        SELECT
+          ROUND(COALESCE(SUM(CASE WHEN COALESCE(NULLIF(payment_kind,''),'WAGE')='ATTENDANCE' THEN amount ELSE 0 END),0),2) as earned,
+          ROUND(COALESCE(SUM(CASE WHEN COALESCE(NULLIF(payment_kind,''),'WAGE')='WAGE' THEN amount ELSE 0 END),0),2) as wagesPaid,
+          ROUND(COALESCE(SUM(CASE WHEN COALESCE(NULLIF(payment_kind,''),'WAGE')='ADVANCE' THEN amount ELSE 0 END),0),2) as advances
+        FROM processing_manual_labour WHERE worker_id=? AND mode=?
+      `);
+
       let total = 0;
+      let saved = 0;
       for (const worker of found) {
         let amount = Number(s.amountPerWorker || 0);
         if (s.paymentKind === "ADVANCE") {
           if (!(amount > 0)) return NextResponse.json({ error: "Enter advance amount per worker" }, { status: 400 });
+        } else if (s.payOutstanding && s.paymentKind === "WAGE") {
+          const bal = dueStmt.get(worker.id, s.mode) as { earned: number; wagesPaid: number; advances: number };
+          amount = Math.round((Number(bal.earned) - Number(bal.wagesPaid) - Number(bal.advances)) * 100) / 100;
+          if (!(amount > 0.009)) continue;
         } else if (!(amount > 0)) {
           const daily = Number(worker.daily_rate || 0);
           const half = Number(worker.half_day_rate || 0) || Math.round((daily / 2) * 100) / 100;
-          if (s.attendanceType === "FULL_DAY") amount = daily;
-          else if (s.attendanceType === "HALF_DAY") amount = half;
-          else amount = Math.round((daily / 8) * Number(s.hours || 0) * 100) / 100;
+          const otHours = Number(s.hours || 0);
+          const otPay = otHours > 0 ? Math.round((daily / 8) * otHours * 100) / 100 : 0;
+          if (s.attendanceType === "FULL_DAY") amount = Math.round((daily + otPay) * 100) / 100;
+          else if (s.attendanceType === "HALF_DAY") amount = Math.round((half + otPay) * 100) / 100;
+          else amount = otPay;
           if (!(amount > 0)) {
             return NextResponse.json({
               error: `Set a daily rate for ${worker.name} or enter the wage amount`,
@@ -1216,6 +1257,8 @@ export async function POST(req: NextRequest) {
           }
         }
         total += amount;
+        saved += 1;
+        const storeHours = s.paymentKind === "ADVANCE" ? 0 : Number(s.hours || 0);
         sqlite.prepare(`
           INSERT INTO processing_manual_labour
           (mode,batch_id,worker_id,amount,payment_date,paid_by,notes,task_type,created_at,funding_source,attendance_type,hours,payment_kind)
@@ -1223,10 +1266,13 @@ export async function POST(req: NextRequest) {
         `).run(
           s.mode, null, worker.id, amount, s.paymentDate ?? todayStr(), s.paidBy ?? "", s.notes, s.taskType,
           nowIso(), s.fundingSource, s.paymentKind === "ADVANCE" ? "" : s.attendanceType,
-          s.attendanceType === "CUSTOM_HOURS" ? s.hours : 0, s.paymentKind
+          storeHours, s.paymentKind
         );
       }
-      return json({ok:true,totalAmount:Math.round(total*100)/100,count:ids.length,paymentKind:s.paymentKind});
+      if (s.payOutstanding && s.paymentKind === "WAGE" && saved === 0) {
+        return NextResponse.json({ error: "No outstanding wage due for the selected workers" }, { status: 400 });
+      }
+      return json({ok:true,totalAmount:Math.round(total*100)/100,count:saved,paymentKind:s.paymentKind});
     }
 
     if (body.action === "updateManualLabour") {

@@ -82,11 +82,24 @@ type Borrowing = {
   status?: string;
 };
 type Supplier = { id: number; name: string };
+type BusinessSplit = {
+  salesReceived: number;
+  vendorPayments: number;
+  expenses: number;
+  labourCash: number;
+  contractorCash: number;
+  borrowed: number;
+  loanRepaid: number;
+  partnerSettled: number;
+  contribution: number;
+};
 type AccountsData = {
-  personAccountTotals?: Record<string, Record<string, PersonTotals>>;
+  personAccountTotals?: Record<string, PersonTotals | Record<string, PersonTotals>>;
+  personAccountTotalsFlat?: Record<string, PersonTotals>;
   cashBalance?: Record<string, number>;
   reconciliation?: Record<string, Reconciliation>;
   cashflowBreakdown?: Record<string, CashflowBreakdown>;
+  businessSplit?: Record<string, BusinessSplit>;
   externalLoanOutstanding?: Record<string, number>;
   partnerSettlements?: Row[];
   salePayments?: Row[];
@@ -111,10 +124,24 @@ function money(value: number) {
   })}`;
 }
 
-function sumBy(rows: Row[] | undefined, field: string, person: Person, mode: string, amountField = "amount") {
+function sumBy(rows: Row[] | undefined, field: string, person: Person, amountField = "amount") {
   return (rows || [])
-    .filter((row) => row.mode === mode && String(row[field] || "") === person)
+    .filter((row) => String(row[field] || "") === person)
     .reduce((total, row) => total + Number(row[amountField] ?? row.amount ?? 0), 0);
+}
+
+function personTotalsFromData(data: AccountsData | null, person: Person): PersonTotals | undefined {
+  const flat = data?.personAccountTotalsFlat?.[person];
+  if (flat) return flat;
+  const nested = data?.personAccountTotals;
+  if (!nested) return undefined;
+  const direct = nested[person];
+  if (direct && typeof (direct as PersonTotals).balance === "number") return direct as PersonTotals;
+  const company = nested.COMPANY as Record<string, PersonTotals> | undefined;
+  if (company?.[person]) return company[person];
+  const pet = nested.PET as Record<string, PersonTotals> | undefined;
+  if (pet?.[person]) return pet[person];
+  return undefined;
 }
 
 export default function AccountsPage() {
@@ -330,31 +357,41 @@ export default function AccountsPage() {
     }
   }
 
-  const companyBalance = Number(data?.cashBalance?.[mode] || 0);
-  const recon = data?.reconciliation?.[mode];
-  const breakdown = data?.cashflowBreakdown?.[mode];
-  const externalLoans = Number(data?.externalLoanOutstanding?.[mode] || recon?.externalLoanOutstanding || 0);
+  const companyBalance = Number(
+    data?.cashBalance?.COMPANY ?? data?.cashBalance?.PET ?? data?.cashBalance?.PLASTIC ?? 0
+  );
+  const recon = data?.reconciliation?.COMPANY || data?.reconciliation?.[mode];
+  const breakdown = data?.cashflowBreakdown?.COMPANY || data?.cashflowBreakdown?.[mode];
+  const businessSplit = data?.businessSplit;
+  const externalLoans = Number(
+    (data?.externalLoanOutstanding?.PET || 0) + (data?.externalLoanOutstanding?.PLASTIC || 0)
+    || recon?.externalLoanOutstanding || 0
+  );
+  // Borrowings list still mode-filterable for ops focus; totals include both.
   const filteredBorrowings = (data?.borrowings || []).filter((b) => b.mode === mode);
   const openBorrowings = filteredBorrowings.filter((b) => Number(b.outstanding_amount) > 0);
   const outstandingByVendor = useMemo(() => {
-    const map = new Map<number, { supplierId: number; name: string; outstanding: number }>();
+    const map = new Map<number, { supplierId: number; name: string; outstanding: number; modes: Set<string> }>();
     for (const row of data?.purchases || []) {
-      if (row.mode !== mode) continue;
       const credit = Number(row.credit_amount || 0);
       if (credit <= 0.005) continue;
       const supplierId = Number(row.supplier_id || 0);
       if (!supplierId) continue;
       const name = String(row.supplierName || (data?.suppliers || []).find((s) => s.id === supplierId)?.name || `Vendor #${supplierId}`);
       const prev = map.get(supplierId);
-      map.set(supplierId, { supplierId, name, outstanding: (prev?.outstanding || 0) + credit });
+      const modes = prev?.modes || new Set<string>();
+      modes.add(String(row.mode || ""));
+      map.set(supplierId, { supplierId, name, outstanding: (prev?.outstanding || 0) + credit, modes });
     }
-    return [...map.values()].sort((a, b) => b.outstanding - a.outstanding);
-  }, [data, mode]);
+    return [...map.values()]
+      .map((v) => ({ ...v, modeLabel: [...v.modes].filter(Boolean).join(" · ") }))
+      .sort((a, b) => b.outstanding - a.outstanding);
+  }, [data]);
   const vendorOutstandingTotal = outstandingByVendor.reduce((n, v) => n + v.outstanding, 0);
 
   const accounts = useMemo(() => {
     return people.map((person) => {
-      const serverTotals = data?.personAccountTotals?.[mode]?.[person];
+      const serverTotals = personTotalsFromData(data, person);
       if (serverTotals) {
         return {
           person,
@@ -376,30 +413,27 @@ export default function AccountsPage() {
         };
       }
 
-      const received = sumBy(data?.salePayments, "received_by", person, mode);
+      const received = sumBy(data?.salePayments, "received_by", person);
       const purchasesPaid = (data?.vendorPayments || [])
         .filter((row) =>
-          row.mode === mode &&
           String(row.paid_by || "") === person &&
           String(row.payment_type || "") !== "ADVANCE" &&
           String(row.payment_mode || "") !== "Advance"
         )
         .reduce((total, row) => total + Number(row.amount ?? 0), 0);
-      const expensesPaid = sumBy(data?.otherExpenses, "paid_by", person, mode);
-      const processingPaid = sumBy(data?.processingExpenses, "paid_by", person, mode);
+      const expensesPaid = sumBy(data?.otherExpenses, "paid_by", person);
+      const processingPaid = sumBy(data?.processingExpenses, "paid_by", person);
       const saleProcessingPaid = (data?.saleProcessingCosts || [])
-        .filter((row) => row.mode === mode && String(row.paid_by || "") === person)
+        .filter((row) => String(row.paid_by || "") === person)
         .reduce((total, row) => total + Number(row.labour_cost || 0) + Number(row.loading_cost || 0), 0);
       const labourPaid = (data?.manualLabour || [])
         .filter((row) =>
-          row.mode === mode &&
           String(row.paid_by || "") === person &&
           ["WAGE", "ADVANCE", ""].includes(String(row.payment_kind || "WAGE"))
         )
         .reduce((total, row) => total + Number(row.amount ?? 0), 0);
       const contractorPaid = (data?.processingContractorLedger || [])
         .filter((row) =>
-          row.mode === mode &&
           String(row.paid_by || "") === person &&
           ["ADVANCE", "SETTLEMENT"].includes(String(row.entry_type || ""))
         )
@@ -420,32 +454,33 @@ export default function AccountsPage() {
         companyOwesPartner: 0,
       };
     });
-  }, [data, mode]);
+  }, [data]);
 
   const allTransactions = useMemo(() => {
     const rows: TxRow[] = [];
 
     (data?.salePayments || [])
-      .filter((x) => x.mode === mode && x.received_by)
+      .filter((x) => x.received_by)
       .forEach((x) => rows.push({
         date: String(x.payment_date ?? ""),
         type: "Sale receipt",
-        description: x.customerName ? `Sale from ${x.customerName}` : `Sale #${x.sale_id}`,
+        description: `${x.mode || ""} · ${x.customerName ? `Sale from ${x.customerName}` : `Sale #${x.sale_id}`}`.trim(),
         person: String(x.received_by ?? ""),
         amount: Number(x.amount || 0),
         direction: "in",
       }));
 
     (data?.vendorPayments || [])
-      .filter((x) => x.mode === mode && x.paid_by && String(x.payment_type || "") !== "ADVANCE" && String(x.payment_mode || "") !== "Advance" && Number(x.amount) > 0)
+      .filter((x) => x.paid_by && String(x.payment_type || "") !== "ADVANCE" && String(x.payment_mode || "") !== "Advance" && Number(x.amount) > 0)
       .forEach((x) => {
         const later = String(x.payment_type || "") === "CREDIT_SETTLEMENT";
+        const base = x.purchase_id
+          ? `${later ? "Paid after cash in" : "Paid at purchase"} — #${x.purchase_id} ${x.materialName || x.supplierName || ""}`.trim()
+          : String(x.supplierName || "Vendor payment");
         rows.push({
           date: String(x.payment_date ?? ""),
           type: later ? "Vendor payment (later)" : "Purchase payment",
-          description: x.purchase_id
-            ? `${later ? "Paid after cash in" : "Paid at purchase"} — #${x.purchase_id} ${x.materialName || x.supplierName || ""}`.trim()
-            : String(x.supplierName || "Vendor payment"),
+          description: `${x.mode || ""} · ${base}`.trim(),
           person: String(x.paid_by ?? ""),
           amount: Number(x.amount || 0),
           direction: "out",
@@ -454,7 +489,7 @@ export default function AccountsPage() {
       });
 
     [...(data?.otherExpenses || []), ...(data?.processingExpenses || []), ...(data?.saleProcessingCosts || [])]
-      .filter((x) => x.mode === mode && x.paid_by && Number(x.amount ?? x.labour_cost ?? x.loading_cost) > 0)
+      .filter((x) => x.paid_by && Number(x.amount ?? x.labour_cost ?? x.loading_cost) > 0)
       .forEach((x) => {
         const amount = x.amount != null
           ? Number(x.amount)
@@ -462,7 +497,7 @@ export default function AccountsPage() {
         rows.push({
           date: String(x.expense_date ?? x.payment_date ?? ""),
           type: "Expense",
-          description: String(x.description ?? x.expense_type ?? "Business expense"),
+          description: `${x.mode || ""} · ${String(x.description ?? x.expense_type ?? "Business expense")}`.trim(),
           person: String(x.paid_by ?? ""),
           amount,
           direction: "out",
@@ -472,7 +507,6 @@ export default function AccountsPage() {
 
     (data?.manualLabour || [])
       .filter((x) =>
-        x.mode === mode &&
         x.paid_by &&
         Number(x.amount) > 0 &&
         String(x.payment_kind || "WAGE") !== "ATTENDANCE"
@@ -480,7 +514,7 @@ export default function AccountsPage() {
       .forEach((x) => rows.push({
         date: String(x.payment_date ?? ""),
         type: String(x.payment_kind || "") === "ADVANCE" ? "Labour advance" : "Labour wage",
-        description: `${x.workerName || "Worker"} — ${x.task_type || "Labour"}`,
+        description: `${x.mode || ""} · ${x.workerName || "Worker"} — ${x.task_type || "Labour"}`.trim(),
         person: String(x.paid_by ?? ""),
         amount: Number(x.amount || 0),
         direction: "out",
@@ -489,7 +523,6 @@ export default function AccountsPage() {
 
     (data?.processingContractorLedger || [])
       .filter((x) =>
-        x.mode === mode &&
         x.paid_by &&
         Number(x.amount) > 0 &&
         ["ADVANCE", "SETTLEMENT"].includes(String(x.entry_type || ""))
@@ -499,7 +532,7 @@ export default function AccountsPage() {
         rows.push({
           date: String(x.entry_date ?? ""),
           type: isAdvance ? "Contractor advance" : "Contractor settlement",
-          description: `${x.contractorName || "Contractor"} — ${isAdvance ? "advance" : "settlement"}`,
+          description: `${x.mode || ""} · ${x.contractorName || "Contractor"} — ${isAdvance ? "advance" : "settlement"}`.trim(),
           person: String(x.paid_by ?? ""),
           amount: Number(x.amount || 0),
           direction: "out",
@@ -508,7 +541,6 @@ export default function AccountsPage() {
       });
 
     (data?.partnerSettlements || [])
-      .filter((x) => x.mode === mode)
       .forEach((x) => {
         const paidBy = String(x.paid_by || "");
         const partner = String(x.person ?? "");
@@ -539,7 +571,7 @@ export default function AccountsPage() {
       });
 
     return rows.sort((a, b) => b.date.localeCompare(a.date));
-  }, [data, mode]);
+  }, [data]);
 
   const transactions = useMemo(() => allTransactions.slice(0, 100), [allTransactions]);
 
@@ -550,7 +582,7 @@ export default function AccountsPage() {
   return (
     <AdminShell
       title="Accounts & Finance"
-      subtitle={`Company book, partner cash holdings, borrowings and dues for ${mode}`}
+      subtitle="One company cash book for PET + Plastic. Partners are shared. Business split shows analysis by mode."
       actions={
         <button className="ad-btn ad-btn-ghost" onClick={() => void load()} disabled={loading}>
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
@@ -593,12 +625,12 @@ export default function AccountsPage() {
             "Sales in, vendor/expense/settlement out. Click through for the full list."
           )}
         >
-          <p className="ad-muted text-xs">Company Account (book) · tap for recent activity</p>
+          <p className="ad-muted text-xs">Company Account (shared PET + Plastic) · tap for recent activity</p>
           <p className={`mt-1 text-3xl font-bold ${companyBalance < 0 ? "text-[var(--ad-danger)]" : ""}`}>{money(companyBalance)}</p>
           <p className="ad-muted mt-2 text-xs leading-relaxed">
-            Sales receipts − Vendor payments − Expenses − Labour wages/advances − Contractor advances/settlements + Loans − Loan repayments − Partner settlements.
-            Attendance-only labour and contractor earn liabilities do not hit this book. Pre-stock is inventory only.
-            Unpaid purchases stay as vendor dues until payment date — they do not reduce this cash book.
+            One cash book for the firm. PET sale or Plastic purchase both move this balance.
+            Sales − Vendor payments − Expenses − Labour − Contractor cash + Loans − Repayments − Partner settlements.
+            Attendance-only labour does not hit this book. Unpaid purchases stay as vendor dues until paid.
           </p>
         </button>
         {vendorOutstandingTotal > 0.005 && (
@@ -736,6 +768,45 @@ export default function AccountsPage() {
         </div>
       </div>
 
+      <div className="mb-5 ad-card p-4">
+        <h2 className="font-semibold">Business split (analysis)</h2>
+        <p className="ad-muted mt-1 text-xs">
+          Same company cash, separate PET vs Plastic contribution. Sell PET and buy Plastic both hit one book; this strip shows where money came from / went.
+        </p>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {(["PET", "PLASTIC"] as const).map((biz) => {
+            const split = businessSplit?.[biz];
+            return (
+              <div key={biz} className="rounded-xl border border-[var(--ad-border)] p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ad-muted)]">{biz}</p>
+                <p className={`mt-1 text-2xl font-bold ${(split?.contribution || 0) < 0 ? "text-[var(--ad-danger)]" : ""}`}>
+                  {money(split?.contribution || 0)}
+                </p>
+                <p className="ad-muted mt-1 text-xs">Mode contribution to company book</p>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-lg bg-[var(--ad-input)] p-2">
+                    <p className="ad-muted">Sales in</p>
+                    <p className="mt-1 font-semibold text-[var(--ad-success)]">+{money(split?.salesReceived || 0)}</p>
+                  </div>
+                  <div className="rounded-lg bg-[var(--ad-input)] p-2">
+                    <p className="ad-muted">Vendor paid</p>
+                    <p className="mt-1 font-semibold text-[var(--ad-danger)]">−{money(split?.vendorPayments || 0)}</p>
+                  </div>
+                  <div className="rounded-lg bg-[var(--ad-input)] p-2">
+                    <p className="ad-muted">Expenses</p>
+                    <p className="mt-1 font-semibold">−{money(split?.expenses || 0)}</p>
+                  </div>
+                  <div className="rounded-lg bg-[var(--ad-input)] p-2">
+                    <p className="ad-muted">Labour cash</p>
+                    <p className="mt-1 font-semibold">−{money(split?.labourCash || 0)}</p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="mb-5 grid gap-3 md:grid-cols-3">
         {accounts.map((account) => {
           const bal = account.balance;
@@ -843,7 +914,7 @@ export default function AccountsPage() {
                 className="rounded-lg border border-[var(--ad-border)] px-2 py-1"
                 onClick={() => setVendorPay({ ...vendorPay, supplierId: String(v.supplierId), amount: String(v.outstanding) })}
               >
-                {v.name}: {money(v.outstanding)}
+                {v.name}{v.modeLabel ? ` (${v.modeLabel})` : ""}: {money(v.outstanding)}
               </button>
             ))}
           </div>

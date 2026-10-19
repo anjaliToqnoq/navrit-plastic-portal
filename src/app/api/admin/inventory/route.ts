@@ -216,6 +216,96 @@ function modeCashflow(m: string) {
   return modeCashflowParts(m).book;
 }
 
+type CashflowParts = ReturnType<typeof modeCashflowParts>;
+
+/** One firm-wide cash book = PET activity + Plastic activity. */
+function companyCashflowParts(): CashflowParts {
+  const pet = modeCashflowParts("PET");
+  const plastic = modeCashflowParts("PLASTIC");
+  const keys = Object.keys(pet) as (keyof CashflowParts)[];
+  const out = {} as CashflowParts;
+  for (const key of keys) {
+    out[key] = Math.round((Number(pet[key]) + Number(plastic[key])) * 100) / 100;
+  }
+  return out;
+}
+
+function companyCashflow() {
+  return companyCashflowParts().book;
+}
+
+type PersonTotalsRow = {
+  received: number;
+  purchasesPaid: number;
+  expensesPaid: number;
+  processingPaid: number;
+  saleProcessingPaid: number;
+  labourPaid: number;
+  contractorPaid: number;
+  companyPaid: number;
+  ownPocketPaid: number;
+  settled: number;
+  cashWithPartner: number;
+  companyOwesPartner: number;
+  paid: number;
+  balance: number;
+};
+
+/** Partner wallets are company-wide (Rahul/Devesh/Nitin across PET + Plastic). */
+function companyPersonAccountTotals(): Record<string, PersonTotalsRow> {
+  const totals: Record<string, PersonTotalsRow> = {};
+  for (const person of ACCOUNT_PERSONS) {
+    const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE received_by=?").get(person) as any)?.n || 0);
+    const purchasesCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(vp.amount),0) as n FROM vendor_payments vp LEFT JOIN purchases p ON p.id=vp.purchase_id WHERE COALESCE(NULLIF(vp.paid_by,''), p.paid_by, '')=? AND vp.payment_type<>'ADVANCE' AND COALESCE(vp.payment_mode,'')<>'Advance' AND COALESCE(vp.funding_source,'COMPANY')='COMPANY'").get(person) as any)?.n || 0);
+    const purchasesPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(vp.amount),0) as n FROM vendor_payments vp LEFT JOIN purchases p ON p.id=vp.purchase_id WHERE COALESCE(NULLIF(vp.paid_by,''), p.paid_by, '')=? AND vp.payment_type<>'ADVANCE' AND COALESCE(vp.payment_mode,'')<>'Advance' AND COALESCE(vp.funding_source,'COMPANY')='OWN_POCKET'").get(person) as any)?.n || 0);
+    const expensesCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(person) as any)?.n || 0);
+    const expensesPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(person) as any)?.n || 0);
+    const processingCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(person) as any)?.n || 0);
+    const processingPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(person) as any)?.n || 0);
+    const saleProcCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(person) as any)?.n || 0);
+    const saleProcPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(person) as any)?.n || 0);
+    const labourCompany = Number((sqlite.prepare(`
+      SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour
+      WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'
+        AND COALESCE(NULLIF(payment_kind,''),'WAGE') IN ('WAGE','ADVANCE')
+    `).get(person) as any)?.n || 0);
+    const labourPocket = Number((sqlite.prepare(`
+      SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour
+      WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'
+        AND COALESCE(NULLIF(payment_kind,''),'WAGE') IN ('WAGE','ADVANCE')
+    `).get(person) as any)?.n || 0);
+    const contractorCompany = Number((sqlite.prepare(`
+      SELECT COALESCE(SUM(amount),0) as n FROM processing_contractor_ledger
+      WHERE paid_by=? AND entry_type IN ('ADVANCE','SETTLEMENT')
+        AND COALESCE(funding_source,'COMPANY')='COMPANY'
+    `).get(person) as any)?.n || 0);
+    const contractorPocket = Number((sqlite.prepare(`
+      SELECT COALESCE(SUM(amount),0) as n FROM processing_contractor_ledger
+      WHERE paid_by=? AND entry_type IN ('ADVANCE','SETTLEMENT')
+        AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'
+    `).get(person) as any)?.n || 0);
+    const settled = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE person=?").get(person) as any)?.n || 0);
+    const settlementsPaidOut = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE paid_by=?").get(person) as any)?.n || 0);
+    const companyPaid = purchasesCompany + expensesCompany + processingCompany + saleProcCompany + labourCompany + contractorCompany + settlementsPaidOut;
+    const ownPocketPaid = purchasesPocket + expensesPocket + processingPocket + saleProcPocket + labourPocket + contractorPocket;
+    const purchasesPaid = purchasesCompany + purchasesPocket;
+    const expensesPaid = expensesCompany + expensesPocket;
+    const processingPaid = processingCompany + processingPocket;
+    const saleProcessingPaid = saleProcCompany + saleProcPocket;
+    const labourPaid = labourCompany + labourPocket;
+    const contractorPaid = contractorCompany + contractorPocket;
+    const paid = companyPaid + ownPocketPaid;
+    const cashWithPartner = Math.round((received - companyPaid) * 100) / 100;
+    const companyOwesPartner = Math.round((ownPocketPaid - settled) * 100) / 100;
+    const balance = Math.round((cashWithPartner - companyOwesPartner) * 100) / 100;
+    totals[person] = {
+      received, purchasesPaid, expensesPaid, processingPaid, saleProcessingPaid, labourPaid, contractorPaid,
+      companyPaid, ownPocketPaid, settled, cashWithPartner, companyOwesPartner, paid, balance,
+    };
+  }
+  return totals;
+}
+
 /**
  * Remove orphan CREDIT_SETTLEMENT rows that double-count purchase-linked pays.
  * Keeps at most (sum of purchase.paid_amount − already-linked payments) as orphan cash.
@@ -471,78 +561,69 @@ export async function GET() {
     PLASTIC: Number((sqlite.prepare(`SELECT COALESCE(SUM(b.outstanding_amount),0) as n FROM borrowings b JOIN lenders l ON l.id=b.lender_id WHERE b.mode='PLASTIC' AND COALESCE(l.lender_kind,'EXTERNAL')='EXTERNAL'`).get() as any)?.n || 0),
   };
 
-  const personAccountTotals: Record<string, Record<string, {
-    received:number; purchasesPaid:number; expensesPaid:number; processingPaid:number; saleProcessingPaid:number; labourPaid:number; contractorPaid:number;
-    companyPaid:number; ownPocketPaid:number; settled:number; cashWithPartner:number; companyOwesPartner:number; paid:number; balance:number;
-  }>> = { PET: {}, PLASTIC: {} };
-  for (const mode of ["PET","PLASTIC"]) {
-    for (const person of ACCOUNT_PERSONS) {
-      const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=? AND received_by=?").get(mode,person) as any)?.n || 0);
-      const purchasesCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(vp.amount),0) as n FROM vendor_payments vp LEFT JOIN purchases p ON p.id=vp.purchase_id WHERE vp.mode=? AND COALESCE(NULLIF(vp.paid_by,''), p.paid_by, '')=? AND vp.payment_type<>'ADVANCE' AND COALESCE(vp.payment_mode,'')<>'Advance' AND COALESCE(vp.funding_source,'COMPANY')='COMPANY'").get(mode,person) as any)?.n || 0);
-      const purchasesPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(vp.amount),0) as n FROM vendor_payments vp LEFT JOIN purchases p ON p.id=vp.purchase_id WHERE vp.mode=? AND COALESCE(NULLIF(vp.paid_by,''), p.paid_by, '')=? AND vp.payment_type<>'ADVANCE' AND COALESCE(vp.payment_mode,'')<>'Advance' AND COALESCE(vp.funding_source,'COMPANY')='OWN_POCKET'").get(mode,person) as any)?.n || 0);
-      const expensesCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(mode,person) as any)?.n || 0);
-      const expensesPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(mode,person) as any)?.n || 0);
-      const processingCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(mode,person) as any)?.n || 0);
-      const processingPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(mode,person) as any)?.n || 0);
-      const saleProcCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(mode,person) as any)?.n || 0);
-      const saleProcPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(mode,person) as any)?.n || 0);
-      const labourCompany = Number((sqlite.prepare(`
-        SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour
-        WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'
-          AND COALESCE(NULLIF(payment_kind,''),'WAGE') IN ('WAGE','ADVANCE')
-      `).get(mode,person) as any)?.n || 0);
-      const labourPocket = Number((sqlite.prepare(`
-        SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour
-        WHERE mode=? AND paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'
-          AND COALESCE(NULLIF(payment_kind,''),'WAGE') IN ('WAGE','ADVANCE')
-      `).get(mode,person) as any)?.n || 0);
-      const contractorCompany = Number((sqlite.prepare(`
-        SELECT COALESCE(SUM(amount),0) as n FROM processing_contractor_ledger
-        WHERE mode=? AND paid_by=? AND entry_type IN ('ADVANCE','SETTLEMENT')
-          AND COALESCE(funding_source,'COMPANY')='COMPANY'
-      `).get(mode,person) as any)?.n || 0);
-      const contractorPocket = Number((sqlite.prepare(`
-        SELECT COALESCE(SUM(amount),0) as n FROM processing_contractor_ledger
-        WHERE mode=? AND paid_by=? AND entry_type IN ('ADVANCE','SETTLEMENT')
-          AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'
-      `).get(mode,person) as any)?.n || 0);
-      const settled = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE mode=? AND person=?").get(mode,person) as any)?.n || 0);
-      // Settlements paid out by this person (on behalf of company) count as company cash they spent.
-      const settlementsPaidOut = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE mode=? AND paid_by=?").get(mode,person) as any)?.n || 0);
-      const companyPaid = purchasesCompany + expensesCompany + processingCompany + saleProcCompany + labourCompany + contractorCompany + settlementsPaidOut;
-      const ownPocketPaid = purchasesPocket + expensesPocket + processingPocket + saleProcPocket + labourPocket + contractorPocket;
-      const purchasesPaid = purchasesCompany + purchasesPocket;
-      const expensesPaid = expensesCompany + expensesPocket;
-      const processingPaid = processingCompany + processingPocket;
-      const saleProcessingPaid = saleProcCompany + saleProcPocket;
-      const labourPaid = labourCompany + labourPocket;
-      const contractorPaid = contractorCompany + contractorPocket;
-      const paid = companyPaid + ownPocketPaid;
-      const cashWithPartner = Math.round((received - companyPaid) * 100) / 100;
-      const companyOwesPartner = Math.round((ownPocketPaid - settled) * 100) / 100;
-      // Positive = partner holds company cash; negative = company needs to pay partner
-      // (own-pocket advances and/or overspend vs receipts, after settlements).
-      const balance = Math.round((cashWithPartner - companyOwesPartner) * 100) / 100;
-      personAccountTotals[mode][person] = {
-        received, purchasesPaid, expensesPaid, processingPaid, saleProcessingPaid, labourPaid, contractorPaid,
-        companyPaid, ownPocketPaid, settled, cashWithPartner, companyOwesPartner, paid, balance,
-      };
-    }
-  }
+  const personAccountTotalsFlat = companyPersonAccountTotals();
+  // Compatibility: old clients read personAccountTotals[mode][person] — mirror shared wallets under both modes.
+  const personAccountTotals = {
+    COMPANY: personAccountTotalsFlat,
+    PET: personAccountTotalsFlat,
+    PLASTIC: personAccountTotalsFlat,
+    ...personAccountTotalsFlat,
+  };
 
-  const cashflowBreakdown = { PET: modeCashflowParts("PET"), PLASTIC: modeCashflowParts("PLASTIC") };
+  const companyParts = companyCashflowParts();
+  const petParts = modeCashflowParts("PET");
+  const plasticParts = modeCashflowParts("PLASTIC");
+  const cashflowBreakdown = {
+    COMPANY: companyParts,
+    PET: petParts,
+    PLASTIC: plasticParts,
+  };
+  const cashWithPartners = ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, Number(personAccountTotalsFlat[p]?.balance || 0)), 0);
+  const dueToPartners = ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, -Number(personAccountTotalsFlat[p]?.balance || 0)), 0);
+  const externalLoanTotal = externalLoanOutstanding.PET + externalLoanOutstanding.PLASTIC;
   const reconciliation = {
+    COMPANY: {
+      companyBook: companyParts.book,
+      cashWithPartners,
+      dueToPartners,
+      externalLoanOutstanding: externalLoanTotal,
+    },
+    // Compatibility mirrors — same company book regardless of mode toggle.
     PET: {
-      companyBook: cashflowBreakdown.PET.book,
-      cashWithPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, Number(personAccountTotals.PET[p]?.balance || 0)), 0),
-      dueToPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, -Number(personAccountTotals.PET[p]?.balance || 0)), 0),
-      externalLoanOutstanding: externalLoanOutstanding.PET,
+      companyBook: companyParts.book,
+      cashWithPartners,
+      dueToPartners,
+      externalLoanOutstanding: externalLoanTotal,
     },
     PLASTIC: {
-      companyBook: cashflowBreakdown.PLASTIC.book,
-      cashWithPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, Number(personAccountTotals.PLASTIC[p]?.balance || 0)), 0),
-      dueToPartners: ACCOUNT_PERSONS.reduce((n, p) => n + Math.max(0, -Number(personAccountTotals.PLASTIC[p]?.balance || 0)), 0),
-      externalLoanOutstanding: externalLoanOutstanding.PLASTIC,
+      companyBook: companyParts.book,
+      cashWithPartners,
+      dueToPartners,
+      externalLoanOutstanding: externalLoanTotal,
+    },
+  };
+  const businessSplit = {
+    PET: {
+      salesReceived: petParts.salesReceived,
+      vendorPayments: petParts.vendorPayments,
+      expenses: Math.round((petParts.otherExpenses + petParts.processingExpenses + petParts.saleProcessing) * 100) / 100,
+      labourCash: petParts.manualLabour,
+      contractorCash: petParts.contractorCash,
+      borrowed: petParts.borrowed,
+      loanRepaid: petParts.loanRepaid,
+      partnerSettled: petParts.partnerSettled,
+      contribution: petParts.book,
+    },
+    PLASTIC: {
+      salesReceived: plasticParts.salesReceived,
+      vendorPayments: plasticParts.vendorPayments,
+      expenses: Math.round((plasticParts.otherExpenses + plasticParts.processingExpenses + plasticParts.saleProcessing) * 100) / 100,
+      labourCash: plasticParts.manualLabour,
+      contractorCash: plasticParts.contractorCash,
+      borrowed: plasticParts.borrowed,
+      loanRepaid: plasticParts.loanRepaid,
+      partnerSettled: plasticParts.partnerSettled,
+      contribution: plasticParts.book,
     },
   };
 
@@ -560,8 +641,13 @@ export async function GET() {
     sales, saleItems, salePayments, processingBatches, processingBatchItems, processingBatchOutputs, processingExpenses,
     saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, plasticMaterialTypes, processingContractors, processingContractorLedger,
     processingContractorSummaries, partnerSettlements, borrowingRepayments, totals,
-    personAccountTotals, externalLoanOutstanding, reconciliation, cashflowBreakdown,
-    cashBalance:{PET:cashflowBreakdown.PET.book,PLASTIC:cashflowBreakdown.PLASTIC.book},
+    personAccountTotals, personAccountTotalsFlat, externalLoanOutstanding, reconciliation, cashflowBreakdown, businessSplit,
+    // COMPANY is canonical; PET/PLASTIC mirrored so older UI still sees one shared book.
+    cashBalance:{
+      COMPANY: companyParts.book,
+      PET: companyParts.book,
+      PLASTIC: companyParts.book,
+    },
   });
 }
 
@@ -909,7 +995,7 @@ export async function POST(req: NextRequest) {
     if (body.action === "repairDuplicateVendorPayments") {
       const s = z.object({ mode: modeSchema }).parse(body);
       const result = repairDuplicateVendorPayments(s.mode);
-      return json({ ok: true, ...result, cashBalance: modeCashflow(s.mode) });
+      return json({ ok: true, ...result, cashBalance: companyCashflow() });
     }
 
     if (body.action === "deletePurchase") {

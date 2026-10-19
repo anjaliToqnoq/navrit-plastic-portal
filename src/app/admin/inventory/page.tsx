@@ -343,7 +343,7 @@ export default function InventoryPage() {
 
   if(!data) return <AdminShell title="Inventory & Finance"><div className="ad-card p-6">Loading…</div></AdminShell>;
 
-  return <AdminShell title={mode + " Inventory & Finance"} subtitle={"Internal " + mode + " inventory, purchases and supplier credit. Borrowings live under Accounts."}
+  return <AdminShell title={mode + " Inventory & Finance"} subtitle={`${mode} stock and purchases only. Company cash is shared with the other business — see Accounts.`}
     actions={
       <button className="ad-btn ad-btn-primary" onClick={()=>setShowPreStock((v)=>!v)}>
         {showPreStock ? "Close pre stock" : "Add pre stock"}
@@ -629,7 +629,7 @@ export default function InventoryPage() {
 
     {tab==="sales" && <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <div className="ad-card p-4"><p className="ad-muted text-xs">Company Balance</p><p className="mt-1 text-2xl font-bold">₹{Number(data.cashBalance?.[mode]||0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Company cash (shared)</p><p className="mt-1 text-2xl font-bold">₹{Number(data.cashBalance?.COMPANY ?? data.cashBalance?.[mode] ?? 0).toFixed(2)}</p><p className="ad-muted mt-1 text-[10px]">PET + Plastic one book</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Total Sales</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.total_amount||0),0).toFixed(2)}</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Received</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.received_amount||0),0).toFixed(2)}</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Pending</p><p className="mt-1 text-2xl font-bold">₹{(data.sales||[]).filter((s:any)=>s.mode===mode).reduce((n:number,s:any)=>n+Number(s.credit_amount||0),0).toFixed(2)}</p></div>

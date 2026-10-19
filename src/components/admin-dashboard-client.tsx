@@ -139,7 +139,8 @@ export function AdminDashboardClient({ username }: { username: string }) {
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ad-muted)]">Period</p>
           <p className="mt-1 text-sm">
-            Figures below use <strong>{label}</strong>
+            Cash is company-wide (PET + Plastic). This screen shows <strong>{mode}</strong> activity for{" "}
+            <strong>{label}</strong>
             {period !== "all" && from && to ? <> ({from} → {to})</> : null}.
             Current stock is always live (not filtered).
           </p>
@@ -259,9 +260,9 @@ export function AdminDashboardClient({ username }: { username: string }) {
             ))}
           </div>
           <div className="mt-5 rounded-xl bg-[var(--ad-accent-dim)] p-3">
-            <p className="text-xs font-semibold text-[var(--ad-accent)]">Period filter</p>
+            <p className="text-xs font-semibold text-[var(--ad-accent)]">Mode vs cash</p>
             <p className="mt-1 text-sm">
-              Purchases, sales, expenses and labour cash follow the timeline. Stock and vendor outstanding stay live.
+              Activity here is {mode}-only. Company cash (Accounts) is shared across PET and Plastic.
             </p>
           </div>
         </section>

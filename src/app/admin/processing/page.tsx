@@ -358,8 +358,23 @@ export default function ProcessingPage() {
     await post({ action: "setLabourWorkerStatus", workerId: worker.id, active: true });
   }
 
+  function dueAcrossLoaded(workerId: number) {
+    let earned = 0;
+    let wagesPaid = 0;
+    let advances = 0;
+    for (const entry of labour) {
+      if (entry.worker_id !== workerId) continue;
+      const kind = entry.payment_kind || "WAGE";
+      const amt = Number(entry.amount || 0);
+      if (kind === "ATTENDANCE") earned += amt;
+      else if (kind === "ADVANCE") advances += amt;
+      else wagesPaid += amt;
+    }
+    return Math.round((earned - wagesPaid - advances) * 100) / 100;
+  }
+
   async function deleteWorker(worker: Worker) {
-    const due = summaryById.get(worker.id)?.due ?? 0;
+    const due = dueAcrossLoaded(worker.id);
     if (Math.abs(due) > 0.009) {
       setMessage(
         due > 0

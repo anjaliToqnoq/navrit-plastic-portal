@@ -9,8 +9,6 @@ import clsx from "clsx";
 import {
   LayoutDashboard,
   Package,
-  BarChart3,
-  Download,
   LogOut,
   Search,
   Moon,
@@ -43,9 +41,6 @@ const navByMode = {
     { href: "/admin/vendors", label: "Vendors & Management", icon: Users },
     { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
     { href: "/admin/processing", label: "Labour Management", icon: Factory },
-    { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
-    { href: "/admin/analytics", label: "Plastic Analytics", icon: BarChart3 },
-    { href: "/admin/reports", label: "Plastic Reports", icon: Download },
     { href: "/admin/backup", label: "Backup", icon: HardDrive },
   ],
 } as const;

@@ -45,6 +45,7 @@ export default function InventoryPage() {
   const [paymentEdit,setPaymentEdit] = useState<{purchaseId:number; paymentDate:string; paidBy:string} | null>(null);
   const [preStock,setPreStock] = useState({materialName:"Natural Bottles",materialVariant:"Mixed",quantityKg:"",ratePerKg:"",stockDate:"2026-09-30",notes:""});
   const [showPreStock,setShowPreStock] = useState(false);
+  const [showPlasticTypes,setShowPlasticTypes] = useState(false);
   const [adjust,setAdjust] = useState({materialId:"",materialName:"",quantityKg:"",amount:"",notes:""});
   const [creditPay,setCreditPay] = useState<{purchaseId:number; amount:string; paidBy:string; fundingSource:FundingSource; paymentDate:string} | null>(null);
   const [salePay,setSalePay] = useState<{saleId:number; amount:string; receivedBy:string; paymentMode:string} | null>(null);
@@ -57,6 +58,9 @@ export default function InventoryPage() {
     setData(await r.json());
   }
   useEffect(()=>{load()},[]);
+  useEffect(() => {
+    if (mode !== "PLASTIC") setShowPlasticTypes(false);
+  }, [mode]);
   useEffect(() => {
     if (mode === "PLASTIC") {
       const first = (data?.plasticMaterialTypes || []).find((t: any) => t.active)?.name || "";
@@ -103,7 +107,11 @@ export default function InventoryPage() {
   async function savePlasticType() {
     if (!plasticTypeName.trim()) { setMessage("Enter a plastic material type name"); return; }
     const ok = await post("upsertPlasticMaterialType", { name: plasticTypeName.trim(), notes: plasticTypeNotes });
-    if (ok) { setPlasticTypeName(""); setPlasticTypeNotes(""); }
+    if (ok) {
+      setPlasticTypeName("");
+      setPlasticTypeNotes("");
+      setShowPlasticTypes(false);
+    }
   }
 
   function defaultSaleItem() {
@@ -345,9 +353,16 @@ export default function InventoryPage() {
 
   return <AdminShell title={mode + " Inventory & Finance"} subtitle={`${mode} stock and purchases only. Company cash is shared with the other business — see Accounts.`}
     actions={
-      <button className="ad-btn ad-btn-primary" onClick={()=>setShowPreStock((v)=>!v)}>
-        {showPreStock ? "Close pre stock" : "Add pre stock"}
-      </button>
+      <>
+        {mode==="PLASTIC" && (
+          <button className="ad-btn ad-btn-primary" onClick={()=>{ setShowPlasticTypes((v)=>!v); setShowPreStock(false); }}>
+            {showPlasticTypes ? "Close type" : "Add type"}
+          </button>
+        )}
+        <button className="ad-btn ad-btn-primary" onClick={()=>{ setShowPreStock((v)=>!v); setShowPlasticTypes(false); }}>
+          {showPreStock ? "Close pre stock" : "Add pre stock"}
+        </button>
+      </>
     }
   >
     <div>
@@ -412,6 +427,35 @@ export default function InventoryPage() {
             </table>
           </div>
         )}
+      </div>
+    )}
+
+    {mode==="PLASTIC" && showPlasticTypes && (
+      <div className="mb-5 ad-card border border-[var(--ad-accent)] p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h2 className="font-semibold">Add plastic material type</h2>
+            <p className="ad-muted text-xs">Types like Rangin Plastic PP, Mix PP Dibba, Safed Plastic DB become stock names for buy/sell.</p>
+          </div>
+        </div>
+        <div className="grid gap-2 md:grid-cols-4">
+          <input className="ad-input" placeholder="Type name" value={plasticTypeName} onChange={e=>setPlasticTypeName(e.target.value)}/>
+          <input className="ad-input md:col-span-2" placeholder="Notes (optional)" value={plasticTypeNotes} onChange={e=>setPlasticTypeNotes(e.target.value)}/>
+          <button className="ad-btn ad-btn-primary" onClick={()=>void savePlasticType()}>Save type</button>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          {allPlasticTypes.length ? allPlasticTypes.map((t:any)=>(
+            <button
+              key={t.id}
+              type="button"
+              className={"rounded-lg border px-2 py-1 "+(t.active?"border-[var(--ad-accent)]":"border-[var(--ad-border)] opacity-60")}
+              onClick={()=>void post("setPlasticMaterialTypeStatus",{typeId:t.id,active:!t.active})}
+              title={t.active?"Click to disable":"Click to enable"}
+            >
+              {t.name}{t.active?"":" · off"}
+            </button>
+          )) : <span className="ad-muted">No types yet — add the first one above.</span>}
+        </div>
       </div>
     )}
 
@@ -519,31 +563,6 @@ export default function InventoryPage() {
             <button className="ad-btn ad-btn-primary" onClick={editingPurchase ? editPurchase : addPurchase}>{editingPurchase ? "Update purchase" : "Save purchase"}</button>
             {editingPurchase&&<button className="ad-btn ad-btn-ghost" onClick={()=>{setEditingPurchase(null);setPurchase({...emptyPurchase})}}>Cancel</button>}
           </div>
-
-    {mode==="PLASTIC" && (
-      <div className="mb-5 ad-card p-4">
-        <h2 className="mb-1 font-semibold">Plastic material types</h2>
-        <p className="ad-muted mb-3 text-xs">Add types like Rangin Plastic PP, Mix PP Dibba, Safed Plastic DB. These become stock names for buy/sell.</p>
-        <div className="grid gap-2 md:grid-cols-4">
-          <input className="ad-input" placeholder="Type name" value={plasticTypeName} onChange={e=>setPlasticTypeName(e.target.value)}/>
-          <input className="ad-input md:col-span-2" placeholder="Notes (optional)" value={plasticTypeNotes} onChange={e=>setPlasticTypeNotes(e.target.value)}/>
-          <button className="ad-btn ad-btn-primary" onClick={()=>void savePlasticType()}>Add type</button>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2 text-xs">
-          {allPlasticTypes.length ? allPlasticTypes.map((t:any)=>(
-            <button
-              key={t.id}
-              type="button"
-              className={"rounded-lg border px-2 py-1 "+(t.active?"border-[var(--ad-accent)]":"border-[var(--ad-border)] opacity-60")}
-              onClick={()=>void post("setPlasticMaterialTypeStatus",{typeId:t.id,active:!t.active})}
-              title={t.active?"Click to disable":"Click to enable"}
-            >
-              {t.name}{t.active?"":" · off"}
-            </button>
-          )) : <span className="ad-muted">No types yet — add the first one above.</span>}
-        </div>
-      </div>
-    )}
         </div>
         <p className="mt-3 text-xs ad-muted">Purchase date = material aaya. Payment date = vendor ko paisa diya (often after sale cash). Accounts uses payment date.</p>
       </div>

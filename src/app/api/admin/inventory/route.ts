@@ -8,6 +8,39 @@ import { ACCOUNT_PERSONS, optionalAccountPersonSchema, accountPersonSchema } fro
 import { optionalFundingSourceSchema } from "@/lib/funding";
 import { friendlyZodError } from "@/lib/api-errors";
 import { LABOUR_TASKS } from "@/lib/labour-tasks";
+import { attendanceEarnedAmount, halfDayRate } from "@/lib/labour-math";
+
+function workerWageDue(workerId: number, dailyRate: number, mode?: string) {
+  const rows = mode
+    ? (sqlite.prepare(
+        "SELECT payment_kind, attendance_type, hours, amount FROM processing_manual_labour WHERE worker_id=? AND mode=?"
+      ).all(workerId, mode) as Array<{ payment_kind: string; attendance_type: string; hours: number; amount: number }>)
+    : (sqlite.prepare(
+        "SELECT payment_kind, attendance_type, hours, amount FROM processing_manual_labour WHERE worker_id=?"
+      ).all(workerId) as Array<{ payment_kind: string; attendance_type: string; hours: number; amount: number }>);
+  let earned = 0;
+  let wagesPaid = 0;
+  let advances = 0;
+  for (const row of rows) {
+    const kind = row.payment_kind || "WAGE";
+    if (kind === "ATTENDANCE") {
+      earned += attendanceEarnedAmount(dailyRate, row.attendance_type, Number(row.hours || 0));
+    } else if (kind === "ADVANCE") {
+      advances += Number(row.amount || 0);
+    } else {
+      wagesPaid += Number(row.amount || 0);
+    }
+  }
+  earned = Math.round(earned * 100) / 100;
+  wagesPaid = Math.round(wagesPaid * 100) / 100;
+  advances = Math.round(advances * 100) / 100;
+  return {
+    earned,
+    wagesPaid,
+    advances,
+    due: Math.round((earned - wagesPaid - advances) * 100) / 100,
+  };
+}
 
 export const dynamic = "force-dynamic";
 
@@ -432,6 +465,30 @@ export async function GET() {
   const processingBatches = sqlite.prepare("SELECT * FROM processing_batches ORDER BY batch_date DESC, id DESC LIMIT 200").all();
   const processingBatchItems = sqlite.prepare("SELECT * FROM processing_batch_items ORDER BY batch_id, id").all();
   const processingBatchOutputs = sqlite.prepare("SELECT * FROM processing_batch_outputs ORDER BY batch_id, id").all();
+  // Keep half-day = daily/2 and fix attendance amounts that were stored wrong.
+  const labourWorkersRaw = sqlite.prepare("SELECT * FROM manual_labour_workers ORDER BY active DESC, name, id").all() as Array<{
+    id: number; daily_rate: number; half_day_rate: number;
+  }>;
+  for (const w of labourWorkersRaw) {
+    const half = halfDayRate(Number(w.daily_rate || 0));
+    if (Math.abs(Number(w.half_day_rate || 0) - half) > 0.009) {
+      sqlite.prepare("UPDATE manual_labour_workers SET half_day_rate=? WHERE id=?").run(half, w.id);
+      w.half_day_rate = half;
+    }
+  }
+  const attendanceRows = sqlite.prepare(`
+    SELECT ml.id, ml.attendance_type, ml.hours, ml.amount, w.daily_rate
+    FROM processing_manual_labour ml
+    JOIN manual_labour_workers w ON w.id=ml.worker_id
+    WHERE COALESCE(NULLIF(ml.payment_kind,''),'WAGE')='ATTENDANCE'
+  `).all() as Array<{ id: number; attendance_type: string; hours: number; amount: number; daily_rate: number }>;
+  const fixAmt = sqlite.prepare("UPDATE processing_manual_labour SET amount=? WHERE id=?");
+  for (const row of attendanceRows) {
+    const correct = attendanceEarnedAmount(Number(row.daily_rate || 0), row.attendance_type, Number(row.hours || 0));
+    if (correct > 0 && Math.abs(Number(row.amount || 0) - correct) > 0.009) {
+      fixAmt.run(correct, row.id);
+    }
+  }
   const labourWorkers = sqlite.prepare("SELECT * FROM manual_labour_workers ORDER BY active DESC, name, id").all();
   const manualLabour = sqlite.prepare(`
     SELECT ml.*, w.name as workerName
@@ -1124,7 +1181,7 @@ export async function POST(req: NextRequest) {
         dailyRate: z.number().nonnegative().optional().default(0),
         halfDayRate: z.number().nonnegative().optional().default(0),
       }).parse(body);
-      const half = s.halfDayRate > 0 ? s.halfDayRate : Math.round((s.dailyRate / 2) * 100) / 100;
+      const half = halfDayRate(s.dailyRate);
       const existing = sqlite.prepare("SELECT * FROM manual_labour_workers WHERE lower(name)=lower(?)").get(s.name) as any;
       if (existing) {
         if (!existing.active) {
@@ -1149,7 +1206,7 @@ export async function POST(req: NextRequest) {
       const existing = sqlite.prepare("SELECT * FROM manual_labour_workers WHERE id=?").get(s.workerId) as any;
       if (!existing) return NextResponse.json({ error: "Worker not found" }, { status: 404 });
       const daily = s.dailyRate ?? Number(existing.daily_rate || 0);
-      const half = s.halfDayRate ?? (Number(existing.half_day_rate || 0) || Math.round((daily / 2) * 100) / 100);
+      const half = halfDayRate(daily);
       sqlite.prepare("UPDATE manual_labour_workers SET name=?, daily_rate=?, half_day_rate=?, updated_at=? WHERE id=?")
         .run(s.name ?? existing.name, daily, half, nowIso(), s.workerId);
       return json({ ok: true });
@@ -1166,14 +1223,7 @@ export async function POST(req: NextRequest) {
       const s = z.object({ workerId: z.number().int().positive() }).parse(body);
       const existing = sqlite.prepare("SELECT * FROM manual_labour_workers WHERE id=?").get(s.workerId) as any;
       if (!existing) return NextResponse.json({ error: "Worker not found" }, { status: 404 });
-      const bal = sqlite.prepare(`
-        SELECT
-          ROUND(COALESCE(SUM(CASE WHEN COALESCE(NULLIF(payment_kind,''),'WAGE')='ATTENDANCE' THEN amount ELSE 0 END),0),2) as earned,
-          ROUND(COALESCE(SUM(CASE WHEN COALESCE(NULLIF(payment_kind,''),'WAGE')='WAGE' THEN amount ELSE 0 END),0),2) as wagesPaid,
-          ROUND(COALESCE(SUM(CASE WHEN COALESCE(NULLIF(payment_kind,''),'WAGE')='ADVANCE' THEN amount ELSE 0 END),0),2) as advances
-        FROM processing_manual_labour WHERE worker_id=?
-      `).get(s.workerId) as { earned: number; wagesPaid: number; advances: number };
-      const due = Math.round((Number(bal.earned) - Number(bal.wagesPaid) - Number(bal.advances)) * 100) / 100;
+      const due = workerWageDue(s.workerId, Number(existing.daily_rate || 0)).due;
       if (Math.abs(due) > 0.009) {
         return NextResponse.json({
           error: due > 0
@@ -1224,14 +1274,6 @@ export async function POST(req: NextRequest) {
         if (existing.length) return NextResponse.json({error:"Attendance already marked for one or more selected workers for this task and date"},{status:400});
       }
 
-      const dueStmt = sqlite.prepare(`
-        SELECT
-          ROUND(COALESCE(SUM(CASE WHEN COALESCE(NULLIF(payment_kind,''),'WAGE')='ATTENDANCE' THEN amount ELSE 0 END),0),2) as earned,
-          ROUND(COALESCE(SUM(CASE WHEN COALESCE(NULLIF(payment_kind,''),'WAGE')='WAGE' THEN amount ELSE 0 END),0),2) as wagesPaid,
-          ROUND(COALESCE(SUM(CASE WHEN COALESCE(NULLIF(payment_kind,''),'WAGE')='ADVANCE' THEN amount ELSE 0 END),0),2) as advances
-        FROM processing_manual_labour WHERE worker_id=? AND mode=?
-      `);
-
       let total = 0;
       let saved = 0;
       for (const worker of found) {
@@ -1239,17 +1281,11 @@ export async function POST(req: NextRequest) {
         if (s.paymentKind === "ADVANCE") {
           if (!(amount > 0)) return NextResponse.json({ error: "Enter advance amount per worker" }, { status: 400 });
         } else if (s.payOutstanding && s.paymentKind === "WAGE") {
-          const bal = dueStmt.get(worker.id, s.mode) as { earned: number; wagesPaid: number; advances: number };
-          amount = Math.round((Number(bal.earned) - Number(bal.wagesPaid) - Number(bal.advances)) * 100) / 100;
+          amount = workerWageDue(worker.id, Number(worker.daily_rate || 0), s.mode).due;
           if (!(amount > 0.009)) continue;
         } else if (!(amount > 0)) {
           const daily = Number(worker.daily_rate || 0);
-          const half = Number(worker.half_day_rate || 0) || Math.round((daily / 2) * 100) / 100;
-          const otHours = Number(s.hours || 0);
-          const otPay = otHours > 0 ? Math.round((daily / 9) * otHours * 100) / 100 : 0;
-          if (s.attendanceType === "FULL_DAY") amount = Math.round((daily + otPay) * 100) / 100;
-          else if (s.attendanceType === "HALF_DAY") amount = Math.round((half + otPay) * 100) / 100;
-          else amount = otPay;
+          amount = attendanceEarnedAmount(daily, s.attendanceType, Number(s.hours || 0));
           if (!(amount > 0)) {
             return NextResponse.json({
               error: `Set a daily rate for ${worker.name} or enter the wage amount`,

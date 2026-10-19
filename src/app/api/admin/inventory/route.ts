@@ -34,19 +34,30 @@ function withTransaction<T>(fn: () => T): T {
   }
 }
 
-/** Ledger stock key: only two buy types — Natural (mixed) and Red. */
+/** PET ledger stock key: Natural (mixed) or Red. */
 function saleMaterialName(materialCategory: string, materialVariant: string) {
   if (materialCategory === "Red Bottles" || materialVariant === "Red") return "Red Bottles";
   return "Natural Bottles";
 }
 
+function requireActivePlasticType(name: string) {
+  const row = sqlite.prepare(
+    "SELECT id, name FROM plastic_material_types WHERE mode='PLASTIC' AND active=1 AND lower(name)=lower(?)"
+  ).get(name.trim()) as { id: number; name: string } | undefined;
+  if (!row) throw new Error("Unknown or inactive Plastic material type. Add it under Plastic Inventory first.");
+  return row.name;
+}
+
 /**
  * Purchase / pre-stock stock key.
- * Natural is bought mixed (green + white + white milk together) — no colour split.
+ * PET: Natural mixed or Red. Plastic: user-defined material type name.
  */
-function purchaseStockName(materialName: string, materialVariant: string) {
+function purchaseStockName(mode: string, materialName: string, materialVariant: string) {
   const name = materialName.trim();
   const variant = materialVariant.trim();
+  if (mode === "PLASTIC") {
+    return requireActivePlasticType(name);
+  }
   if (name === "Red Bottles" || variant === "Red") {
     if (variant && variant !== "Red" && variant !== "Mixed") {
       throw new Error("Red Bottles must use the Red type");
@@ -59,6 +70,11 @@ function purchaseStockName(materialName: string, materialVariant: string) {
   }
   // Legacy free-text materials keep their purchased name as the stock key.
   return name;
+}
+
+function resolveSaleStockName(mode: string, materialCategory: string, materialVariant: string) {
+  if (mode === "PLASTIC") return requireActivePlasticType(materialCategory);
+  return saleMaterialName(materialCategory, materialVariant);
 }
 
 function isNaturalStockName(materialName: string) {
@@ -530,7 +546,11 @@ export async function GET() {
     },
   };
 
-  const processingContractorSummaries = (processingContractors as Array<{ id: number; mode: string }>).map((c) => ({
+  const plasticMaterialTypes = sqlite.prepare(
+    "SELECT * FROM plastic_material_types WHERE mode='PLASTIC' ORDER BY active DESC, sort_order, name, id"
+  ).all();
+
+    const processingContractorSummaries = (processingContractors as Array<{ id: number; mode: string }>).map((c) => ({
     ...c,
     ...contractorBalance(c.id),
   }));
@@ -538,7 +558,7 @@ export async function GET() {
   return json({
     materials, suppliers, lenders, inventory, preStock, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments,
     sales, saleItems, salePayments, processingBatches, processingBatchItems, processingBatchOutputs, processingExpenses,
-    saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, processingContractors, processingContractorLedger,
+    saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, plasticMaterialTypes, processingContractors, processingContractorLedger,
     processingContractorSummaries, partnerSettlements, borrowingRepayments, totals,
     personAccountTotals, externalLoanOutstanding, reconciliation, cashflowBreakdown,
     cashBalance:{PET:cashflowBreakdown.PET.book,PLASTIC:cashflowBreakdown.PLASTIC.book},
@@ -714,7 +734,7 @@ export async function POST(req: NextRequest) {
 
       let stockName: string;
       try {
-        stockName = purchaseStockName(s.materialName, s.materialVariant);
+        stockName = purchaseStockName(s.mode, s.materialName, s.materialVariant);
       } catch (error) {
         return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid material variant" }, { status: 400 });
       }
@@ -774,7 +794,7 @@ export async function POST(req: NextRequest) {
       if (!existing) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
       let stockName: string;
       try {
-        stockName = purchaseStockName(s.materialName, s.materialVariant);
+        stockName = purchaseStockName(s.mode, s.materialName, s.materialVariant);
       } catch (error) {
         return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid material variant" }, { status: 400 });
       }
@@ -977,6 +997,41 @@ export async function POST(req: NextRequest) {
       return json({ ok: true });
     }
 
+
+    if (body.action === "upsertPlasticMaterialType") {
+      const s = z.object({
+        typeId: z.number().int().positive().optional(),
+        name: z.string().trim().min(1).max(120),
+        notes: z.string().trim().optional().default(""),
+        sortOrder: z.number().int().optional().default(0),
+      }).parse(body);
+      if (s.typeId) {
+        const existing = sqlite.prepare("SELECT id FROM plastic_material_types WHERE id=? AND mode='PLASTIC'").get(s.typeId);
+        if (!existing) return NextResponse.json({ error: "Plastic material type not found" }, { status: 404 });
+        const dup = sqlite.prepare("SELECT id FROM plastic_material_types WHERE mode='PLASTIC' AND lower(name)=lower(?) AND id<>?").get(s.name, s.typeId);
+        if (dup) return NextResponse.json({ error: "A plastic type with this name already exists" }, { status: 400 });
+        sqlite.prepare(
+          "UPDATE plastic_material_types SET name=?, notes=?, sort_order=?, updated_at=? WHERE id=? AND mode='PLASTIC'"
+        ).run(s.name, s.notes, s.sortOrder, nowIso(), s.typeId);
+        return json({ ok: true, id: s.typeId });
+      }
+      const dup = sqlite.prepare("SELECT id FROM plastic_material_types WHERE mode='PLASTIC' AND lower(name)=lower(?)").get(s.name);
+      if (dup) return NextResponse.json({ error: "A plastic type with this name already exists" }, { status: 400 });
+      const r = sqlite.prepare(
+        "INSERT INTO plastic_material_types (mode,name,active,sort_order,notes,created_at,updated_at) VALUES ('PLASTIC',?,1,?,?,?,?)"
+      ).run(s.name, s.sortOrder, s.notes, nowIso(), nowIso());
+      return json({ ok: true, id: Number(r.lastInsertRowid) });
+    }
+
+    if (body.action === "setPlasticMaterialTypeStatus") {
+      const s = z.object({ typeId: z.number().int().positive(), active: z.boolean() }).parse(body);
+      const r = sqlite.prepare(
+        "UPDATE plastic_material_types SET active=?, updated_at=? WHERE id=? AND mode='PLASTIC'"
+      ).run(s.active ? 1 : 0, nowIso(), s.typeId);
+      if (!r.changes) return NextResponse.json({ error: "Plastic material type not found" }, { status: 404 });
+      return json({ ok: true });
+    }
+
     if (body.action === "addLabourWorker") {
       const s = z.object({
         name: z.string().trim().min(2).max(100),
@@ -987,13 +1042,13 @@ export async function POST(req: NextRequest) {
       const existing = sqlite.prepare("SELECT * FROM manual_labour_workers WHERE lower(name)=lower(?)").get(s.name) as any;
       if (existing) {
         if (!existing.active) {
-          sqlite.prepare("UPDATE manual_labour_workers SET active=1, daily_rate=?, half_day_rate=?, updated_at=? WHERE id=?")
+          sqlite.prepare("UPDATE manual_labour_workers SET active=1, daily_rate=?, half_day_rate=?, pay_model='DAILY', updated_at=? WHERE id=?")
             .run(s.dailyRate, half, nowIso(), existing.id);
           return json({ ok: true, id: existing.id, reactivated: true });
         }
         return NextResponse.json({ error: "Worker already exists" }, { status: 400 });
       }
-      const r = sqlite.prepare("INSERT INTO manual_labour_workers (name,active,daily_rate,half_day_rate,created_at,updated_at) VALUES (?,1,?,?,?,?)")
+      const r = sqlite.prepare("INSERT INTO manual_labour_workers (name,active,daily_rate,half_day_rate,pay_model,created_at,updated_at) VALUES (?,1,?,?,'DAILY',?,?)")
         .run(s.name, s.dailyRate, half, nowIso(), nowIso());
       return json({ ok: true, id: Number(r.lastInsertRowid) });
     }
@@ -1220,6 +1275,9 @@ export async function POST(req: NextRequest) {
         })).min(1),
         notes: z.string().trim().optional().default("")
       }).parse(body);
+      if (s.mode === "PLASTIC") {
+        return NextResponse.json({ error: "Processing batches are PET-only for now. Use Plastic Inventory for buy/sell." }, { status: 400 });
+      }
       if (s.mode === "PET" && s.items.some(x => x.materialVariant === "Red")) return NextResponse.json({error:"Red material is not valid for PET processing"},{status:400});
       const totalInput = Math.round(s.items.reduce((n,x)=>n+x.quantityKg,0)*1000)/1000;
       const labourRate = 2;
@@ -1241,6 +1299,9 @@ export async function POST(req: NextRequest) {
         processingCost: z.number().nonnegative().default(0)
       }).parse(body);
 
+      if (s.mode === "PLASTIC") {
+        return NextResponse.json({ error: "Processing batches are PET-only for now" }, { status: 400 });
+      }
       const batch = sqlite.prepare("SELECT * FROM processing_batches WHERE id=? AND mode=?").get(s.batchId,s.mode) as any;
       if (!batch) return NextResponse.json({error:"Processing batch not found"},{status:404});
       if (Number(batch.total_output_kg) > 0 || Number(batch.waste_kg) > 0) {
@@ -1311,8 +1372,8 @@ export async function POST(req: NextRequest) {
         mode: modeSchema, customerName: z.string().trim().min(1), phone: z.string().trim().optional().default(""),
         location: z.string().trim().optional().default(""),
         items: z.array(z.object({
-          materialCategory: z.enum(["Natural Bottles","Red Bottles"]),
-          materialVariant: z.enum(["Green","White","Red","White Milk"]),
+          materialCategory: z.string().trim().min(1),
+          materialVariant: z.string().trim().optional().default(""),
           quantityKg: z.number().positive(),
           ratePerKg: z.number().nonnegative()
         })).min(1),
@@ -1327,24 +1388,36 @@ export async function POST(req: NextRequest) {
       const receiptDate = s.paymentDate || s.saleDate;
 
       for (const item of s.items) {
-        if (item.materialCategory === "Natural Bottles" && !["Green","White","White Milk"].includes(item.materialVariant)) {
-          return NextResponse.json({ error: "Natural Bottles can be Green, White or White Milk" }, { status: 400 });
-        }
-        if (item.materialCategory === "Red Bottles" && item.materialVariant !== "Red") {
-          return NextResponse.json({ error: "Red Bottles must use Red type" }, { status: 400 });
+        if (s.mode === "PET") {
+          if (!["Natural Bottles","Red Bottles"].includes(item.materialCategory)) {
+            return NextResponse.json({ error: "PET sales use Natural Bottles or Red Bottles" }, { status: 400 });
+          }
+          if (item.materialCategory === "Natural Bottles" && !["Green","White","White Milk",""].includes(item.materialVariant)) {
+            return NextResponse.json({ error: "Natural Bottles can be Green, White or White Milk" }, { status: 400 });
+          }
+          if (item.materialCategory === "Red Bottles" && item.materialVariant !== "Red") {
+            return NextResponse.json({ error: "Red Bottles must use Red type" }, { status: 400 });
+          }
+        } else {
+          try { requireActivePlasticType(item.materialCategory); }
+          catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid plastic type" }, { status: 400 }); }
         }
       }
 
       const lineTotals = s.items.map(item => Math.round(item.quantityKg * item.ratePerKg * 100) / 100);
       const grossAmount = Math.round(lineTotals.reduce((n, x) => n + x, 0) * 100) / 100;
       const totalWeight = Math.round(s.items.reduce((n, x) => n + x.quantityKg, 0) * 1000) / 1000;
-      const labourCharges = Math.round(totalWeight * 2 * 100) / 100;
+      const labourCharges = s.mode === "PET" ? Math.round(totalWeight * 2 * 100) / 100 : 0;
       const loadingCharges = s.loadingCharges;
       const total = Math.round(Math.max(0, grossAmount - labourCharges - loadingCharges) * 100) / 100;
       const requiredByMaterial = new Map<string, number>();
-      for (const item of s.items) {
-        const materialName = saleMaterialName(item.materialCategory,item.materialVariant);
-        requiredByMaterial.set(materialName,(requiredByMaterial.get(materialName)||0)+item.quantityKg);
+      try {
+        for (const item of s.items) {
+          const materialName = resolveSaleStockName(s.mode, item.materialCategory, item.materialVariant || "");
+          requiredByMaterial.set(materialName,(requiredByMaterial.get(materialName)||0)+item.quantityKg);
+        }
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid material" }, { status: 400 });
       }
       for (const [materialName,requiredKg] of requiredByMaterial) {
         const available = getAvailableStock(s.mode,materialName,s.saleDate);
@@ -1356,28 +1429,30 @@ export async function POST(req: NextRequest) {
       const received = Math.min(s.receivedAmount ?? total, total);
       const credit = Math.round((total - received) * 100) / 100;
       const primary = s.items[0];
+      const primaryVariant = s.mode === "PLASTIC" ? "" : (s.items.length===1?primary.materialVariant:"MIXED");
       const r = sqlite.prepare("INSERT INTO sales (mode,customer_name,phone,location,material_category,material_variant,quantity_kg,rate_per_kg,gross_amount,labour_charges,loading_charges,total_amount,received_amount,credit_amount,sale_date,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .run(s.mode,s.customerName,s.phone,s.location,primary.materialCategory,s.items.length===1?primary.materialVariant:"MIXED",totalWeight,0,grossAmount,labourCharges,loadingCharges,total,received,credit,s.saleDate,s.notes,nowIso(),nowIso());
+        .run(s.mode,s.customerName,s.phone,s.location,primary.materialCategory,primaryVariant,totalWeight,0,grossAmount,labourCharges,loadingCharges,total,received,credit,s.saleDate,s.notes,nowIso(),nowIso());
       const saleId = Number(r.lastInsertRowid);
 
       for (let i = 0; i < s.items.length; i++) {
         const item = s.items[i];
+        const variant = s.mode === "PLASTIC" ? "" : item.materialVariant;
         sqlite.prepare("INSERT INTO sale_items (sale_id,material_category,material_variant,quantity_kg,rate_per_kg,amount) VALUES (?,?,?,?,?,?)")
-          .run(saleId,item.materialCategory,item.materialVariant,item.quantityKg,item.ratePerKg,lineTotals[i]);
-        const materialName = saleMaterialName(item.materialCategory, item.materialVariant);
+          .run(saleId,item.materialCategory,variant,item.quantityKg,item.ratePerKg,lineTotals[i]);
+        const materialName = resolveSaleStockName(s.mode, item.materialCategory, item.materialVariant || "");
         sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,purchase_id,sale_id,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
           .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],null,saleId,s.saleDate,"SALE #"+saleId+(s.notes ? " - "+s.notes : ""),nowIso());
       }
       if (received > 0) sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,saleId,received,receiptDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
-      // Contractor earns ₹2/kg on PET/PLASTIC sale labour charges.
-      const earn = creditContractorEarn({
+      // Contractor earns ₹2/kg on PET sale labour only.
+      const earn = s.mode === "PET" ? creditContractorEarn({
         mode: s.mode,
         entryType: "EARN_SALE",
         kg: totalWeight,
         saleId,
         entryDate: s.saleDate,
         notes: `Sale #${saleId} labour earn`,
-      });
+      }) : null;
       return json({ok:true,id:saleId,grossAmount,labourCharges,loadingCharges,total,received,credit,contractorEarn:earn});
     }
 
@@ -1389,8 +1464,8 @@ export async function POST(req: NextRequest) {
         phone: z.string().trim().optional().default(""),
         location: z.string().trim().optional().default(""),
         items: z.array(z.object({
-          materialCategory: z.enum(["Natural Bottles","Red Bottles"]),
-          materialVariant: z.enum(["Green","White","Red","White Milk"]),
+          materialCategory: z.string().trim().min(1),
+          materialVariant: z.string().trim().optional().default(""),
           quantityKg: z.number().positive(),
           ratePerKg: z.number().nonnegative()
         })).min(1),
@@ -1405,18 +1480,26 @@ export async function POST(req: NextRequest) {
       if (!existing) return NextResponse.json({error:"Sale not found"},{status:404});
 
       for (const item of s.items) {
-        if (item.materialCategory === "Natural Bottles" && !["Green","White","White Milk"].includes(item.materialVariant)) {
-          return NextResponse.json({error:"Natural Bottles can be Green, White or White Milk"},{status:400});
-        }
-        if (item.materialCategory === "Red Bottles" && item.materialVariant !== "Red") {
-          return NextResponse.json({error:"Red Bottles must use Red type"},{status:400});
+        if (s.mode === "PET") {
+          if (!["Natural Bottles","Red Bottles"].includes(item.materialCategory)) {
+            return NextResponse.json({error:"PET sales use Natural Bottles or Red Bottles"},{status:400});
+          }
+          if (item.materialCategory === "Natural Bottles" && !["Green","White","White Milk",""].includes(item.materialVariant)) {
+            return NextResponse.json({error:"Natural Bottles can be Green, White or White Milk"},{status:400});
+          }
+          if (item.materialCategory === "Red Bottles" && item.materialVariant !== "Red") {
+            return NextResponse.json({error:"Red Bottles must use Red type"},{status:400});
+          }
+        } else {
+          try { requireActivePlasticType(item.materialCategory); }
+          catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid plastic type" }, { status: 400 }); }
         }
       }
 
       const lineTotals = s.items.map(item => Math.round(item.quantityKg * item.ratePerKg * 100) / 100);
       const grossAmount = Math.round(lineTotals.reduce((n,x)=>n+x,0) * 100) / 100;
       const totalWeight = Math.round(s.items.reduce((n,x)=>n+x.quantityKg,0) * 1000) / 1000;
-      const labourCharges = Math.round(totalWeight * 2 * 100) / 100;
+      const labourCharges = s.mode === "PET" ? Math.round(totalWeight * 2 * 100) / 100 : 0;
       const loadingCharges = s.loadingCharges;
       const total = Math.round(Math.max(0,grossAmount-labourCharges-loadingCharges) * 100) / 100;
       if (Number(existing.received_amount) > total + 0.005) {
@@ -1425,7 +1508,7 @@ export async function POST(req: NextRequest) {
 
       const requiredByMaterial = new Map<string, number>();
       for (const item of s.items) {
-        const materialName = saleMaterialName(item.materialCategory,item.materialVariant);
+        const materialName = resolveSaleStockName(s.mode, item.materialCategory, item.materialVariant || "");
         requiredByMaterial.set(materialName,(requiredByMaterial.get(materialName)||0)+item.quantityKg);
       }
       for (const [materialName,requiredKg] of requiredByMaterial) {
@@ -1435,17 +1518,19 @@ export async function POST(req: NextRequest) {
         }
       }
 
+        const primaryVariant = s.mode === "PLASTIC" ? "" : (s.items.length===1?s.items[0].materialVariant:"MIXED");
         sqlite.prepare("UPDATE sales SET customer_name=?,phone=?,location=?,material_category=?,material_variant=?,quantity_kg=?,rate_per_kg=?,gross_amount=?,labour_charges=?,loading_charges=?,total_amount=?,credit_amount=?,sale_date=?,notes=?,updated_at=? WHERE id=? AND mode=?")
-          .run(s.customerName,s.phone,s.location,s.items[0].materialCategory,s.items.length===1?s.items[0].materialVariant:"MIXED",totalWeight,0,grossAmount,labourCharges,loadingCharges,total,Math.round((total-Number(existing.received_amount))*100)/100,s.saleDate,s.notes,nowIso(),s.saleId,s.mode);
+          .run(s.customerName,s.phone,s.location,s.items[0].materialCategory,primaryVariant,totalWeight,0,grossAmount,labourCharges,loadingCharges,total,Math.round((total-Number(existing.received_amount))*100)/100,s.saleDate,s.notes,nowIso(),s.saleId,s.mode);
 
         sqlite.prepare("DELETE FROM sale_items WHERE sale_id=?").run(s.saleId);
         sqlite.prepare("DELETE FROM inventory_transactions WHERE sale_id=? AND transaction_type='ADJUSTMENT'").run(s.saleId);
 
         for (let i=0;i<s.items.length;i++) {
           const item=s.items[i];
+          const variant = s.mode === "PLASTIC" ? "" : item.materialVariant;
           sqlite.prepare("INSERT INTO sale_items (sale_id,material_category,material_variant,quantity_kg,rate_per_kg,amount) VALUES (?,?,?,?,?,?)")
-            .run(s.saleId,item.materialCategory,item.materialVariant,item.quantityKg,item.ratePerKg,lineTotals[i]);
-          const materialName=saleMaterialName(item.materialCategory,item.materialVariant);
+            .run(s.saleId,item.materialCategory,variant,item.quantityKg,item.ratePerKg,lineTotals[i]);
+          const materialName=resolveSaleStockName(s.mode, item.materialCategory, item.materialVariant || "");
           sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,purchase_id,sale_id,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
             .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],null,s.saleId,s.saleDate,"SALE #"+s.saleId+(s.notes ? " - "+s.notes : ""),nowIso());
         }
@@ -1455,16 +1540,16 @@ export async function POST(req: NextRequest) {
             .run(s.receivedBy ?? null,s.paymentMode ?? null,s.saleId);
         }
 
-      // Keep sale-linked contractor earn in sync with updated kg.
+      // Keep sale-linked contractor earn in sync with updated kg (PET only).
       sqlite.prepare("DELETE FROM processing_contractor_ledger WHERE sale_id=? AND entry_type='EARN_SALE'").run(s.saleId);
-      const earn = creditContractorEarn({
+      const earn = s.mode === "PET" ? creditContractorEarn({
         mode: s.mode,
         entryType: "EARN_SALE",
         kg: totalWeight,
         saleId: s.saleId,
         entryDate: s.saleDate,
         notes: `Sale #${s.saleId} labour earn`,
-      });
+      }) : null;
 
       return json({ok:true,id:s.saleId,grossAmount,labourCharges,loadingCharges,total,received:Number(existing.received_amount),credit:Math.round((total-Number(existing.received_amount))*100)/100,contractorEarn:earn});
     }
@@ -1509,7 +1594,7 @@ export async function POST(req: NextRequest) {
       }).parse(body);
       let stockName: string;
       try {
-        stockName = purchaseStockName(s.materialName, s.materialVariant);
+        stockName = purchaseStockName(s.mode, s.materialName, s.materialVariant);
       } catch (error) {
         return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid material" }, { status: 400 });
       }

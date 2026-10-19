@@ -7,7 +7,7 @@ import { FundingSelect } from "@/components/funding-select";
 import { PersonSelect } from "@/components/person-select";
 import { useBusinessMode } from "@/components/business-mode-provider";
 import type { FundingSource } from "@/lib/funding";
-import { LABOUR_TASKS, type LabourTask } from "@/lib/labour-tasks";
+import { labourTasksForMode, type LabourTask } from "@/lib/labour-tasks";
 import {
   CheckSquare, Pencil, Plus, Square, Trash2, Users, WalletCards, Factory, X,
 } from "lucide-react";
@@ -96,6 +96,7 @@ function attendanceLabel(type?: string, hours?: number) {
 
 export default function ProcessingPage() {
   const { mode } = useBusinessMode();
+  const tasks = labourTasksForMode(mode);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [labour, setLabour] = useState<Labour[]>([]);
   const [contractors, setContractors] = useState<Contractor[]>([]);
@@ -108,7 +109,7 @@ export default function ProcessingPage() {
   const [dailyRate, setDailyRate] = useState("");
   const [halfDayRate, setHalfDayRate] = useState("");
   const [selectedWorkerId, setSelectedWorkerId] = useState<number | null>(null);
-  const [taskType, setTaskType] = useState("Cap Removal");
+  const [taskType, setTaskType] = useState<string>(tasks[0]);
   const [attendanceType, setAttendanceType] = useState<AttendanceType>("FULL_DAY");
   const [hours, setHours] = useState("");
   const [amount, setAmount] = useState("");
@@ -142,6 +143,13 @@ export default function ProcessingPage() {
     const summaries = data.processingContractorSummaries ?? data.processingContractors ?? [];
     setContractors(summaries.filter((c) => c.mode === mode));
     setLedger((data.processingContractorLedger ?? []).filter((row) => row.mode === mode));
+  }, [mode]);
+
+  useEffect(() => {
+    const list = labourTasksForMode(mode);
+    setTaskType(list[0]);
+    setSelected([]);
+    setEditEntry(null);
   }, [mode]);
 
   useEffect(() => {
@@ -458,7 +466,9 @@ export default function ProcessingPage() {
   return (
     <AdminShell
       title="Labour Management"
-      subtitle={`${mode} daily labour attendance + PET processing contractor (₹2/kg) — syncs with Accounts`}
+      subtitle={mode === "PET"
+        ? `${mode} daily labour + processing contractor (₹2/kg) — syncs with Accounts`
+        : `${mode} daily labour — attendance, wages and advances. Payment done by syncs to Accounts.`}
       actions={
         <button type="button" className="ad-btn ad-btn-primary" onClick={() => setShowAdd(true)}>
           <Plus size={15} /> Add Labour
@@ -496,7 +506,8 @@ export default function ProcessingPage() {
         </div>
       </div>
 
-      {/* Processing contractor */}
+      {/* Processing contractor — PET only */}
+      {mode === "PET" && (
       <section className="mb-5 ad-card p-5 ad-fade-in">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -615,6 +626,7 @@ export default function ProcessingPage() {
           </table>
         </div>
       </section>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="ad-card p-4">
@@ -748,9 +760,9 @@ export default function ProcessingPage() {
                 />
                 <AdminSelect
                   label="Task"
-                  value={editEntry.task_type || "Cap Removal"}
+                  value={editEntry.task_type || tasks[0]}
                   onChange={(v) => setEditEntry({ ...editEntry, task_type: v })}
-                  options={LABOUR_TASKS.map((t) => ({ value: t, label: t }))}
+                  options={tasks.map((t) => ({ value: t, label: t }))}
                 />
                 {(editEntry.payment_kind || "WAGE") !== "ADVANCE" && (
                   <AdminSelect
@@ -841,7 +853,7 @@ export default function ProcessingPage() {
                   label="Task"
                   value={taskType}
                   onChange={setTaskType}
-                  options={LABOUR_TASKS.map((t) => ({ value: t, label: t }))}
+                  options={tasks.map((t) => ({ value: t, label: t }))}
                 />
                 {attendanceType === "CUSTOM_HOURS" && paymentKind !== "ADVANCE" && (
                   <label className="ad-field">

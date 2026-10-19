@@ -48,6 +48,8 @@ export default function InventoryPage() {
   const [adjust,setAdjust] = useState({materialId:"",materialName:"",quantityKg:"",amount:"",notes:""});
   const [creditPay,setCreditPay] = useState<{purchaseId:number; amount:string; paidBy:string; fundingSource:FundingSource; paymentDate:string} | null>(null);
   const [salePay,setSalePay] = useState<{saleId:number; amount:string; receivedBy:string; paymentMode:string} | null>(null);
+  const [plasticTypeName,setPlasticTypeName] = useState("");
+  const [plasticTypeNotes,setPlasticTypeNotes] = useState("");
 
   async function load() {
     const r=await fetch("/api/admin/inventory");
@@ -55,8 +57,29 @@ export default function InventoryPage() {
     setData(await r.json());
   }
   useEffect(()=>{load()},[]);
+  useEffect(() => {
+    if (mode === "PLASTIC") {
+      const first = (data?.plasticMaterialTypes || []).find((t: any) => t.active)?.name || "";
+      setPurchase((p) => ({ ...p, materialName: first, materialVariant: "" }));
+      setSaleItems((items) => items.map((it) => ({
+        ...it,
+        materialCategory: it.materialCategory && !(it.materialCategory === "Natural Bottles" || it.materialCategory === "Red Bottles")
+          ? it.materialCategory
+          : first,
+        materialVariant: "",
+      })));
+    } else {
+      setPurchase((p) => ({
+        ...p,
+        materialName: p.materialName === "Natural Bottles" || p.materialName === "Red Bottles" ? p.materialName : "Natural Bottles",
+        materialVariant: p.materialName === "Red Bottles" ? "Red" : (p.materialVariant || "Mixed"),
+      }));
+    }
+  }, [mode, data?.plasticMaterialTypes]);
 
   const materials = useMemo(()=> (data?.materials||[]).filter((m:Material)=>m.id),[data]);
+  const plasticTypes = useMemo(() => (data?.plasticMaterialTypes || []).filter((t: any) => t.active), [data]);
+  const allPlasticTypes = useMemo(() => data?.plasticMaterialTypes || [], [data]);
   const filteredInventory=(data?.inventory||[]).filter((x:any)=>x.mode===mode);
   const filteredPurchases=(data?.purchases||[]).filter((x:Purchase)=>x.mode===mode);
   const filteredBorrowings=(data?.borrowings||[]).filter((x:Borrowing)=>x.mode===mode);
@@ -64,7 +87,7 @@ export default function InventoryPage() {
   const currentKg=filteredInventory.reduce((n:any,x:any)=>n+Number(x.quantityKg||0),0);
   const saleGrossAmount=saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0)*(Number(x.ratePerKg)||0),0);
   const saleTotalWeight=saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0),0);
-  const saleLabourCharges=saleTotalWeight*2;
+  const saleLabourCharges=mode==="PET"?saleTotalWeight*2:0;
   const saleLoadingCharges=Number(sale.loadingCharges||0);
   const saleFinalAmount=Math.max(0,saleGrossAmount-saleLabourCharges-saleLoadingCharges);
 
@@ -77,9 +100,23 @@ export default function InventoryPage() {
     return true;
   }
 
+  async function savePlasticType() {
+    if (!plasticTypeName.trim()) { setMessage("Enter a plastic material type name"); return; }
+    const ok = await post("upsertPlasticMaterialType", { name: plasticTypeName.trim(), notes: plasticTypeNotes });
+    if (ok) { setPlasticTypeName(""); setPlasticTypeNotes(""); }
+  }
+
+  function defaultSaleItem() {
+    if (mode === "PLASTIC") {
+      const first = plasticTypes[0]?.name || "";
+      return { materialCategory: first, materialVariant: "", quantityKg: "", ratePerKg: "" };
+    }
+    return { materialCategory: "Natural Bottles", materialVariant: "Green", quantityKg: "", ratePerKg: "" };
+  }
+
   function validatePurchaseForm() {
     if (!purchase.supplierId) return "Please select a Vendor";
-    if (!purchase.materialName) return "Please select Material (Natural or Red)";
+    if (!purchase.materialName) return mode==="PLASTIC" ? "Please select a Plastic material type" : "Please select Material (Natural or Red)";
     const qty = Number(purchase.quantityKg);
     if (!(qty > 0)) return "Please enter Quantity (kg) greater than 0";
     const rate = Number(purchase.ratePerKg);
@@ -94,7 +131,7 @@ export default function InventoryPage() {
   function resetSaleForm() {
     setEditingSale(null);
     setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",saleDate:new Date().toISOString().slice(0,10),notes:""});
-    setSaleItems([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
+    setSaleItems([defaultSaleItem()]);
   }
 
   async function addSale() {
@@ -403,20 +440,34 @@ export default function InventoryPage() {
               ...(data.suppliers||[]).map((s:Supplier)=>({ value: String(s.id), label: s.name })),
             ]}
           />
-          <AdminSelect
-            label="Material"
-            required
-            placeholder="Select material"
-            value={purchase.materialName}
-            onChange={(materialName)=>{
-              setPurchase({...purchase,materialName,materialVariant:materialName==="Red Bottles"?"Red":"Mixed"});
-            }}
-            options={[
-              { value: "", label: "Select material" },
-              { value: "Natural Bottles", label: "Natural (mixed)" },
-              { value: "Red Bottles", label: "Red" },
-            ]}
-          />
+          {mode==="PLASTIC" ? (
+            <AdminSelect
+              label="Plastic material type"
+              required
+              placeholder="Select type"
+              value={purchase.materialName}
+              onChange={(materialName)=>setPurchase({...purchase,materialName,materialVariant:""})}
+              options={[
+                { value: "", label: "Select type" },
+                ...plasticTypes.map((t:any)=>({ value: t.name, label: t.name })),
+              ]}
+            />
+          ) : (
+            <AdminSelect
+              label="Material"
+              required
+              placeholder="Select material"
+              value={purchase.materialName}
+              onChange={(materialName)=>{
+                setPurchase({...purchase,materialName,materialVariant:materialName==="Red Bottles"?"Red":"Mixed"});
+              }}
+              options={[
+                { value: "", label: "Select material" },
+                { value: "Natural Bottles", label: "Natural (mixed)" },
+                { value: "Red Bottles", label: "Red" },
+              ]}
+            />
+          )}
           <label className="ad-field">
             <span className="ad-field-label">Purchase date *</span>
             <input className="ad-input" type="date" value={purchase.purchaseDate} onChange={e=>setPurchase({...purchase,purchaseDate:e.target.value})}/>
@@ -468,6 +519,31 @@ export default function InventoryPage() {
             <button className="ad-btn ad-btn-primary" onClick={editingPurchase ? editPurchase : addPurchase}>{editingPurchase ? "Update purchase" : "Save purchase"}</button>
             {editingPurchase&&<button className="ad-btn ad-btn-ghost" onClick={()=>{setEditingPurchase(null);setPurchase({...emptyPurchase})}}>Cancel</button>}
           </div>
+
+    {mode==="PLASTIC" && (
+      <div className="mb-5 ad-card p-4">
+        <h2 className="mb-1 font-semibold">Plastic material types</h2>
+        <p className="ad-muted mb-3 text-xs">Add types like Rangin Plastic PP, Mix PP Dibba, Safed Plastic DB. These become stock names for buy/sell.</p>
+        <div className="grid gap-2 md:grid-cols-4">
+          <input className="ad-input" placeholder="Type name" value={plasticTypeName} onChange={e=>setPlasticTypeName(e.target.value)}/>
+          <input className="ad-input md:col-span-2" placeholder="Notes (optional)" value={plasticTypeNotes} onChange={e=>setPlasticTypeNotes(e.target.value)}/>
+          <button className="ad-btn ad-btn-primary" onClick={()=>void savePlasticType()}>Add type</button>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          {allPlasticTypes.length ? allPlasticTypes.map((t:any)=>(
+            <button
+              key={t.id}
+              type="button"
+              className={"rounded-lg border px-2 py-1 "+(t.active?"border-[var(--ad-accent)]":"border-[var(--ad-border)] opacity-60")}
+              onClick={()=>void post("setPlasticMaterialTypeStatus",{typeId:t.id,active:!t.active})}
+              title={t.active?"Click to disable":"Click to enable"}
+            >
+              {t.name}{t.active?"":" · off"}
+            </button>
+          )) : <span className="ad-muted">No types yet — add the first one above.</span>}
+        </div>
+      </div>
+    )}
         </div>
         <p className="mt-3 text-xs ad-muted">Purchase date = material aaya. Payment date = vendor ko paisa diya (often after sale cash). Accounts uses payment date.</p>
       </div>
@@ -568,22 +644,31 @@ export default function InventoryPage() {
         </div>
         <div className="mt-3 space-y-2">
           {saleItems.map((item:any,i:number)=><div key={i} className="grid gap-2 md:grid-cols-6">
-            <select className="ad-input" value={item.materialCategory} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialCategory:e.target.value,materialVariant:e.target.value==="Red Bottles"?"Red":"Green"}:x))}>
-              <option>Natural Bottles</option><option>Red Bottles</option>
-            </select>
-            <select className="ad-input" value={item.materialVariant} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialVariant:e.target.value}:x))}>
-              {item.materialCategory==="Red Bottles" ? <option value="Red">Red</option> : <><option value="Green">Green</option><option value="White">White</option><option value="White Milk">White Milk</option></>}
-            </select>
+            {mode==="PLASTIC" ? (
+              <select className="ad-input" value={item.materialCategory} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialCategory:e.target.value,materialVariant:""}:x))}>
+                <option value="">Plastic type</option>
+                {plasticTypes.map((t:any)=><option key={t.id} value={t.name}>{t.name}</option>)}
+              </select>
+            ) : (
+              <>
+                <select className="ad-input" value={item.materialCategory} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialCategory:e.target.value,materialVariant:e.target.value==="Red Bottles"?"Red":"Green"}:x))}>
+                  <option>Natural Bottles</option><option>Red Bottles</option>
+                </select>
+                <select className="ad-input" value={item.materialVariant} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialVariant:e.target.value}:x))}>
+                  {item.materialCategory==="Red Bottles" ? <option value="Red">Red</option> : <><option value="Green">Green</option><option value="White">White</option><option value="White Milk">White Milk</option></>}
+                </select>
+              </>
+            )}
             <input className="ad-input" type="number" placeholder="Quantity (kg)" value={item.quantityKg} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,quantityKg:e.target.value}:x))}/>
             <input className="ad-input" type="number" placeholder="Rate / kg" value={item.ratePerKg} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,ratePerKg:e.target.value}:x))}/>
             <span className="ad-input flex items-center text-sm">₹{((Number(item.quantityKg)||0)*(Number(item.ratePerKg)||0)).toFixed(2)}</span>
             {saleItems.length>1?<button className="ad-btn ad-btn-ghost" onClick={()=>setSaleItems(saleItems.filter((_:any,j:number)=>j!==i))}>Remove</button>:<span/>}
           </div>)}
-          <button className="ad-btn ad-btn-ghost" onClick={()=>setSaleItems([...saleItems,{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}])}>+ Add Material</button>
+          <button className="ad-btn ad-btn-ghost" onClick={()=>setSaleItems([...saleItems,defaultSaleItem()])}>+ Add Material</button>
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-4">
           <span className="ad-input flex items-center font-semibold">Gross Sale: ₹{saleGrossAmount.toFixed(2)}</span>
-          <span className="ad-input flex items-center">Labour Charges (₹2/kg): -₹{saleLabourCharges.toFixed(2)}</span>
+          {mode==="PET" && <span className="ad-input flex items-center">Labour Charges (₹2/kg): -₹{saleLabourCharges.toFixed(2)}</span>}
           <input className="ad-input" type="number" min="0" placeholder="Loading Charges" value={sale.loadingCharges||""} onChange={e=>setSale({...sale,loadingCharges:e.target.value})}/>
           <span className="ad-input flex items-center font-semibold">Final Amount: ₹{saleFinalAmount.toFixed(2)}</span>
           <input className="ad-input" type="number" min="0" max={saleFinalAmount} disabled={editingSale!==null} placeholder={editingSale?"Received payment (history)":"Total received payment"} value={sale.receivedAmount} onChange={e=>setSale({...sale,receivedAmount:e.target.value})}/>
@@ -592,7 +677,7 @@ export default function InventoryPage() {
           <input className="ad-input md:col-span-2" placeholder="Notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
           <button className="ad-btn ad-btn-primary" onClick={editingSale ? editSale : addSale}>{editingSale ? "Update Sale" : "Save Full Truck Sale"}</button>{editingSale&&<button className="ad-btn ad-btn-ghost" onClick={resetSaleForm}>Cancel</button>}
         </div>
-        <p className="mt-2 text-xs ad-muted">Processing labour is automatically ₹2/kg for every sale. Loading charges are sale-specific and paid after the sale. GST is intentionally not included for now.</p>
+        <p className="mt-2 text-xs ad-muted">{mode==="PET"?"Processing labour is automatically ₹2/kg for every PET sale.":"Plastic sales use material types with no ₹2/kg process labour deduction."} Loading charges are sale-specific. GST is intentionally not included for now.</p>
       </div>
       {salePay && <div className="ad-card p-4 border border-[var(--ad-accent)]">
         <h3 className="mb-3 text-sm font-semibold">Receive sale payment — sale #{salePay.saleId}</h3>

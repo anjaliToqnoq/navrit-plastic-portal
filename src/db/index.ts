@@ -221,7 +221,7 @@ function createDb() {
       customer_name TEXT NOT NULL,
       phone TEXT NOT NULL DEFAULT '',
       location TEXT NOT NULL DEFAULT '',
-      material_category TEXT NOT NULL CHECK(material_category IN ('Natural Bottles','Red Bottles')),
+      material_category TEXT NOT NULL,
       material_variant TEXT NOT NULL DEFAULT '',
       quantity_kg REAL NOT NULL CHECK(quantity_kg > 0),
       rate_per_kg REAL NOT NULL CHECK(rate_per_kg >= 0),
@@ -424,11 +424,71 @@ function createDb() {
     "ALTER TABLE partner_settlements ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE manual_labour_workers ADD COLUMN daily_rate REAL NOT NULL DEFAULT 0",
     "ALTER TABLE manual_labour_workers ADD COLUMN half_day_rate REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE manual_labour_workers ADD COLUMN pay_model TEXT NOT NULL DEFAULT 'DAILY'",
     "ALTER TABLE processing_manual_labour ADD COLUMN attendance_type TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE processing_manual_labour ADD COLUMN hours REAL NOT NULL DEFAULT 0",
     "ALTER TABLE processing_manual_labour ADD COLUMN payment_kind TEXT NOT NULL DEFAULT 'WAGE'",
   ]) {
     try { sqlite.exec(migration); } catch { /* column already exists */ }
+  }
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS plastic_material_types (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL DEFAULT 'PLASTIC' CHECK(mode = 'PLASTIC'),
+      name TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(mode, name)
+    );
+    CREATE INDEX IF NOT EXISTS plastic_material_types_active_idx
+      ON plastic_material_types(mode, active, sort_order, name);
+  `);
+  // Allow Plastic freeform material names on sales (drop Natural/Red-only CHECK).
+  try {
+    const salesSql = String((sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='sales'").get() as { sql?: string } | undefined)?.sql || "");
+    if (salesSql.includes("Natural Bottles") && salesSql.includes("CHECK")) {
+      sqlite.exec("PRAGMA foreign_keys=OFF");
+      sqlite.exec("BEGIN");
+      sqlite.exec(`
+        CREATE TABLE sales_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+          customer_name TEXT NOT NULL,
+          phone TEXT NOT NULL DEFAULT '',
+          location TEXT NOT NULL DEFAULT '',
+          material_category TEXT NOT NULL,
+          material_variant TEXT NOT NULL DEFAULT '',
+          quantity_kg REAL NOT NULL CHECK(quantity_kg > 0),
+          rate_per_kg REAL NOT NULL CHECK(rate_per_kg >= 0),
+          total_amount REAL NOT NULL CHECK(total_amount >= 0),
+          gross_amount REAL NOT NULL DEFAULT 0,
+          labour_charges REAL NOT NULL DEFAULT 0,
+          loading_charges REAL NOT NULL DEFAULT 0,
+          received_amount REAL NOT NULL DEFAULT 0,
+          credit_amount REAL NOT NULL DEFAULT 0,
+          sale_date TEXT NOT NULL,
+          notes TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      sqlite.exec(`
+        INSERT INTO sales_new
+        (id,mode,customer_name,phone,location,material_category,material_variant,quantity_kg,rate_per_kg,total_amount,gross_amount,labour_charges,loading_charges,received_amount,credit_amount,sale_date,notes,created_at,updated_at)
+        SELECT id,mode,customer_name,phone,location,material_category,material_variant,quantity_kg,rate_per_kg,total_amount,gross_amount,labour_charges,loading_charges,received_amount,credit_amount,sale_date,notes,created_at,updated_at
+        FROM sales
+      `);
+      sqlite.exec("DROP TABLE sales");
+      sqlite.exec("ALTER TABLE sales_new RENAME TO sales");
+      sqlite.exec("COMMIT");
+      sqlite.exec("PRAGMA foreign_keys=ON");
+    }
+  } catch {
+    try { sqlite.exec("ROLLBACK"); } catch { /* ignore */ }
+    try { sqlite.exec("PRAGMA foreign_keys=ON"); } catch { /* ignore */ }
   }
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS processing_contractors (

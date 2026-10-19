@@ -339,8 +339,8 @@ export default function ProcessingPage() {
             {!active.length && (
               <p className="ad-muted text-sm">
                 {mode === "PLASTIC"
-                  ? "Add workers for Sorting, Loading, or Plastic grinding."
-                  : "Add workers for Cap Removal, Sorting, or Plastic grinding."}
+                  ? "Add workers for Plastic sorting, Plastic loading, or Plastic grinding."
+                  : "Add workers for PET sorting, PET loading, Red bottle cap removal, or Bale creation."}
               </p>
             )}
           </div>

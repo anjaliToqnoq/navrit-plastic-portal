@@ -1246,7 +1246,7 @@ export async function POST(req: NextRequest) {
           const daily = Number(worker.daily_rate || 0);
           const half = Number(worker.half_day_rate || 0) || Math.round((daily / 2) * 100) / 100;
           const otHours = Number(s.hours || 0);
-          const otPay = otHours > 0 ? Math.round((daily / 8) * otHours * 100) / 100 : 0;
+          const otPay = otHours > 0 ? Math.round((daily / 9) * otHours * 100) / 100 : 0;
           if (s.attendanceType === "FULL_DAY") amount = Math.round((daily + otPay) * 100) / 100;
           else if (s.attendanceType === "HALF_DAY") amount = Math.round((half + otPay) * 100) / 100;
           else amount = otPay;

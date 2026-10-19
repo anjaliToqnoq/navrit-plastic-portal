@@ -70,7 +70,7 @@ function attendanceDays(entry: Labour) {
   const kind = entry.payment_kind || "WAGE";
   if (kind !== "ATTENDANCE") return 0;
   if (entry.attendance_type === "HALF_DAY") return 0.5;
-  if (entry.attendance_type === "CUSTOM_HOURS") return Number(entry.hours || 0) / 8;
+  if (entry.attendance_type === "CUSTOM_HOURS") return Number(entry.hours || 0) / 9;
   return 1;
 }
 
@@ -174,7 +174,7 @@ export default function ProcessingPage() {
     const daily = Number(worker.daily_rate || 0);
     const half = Number(worker.half_day_rate || 0) || Math.round((daily / 2) * 100) / 100;
     const ot = Number(overtimeHours || 0);
-    const otPay = ot > 0 ? Math.round((daily / 8) * ot * 100) / 100 : 0;
+    const otPay = ot > 0 ? Math.round((daily / 9) * ot * 100) / 100 : 0;
     const base = attendanceType === "HALF_DAY" ? half : daily;
     return Math.round((base + otPay) * 100) / 100;
   }
@@ -661,7 +661,7 @@ export default function ProcessingPage() {
 
             {paymentKind === "ATTENDANCE" && Number(overtimeHours || 0) > 0 && (
               <p className="ad-muted text-xs">
-                OT is added on top of full/half day at (daily rate ÷ 8) × hours.
+                OT is added on top of full/half day at (daily rate ÷ 9) × hours.
               </p>
             )}
 
@@ -898,7 +898,7 @@ export default function ProcessingPage() {
               value={dailyRate}
               onChange={(e) => setDailyRate(e.target.value)}
             />
-            <p className="ad-muted text-xs">Half-day rate is set to half of daily automatically. OT = daily ÷ 8 × hours.</p>
+            <p className="ad-muted text-xs">Half-day rate is set to half of daily automatically. OT = daily ÷ 9 × hours.</p>
             <button type="submit" className="ad-btn ad-btn-primary w-full" disabled={busy}>
               Save worker
             </button>

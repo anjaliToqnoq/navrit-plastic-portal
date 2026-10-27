@@ -757,7 +757,7 @@ export default function AccountsPage() {
                 className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)]"
                 onClick={() => openDetail(
                   "Partner settlements",
-                  allTransactions.filter((t) => t.type === "Partner settlement" || t.type === "Settlement payout"),
+                  allTransactions.filter((t) => t.type === "Partner settlement"),
                   "#account-transactions",
                   "See transactions below"
                 )}

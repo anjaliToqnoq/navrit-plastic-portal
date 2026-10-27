@@ -35,6 +35,7 @@ export default function InventoryPage() {
   const [tab,setTab] = useState("purchases");
   const [expense,setExpense] = useState({expenseType:"Electricity",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),billingMonth:new Date().toISOString().slice(0,7),billingStartDate:"",billingEndDate:"",paidBy:"",fundingSource:"COMPANY" as FundingSource});
   const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",saleDate:new Date().toISOString().slice(0,10),notes:""});
+  const [useAdvance,setUseAdvance] = useState(true);
   const [editingSale,setEditingSale] = useState<number|null>(null);
   const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
 
@@ -94,6 +95,9 @@ export default function InventoryPage() {
   const saleLabourCharges=mode==="PET"?saleTotalWeight*2:0;
   const saleLoadingCharges=Number(sale.loadingCharges||0);
   const saleFinalAmount=Math.max(0,saleGrossAmount-saleLabourCharges-saleLoadingCharges);
+  const buyerAdvanceAvail=((data?.buyerSummary||[]) as any[]).find((b:any)=>b.mode===mode&&String(b.name||"").trim().toLowerCase()===sale.customerName.trim().toLowerCase())?.advanceBalance||0;
+  const advanceWillApply=useAdvance?Math.min(Number(buyerAdvanceAvail),saleFinalAmount):0;
+  const cashAfterAdvance=Math.max(0,saleFinalAmount-advanceWillApply);
 
   async function post(action:string, body:any) {
     const r=await fetch("/api/admin/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...body})});
@@ -143,7 +147,7 @@ export default function InventoryPage() {
   }
 
   async function addSale() {
-    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),saleDate:sale.saleDate,notes:sale.notes});
+    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),saleDate:sale.saleDate,useAdvance,notes:sale.notes});
     if(ok) resetSaleForm();
   }
 
@@ -156,7 +160,7 @@ export default function InventoryPage() {
   function startEditSale(s:any) {
     const items=(data.saleItems||[]).filter((x:any)=>x.sale_id===s.id);
     const payments=(data.salePayments||[]).filter((x:any)=>x.sale_id===s.id);
-    const latestPayment=payments[0];
+    const latestPayment=payments.find((x:any)=>x.payment_mode!=="Advance")||payments[0];
     setEditingSale(s.id);
     setSale({
       customerName:s.customer_name||"",
@@ -690,7 +694,11 @@ export default function InventoryPage() {
           {mode==="PET" && <span className="ad-input flex items-center">Labour Charges (₹2/kg): -₹{saleLabourCharges.toFixed(2)}</span>}
           <input className="ad-input" type="number" min="0" placeholder="Loading Charges" value={sale.loadingCharges||""} onChange={e=>setSale({...sale,loadingCharges:e.target.value})}/>
           <span className="ad-input flex items-center font-semibold">Final Amount: ₹{saleFinalAmount.toFixed(2)}</span>
-          <input className="ad-input" type="number" min="0" max={saleFinalAmount} disabled={editingSale!==null} placeholder={editingSale?"Received payment (history)":"Total received payment"} value={sale.receivedAmount} onChange={e=>setSale({...sale,receivedAmount:e.target.value})}/>
+          {buyerAdvanceAvail>0 && editingSale===null && <label className="ad-input flex items-center gap-2 text-sm md:col-span-4 border border-[var(--ad-accent)]">
+            <input type="checkbox" checked={useAdvance} onChange={e=>setUseAdvance(e.target.checked)}/>
+            <span><b>{sale.customerName.trim()}</b> has advance ₹{buyerAdvanceAvail.toFixed(2)} with us. {useAdvance?`₹${advanceWillApply.toFixed(2)} will be adjusted in this sale; cash/UPI to collect: ₹${cashAfterAdvance.toFixed(2)}.`:"Advance will not be used for this sale."}</span>
+          </label>}
+          <input className="ad-input" type="number" min="0" max={cashAfterAdvance} disabled={editingSale!==null} placeholder={editingSale?"Received payment (history)":(advanceWillApply>0?"Cash received now (blank = full "+cashAfterAdvance.toFixed(2)+")":"Total received payment")} value={sale.receivedAmount} onChange={e=>setSale({...sale,receivedAmount:e.target.value})}/>
           <PersonSelect value={sale.receivedBy} onChange={(v)=>setSale({...sale,receivedBy:v})} label="Received by" />
           <select className="ad-input" value={sale.paymentMode} onChange={e=>setSale({...sale,paymentMode:e.target.value})}><option>Cash</option><option>UPI</option><option>Bank Transfer</option><option>Cheque</option></select>
           <input className="ad-input md:col-span-2" placeholder="Notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>

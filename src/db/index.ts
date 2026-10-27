@@ -537,6 +537,32 @@ function createDb() {
     );
     CREATE INDEX IF NOT EXISTS partner_settlements_mode_person_idx
       ON partner_settlements(mode, person, settlement_date);
+    CREATE TABLE IF NOT EXISTS partner_advances (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      person TEXT NOT NULL,
+      held_by TEXT NOT NULL DEFAULT '',
+      amount REAL NOT NULL CHECK(amount > 0),
+      advance_date TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS partner_advances_person_idx
+      ON partner_advances(person, advance_date);
+    CREATE TABLE IF NOT EXISTS buyer_advances (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      buyer_name TEXT NOT NULL,
+      amount REAL NOT NULL CHECK(amount > 0),
+      used_amount REAL NOT NULL DEFAULT 0 CHECK(used_amount >= 0),
+      advance_date TEXT NOT NULL,
+      received_by TEXT NOT NULL DEFAULT '',
+      payment_mode TEXT NOT NULL DEFAULT 'Cash',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS buyer_advances_buyer_idx
+      ON buyer_advances(mode, buyer_name);
   `);
   // Create the sale index only after the sale_id migration has run. Existing
   // production databases may have an older inventory_transactions table.

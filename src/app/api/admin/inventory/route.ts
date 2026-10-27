@@ -174,7 +174,9 @@ const companyFundedContractorCashSql = `SELECT COALESCE(SUM(amount),0) as n FROM
 
 /** Company cash book parts. Pre-stock is inventory-only and never included. */
 function modeCashflowParts(m: string) {
-  const salesReceived = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=?").get(m) as any)?.n || 0);
+  const salesReceived = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE mode=? AND COALESCE(payment_mode,'')<>'Advance'").get(m) as any)?.n || 0);
+  const buyerAdvances = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM buyer_advances WHERE mode=?").get(m) as any)?.n || 0);
+  const partnerAdvances = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_advances WHERE mode=?").get(m) as any)?.n || 0);
   const vendorPayments = Number((sqlite.prepare(companyFundedVendorSql).get(m) as any)?.n || 0);
   const borrowed = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM borrowings WHERE mode=?").get(m) as any)?.n || 0);
   const loanRepaid = Number((sqlite.prepare("SELECT COALESCE(SUM(br.amount),0) as n FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id WHERE b.mode=?").get(m) as any)?.n || 0);
@@ -184,11 +186,71 @@ function modeCashflowParts(m: string) {
   const manualLabour = Number((sqlite.prepare(companyFundedLabourSql).get(m) as any)?.n || 0);
   const contractorCash = Number((sqlite.prepare(companyFundedContractorCashSql).get(m) as any)?.n || 0);
   const partnerSettled = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements WHERE mode=?").get(m) as any)?.n || 0);
-  const book = Math.round((salesReceived - vendorPayments + borrowed - loanRepaid - processingExpenses - saleProcessing - otherExpenses - manualLabour - contractorCash - partnerSettled) * 100) / 100;
+  const book = Math.round((salesReceived + buyerAdvances + partnerAdvances - vendorPayments + borrowed - loanRepaid - processingExpenses - saleProcessing - otherExpenses - manualLabour - contractorCash - partnerSettled) * 100) / 100;
   return {
-    salesReceived, vendorPayments, borrowed, loanRepaid, processingExpenses, saleProcessing,
+    salesReceived, buyerAdvances, partnerAdvances, vendorPayments, borrowed, loanRepaid, processingExpenses, saleProcessing,
     otherExpenses, manualLabour, contractorCash, partnerSettled, book,
   };
+}
+
+/** Cash earned/spent by the business itself, ignoring financing (loans, partner settle/lend). */
+function operatingContribution(p: CashflowParts) {
+  return Math.round((p.salesReceived + p.buyerAdvances - p.vendorPayments - p.processingExpenses - p.saleProcessing
+    - p.otherExpenses - p.manualLabour - p.contractorCash) * 100) / 100;
+}
+
+function normBuyer(name: string) {
+  return name.trim().toLowerCase();
+}
+
+function buyerAdvanceAvailable(mode: string, buyerName: string) {
+  return Math.round(Number((sqlite.prepare(
+    "SELECT COALESCE(SUM(amount-used_amount),0) as n FROM buyer_advances WHERE mode=? AND lower(trim(buyer_name))=?"
+  ).get(mode, normBuyer(buyerName)) as any)?.n || 0) * 100) / 100;
+}
+
+/** FIFO-consume buyer advances against a sale; records an 'Advance' sale payment (no new cash). */
+function applyBuyerAdvanceToSale(mode: string, buyerName: string, saleId: number, maxAmount: number, date: string) {
+  let remaining = Math.min(maxAmount, buyerAdvanceAvailable(mode, buyerName));
+  remaining = Math.round(remaining * 100) / 100;
+  if (!(remaining > 0.004)) return 0;
+  const rows = sqlite.prepare(
+    "SELECT id, amount, used_amount FROM buyer_advances WHERE mode=? AND lower(trim(buyer_name))=? AND amount-used_amount>0.004 ORDER BY advance_date ASC, id ASC"
+  ).all(mode, normBuyer(buyerName)) as Array<{ id: number; amount: number; used_amount: number }>;
+  let applied = 0;
+  for (const row of rows) {
+    if (remaining <= 0.004) break;
+    const take = Math.round(Math.min(remaining, Number(row.amount) - Number(row.used_amount)) * 100) / 100;
+    if (!(take > 0)) continue;
+    sqlite.prepare("UPDATE buyer_advances SET used_amount=used_amount+? WHERE id=?").run(take, row.id);
+    remaining = Math.round((remaining - take) * 100) / 100;
+    applied = Math.round((applied + take) * 100) / 100;
+  }
+  if (applied > 0) {
+    sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)")
+      .run(mode, saleId, applied, date, "Advance", "", "Buyer advance applied", nowIso());
+  }
+  return applied;
+}
+
+function buyerSummaryRows() {
+  return sqlite.prepare(`
+    WITH names AS (
+      SELECT mode, lower(trim(customer_name)) AS k, MAX(customer_name) AS name FROM sales GROUP BY mode, lower(trim(customer_name))
+      UNION
+      SELECT mode, lower(trim(buyer_name)) AS k, MAX(buyer_name) AS name FROM buyer_advances GROUP BY mode, lower(trim(buyer_name))
+    ),
+    uniq AS (SELECT mode, k, MAX(name) AS name FROM names GROUP BY mode, k)
+    SELECT u.mode, u.name,
+      ROUND(COALESCE((SELECT SUM(total_amount) FROM sales s WHERE s.mode=u.mode AND lower(trim(s.customer_name))=u.k),0),2) AS totalSales,
+      ROUND(COALESCE((SELECT SUM(credit_amount) FROM sales s WHERE s.mode=u.mode AND lower(trim(s.customer_name))=u.k),0),2) AS pendingCredit,
+      ROUND(COALESCE((SELECT SUM(quantity_kg) FROM sales s WHERE s.mode=u.mode AND lower(trim(s.customer_name))=u.k),0),2) AS totalKg,
+      ROUND(COALESCE((SELECT SUM(amount) FROM buyer_advances a WHERE a.mode=u.mode AND lower(trim(a.buyer_name))=u.k),0),2) AS advanceGiven,
+      ROUND(COALESCE((SELECT SUM(amount-used_amount) FROM buyer_advances a WHERE a.mode=u.mode AND lower(trim(a.buyer_name))=u.k),0),2) AS advanceBalance,
+      (SELECT MAX(phone) FROM sales s WHERE s.mode=u.mode AND lower(trim(s.customer_name))=u.k) AS phone
+    FROM uniq u
+    ORDER BY u.name COLLATE NOCASE, u.mode
+  `).all();
 }
 
 function currentProcessingContractor(mode: string) {
@@ -269,6 +331,9 @@ function companyCashflow() {
 
 type PersonTotalsRow = {
   received: number;
+  buyerAdvanceReceived: number;
+  partnerLent: number;
+  partnerLentHeld: number;
   purchasesPaid: number;
   expensesPaid: number;
   processingPaid: number;
@@ -288,7 +353,11 @@ type PersonTotalsRow = {
 function companyPersonAccountTotals(): Record<string, PersonTotalsRow> {
   const totals: Record<string, PersonTotalsRow> = {};
   for (const person of ACCOUNT_PERSONS) {
-    const received = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE received_by=?").get(person) as any)?.n || 0);
+    const saleReceived = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE received_by=? AND COALESCE(payment_mode,'')<>'Advance'").get(person) as any)?.n || 0);
+    const buyerAdvanceReceived = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM buyer_advances WHERE received_by=?").get(person) as any)?.n || 0);
+    const partnerLent = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_advances WHERE person=?").get(person) as any)?.n || 0);
+    const partnerLentHeld = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_advances WHERE COALESCE(NULLIF(held_by,''),person)=?").get(person) as any)?.n || 0);
+    const received = Math.round((saleReceived + buyerAdvanceReceived + partnerLentHeld) * 100) / 100;
     const purchasesCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(vp.amount),0) as n FROM vendor_payments vp LEFT JOIN purchases p ON p.id=vp.purchase_id WHERE COALESCE(NULLIF(vp.paid_by,''), p.paid_by, '')=? AND vp.payment_type<>'ADVANCE' AND COALESCE(vp.payment_mode,'')<>'Advance' AND COALESCE(vp.funding_source,'COMPANY')='COMPANY'").get(person) as any)?.n || 0);
     const purchasesPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(vp.amount),0) as n FROM vendor_payments vp LEFT JOIN purchases p ON p.id=vp.purchase_id WHERE COALESCE(NULLIF(vp.paid_by,''), p.paid_by, '')=? AND vp.payment_type<>'ADVANCE' AND COALESCE(vp.payment_mode,'')<>'Advance' AND COALESCE(vp.funding_source,'COMPANY')='OWN_POCKET'").get(person) as any)?.n || 0);
     const expensesCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(person) as any)?.n || 0);
@@ -329,10 +398,10 @@ function companyPersonAccountTotals(): Record<string, PersonTotalsRow> {
     const contractorPaid = contractorCompany + contractorPocket;
     const paid = companyPaid + ownPocketPaid;
     const cashWithPartner = Math.round((received - companyPaid) * 100) / 100;
-    const companyOwesPartner = Math.round((ownPocketPaid - settled) * 100) / 100;
+    const companyOwesPartner = Math.round((ownPocketPaid + partnerLent - settled) * 100) / 100;
     const balance = Math.round((cashWithPartner - companyOwesPartner) * 100) / 100;
     totals[person] = {
-      received, purchasesPaid, expensesPaid, processingPaid, saleProcessingPaid, labourPaid, contractorPaid,
+      received, buyerAdvanceReceived, partnerLent, partnerLentHeld, purchasesPaid, expensesPaid, processingPaid, saleProcessingPaid, labourPaid, contractorPaid,
       companyPaid, ownPocketPaid, settled, cashWithPartner, companyOwesPartner, paid, balance,
     };
   }
@@ -458,6 +527,9 @@ export async function GET() {
   `).all();
   const lenders = sqlite.prepare("SELECT * FROM lenders ORDER BY name").all();
   const partnerSettlements = sqlite.prepare("SELECT * FROM partner_settlements ORDER BY settlement_date DESC, id DESC LIMIT 500").all();
+  const partnerAdvances = sqlite.prepare("SELECT * FROM partner_advances ORDER BY advance_date DESC, id DESC LIMIT 500").all();
+  const buyerAdvances = sqlite.prepare("SELECT * FROM buyer_advances ORDER BY advance_date DESC, id DESC LIMIT 500").all();
+  const buyerSummary = buyerSummaryRows();
   const borrowingRepayments = sqlite.prepare("SELECT br.*, b.mode FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id ORDER BY br.repayment_date DESC, br.id DESC LIMIT 500").all();
   const sales = sqlite.prepare("SELECT * FROM sales ORDER BY sale_date DESC, id DESC LIMIT 200").all();
   const saleItems = sqlite.prepare("SELECT * FROM sale_items ORDER BY sale_id, id").all();
@@ -627,6 +699,8 @@ export async function GET() {
     ...personAccountTotalsFlat,
   };
 
+  const buyerAdvanceBalance = Math.round(Number((sqlite.prepare("SELECT COALESCE(SUM(amount-used_amount),0) as n FROM buyer_advances").get() as any)?.n || 0) * 100) / 100;
+  const partnerLentTotal = Math.round(Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_advances").get() as any)?.n || 0) * 100) / 100;
   const companyParts = companyCashflowParts();
   const petParts = modeCashflowParts("PET");
   const plasticParts = modeCashflowParts("PLASTIC");
@@ -669,7 +743,9 @@ export async function GET() {
       borrowed: petParts.borrowed,
       loanRepaid: petParts.loanRepaid,
       partnerSettled: petParts.partnerSettled,
-      contribution: petParts.book,
+      buyerAdvances: petParts.buyerAdvances,
+      partnerAdvances: petParts.partnerAdvances,
+      contribution: operatingContribution(petParts),
     },
     PLASTIC: {
       salesReceived: plasticParts.salesReceived,
@@ -680,7 +756,9 @@ export async function GET() {
       borrowed: plasticParts.borrowed,
       loanRepaid: plasticParts.loanRepaid,
       partnerSettled: plasticParts.partnerSettled,
-      contribution: plasticParts.book,
+      buyerAdvances: plasticParts.buyerAdvances,
+      partnerAdvances: plasticParts.partnerAdvances,
+      contribution: operatingContribution(plasticParts),
     },
   };
 
@@ -697,7 +775,8 @@ export async function GET() {
     materials, suppliers, lenders, inventory, preStock, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments,
     sales, saleItems, salePayments, processingBatches, processingBatchItems, processingBatchOutputs, processingExpenses,
     saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, plasticMaterialTypes, processingContractors, processingContractorLedger,
-    processingContractorSummaries, partnerSettlements, borrowingRepayments, totals,
+    processingContractorSummaries, partnerSettlements, partnerAdvances, buyerAdvances, buyerSummary, borrowingRepayments, totals,
+    buyerAdvanceBalance, partnerLentTotal,
     personAccountTotals, personAccountTotalsFlat, externalLoanOutstanding, reconciliation, cashflowBreakdown, businessSplit,
     // COMPANY is canonical; PET/PLASTIC mirrored so older UI still sees one shared book.
     cashBalance:{
@@ -839,6 +918,71 @@ export async function POST(req: NextRequest) {
       sqlite.prepare(`INSERT INTO partner_settlements (mode, person, amount, settlement_date, notes, paid_by, created_at) VALUES (?,?,?,?,?,?,?)`)
         .run(s.mode, s.person, s.amount, s.settlementDate, s.notes, s.paidBy, nowIso());
       return json({ ok: true });
+    }
+
+    if (body.action === "addPartnerAdvance") {
+      const s = z.object({
+        mode: modeSchema,
+        person: accountPersonSchema,
+        heldBy: optionalAccountPersonSchema,
+        amount: z.number().positive(),
+        advanceDate: dateSchema.optional().default(todayStr()),
+        notes: z.string().trim().optional().default(""),
+      }).parse(body);
+      sqlite.prepare("INSERT INTO partner_advances (mode, person, held_by, amount, advance_date, notes, created_at) VALUES (?,?,?,?,?,?,?)")
+        .run(s.mode, s.person, s.heldBy || s.person, s.amount, s.advanceDate, s.notes, nowIso());
+      return json({ ok: true });
+    }
+
+    if (body.action === "deletePartnerAdvance") {
+      const s = z.object({ id: z.number().int().positive() }).parse(body);
+      sqlite.prepare("DELETE FROM partner_advances WHERE id=?").run(s.id);
+      return json({ ok: true });
+    }
+
+    if (body.action === "addBuyerAdvance") {
+      const s = z.object({
+        mode: modeSchema,
+        buyerName: z.string().trim().min(1, "Buyer name is required"),
+        amount: z.number().positive(),
+        advanceDate: dateSchema.optional().default(todayStr()),
+        receivedBy: accountPersonSchema,
+        paymentMode: z.string().trim().min(1).optional().default("Cash"),
+        notes: z.string().trim().optional().default(""),
+      }).parse(body);
+      sqlite.prepare("INSERT INTO buyer_advances (mode, buyer_name, amount, used_amount, advance_date, received_by, payment_mode, notes, created_at) VALUES (?,?,?,0,?,?,?,?,?)")
+        .run(s.mode, s.buyerName, s.amount, s.advanceDate, s.receivedBy, s.paymentMode, s.notes, nowIso());
+      return json({ ok: true });
+    }
+
+    if (body.action === "deleteBuyerAdvance") {
+      const s = z.object({ id: z.number().int().positive() }).parse(body);
+      const row = sqlite.prepare("SELECT used_amount FROM buyer_advances WHERE id=?").get(s.id) as { used_amount: number } | undefined;
+      if (!row) return NextResponse.json({ error: "Advance not found" }, { status: 404 });
+      if (Number(row.used_amount) > 0.004) return NextResponse.json({ error: "This advance is already used against a sale and cannot be deleted" }, { status: 400 });
+      sqlite.prepare("DELETE FROM buyer_advances WHERE id=?").run(s.id);
+      return json({ ok: true });
+    }
+
+    if (body.action === "applyBuyerAdvance") {
+      const s = z.object({
+        mode: modeSchema,
+        buyerName: z.string().trim().min(1),
+        applyDate: dateSchema.optional().default(todayStr()),
+      }).parse(body);
+      const pending = sqlite.prepare(
+        "SELECT id, credit_amount FROM sales WHERE mode=? AND lower(trim(customer_name))=? AND credit_amount>0.004 ORDER BY sale_date ASC, id ASC"
+      ).all(s.mode, normBuyer(s.buyerName)) as Array<{ id: number; credit_amount: number }>;
+      let total = 0;
+      for (const sale of pending) {
+        const applied = applyBuyerAdvanceToSale(s.mode, s.buyerName, sale.id, Number(sale.credit_amount), s.applyDate);
+        if (applied > 0) {
+          sqlite.prepare("UPDATE sales SET received_amount=received_amount+?,credit_amount=MAX(0,credit_amount-?),updated_at=? WHERE id=?").run(applied, applied, nowIso(), sale.id);
+          total = Math.round((total + applied) * 100) / 100;
+        }
+      }
+      if (total <= 0) return NextResponse.json({ error: "No advance balance or no pending sale for this buyer" }, { status: 400 });
+      return json({ ok: true, applied: total });
     }
 
     if (body.action === "addPurchase") {
@@ -1551,6 +1695,7 @@ export async function POST(req: NextRequest) {
         receivedBy: optionalAccountPersonSchema,
         paymentMode: z.string().trim().min(1).optional().default("Cash"),
         loadingCharges: z.number().nonnegative().optional().default(0),
+        useAdvance: z.boolean().optional().default(true),
         notes: z.string().trim().optional().default("")
       }).parse(body);
       const receiptDate = s.paymentDate || s.saleDate;
@@ -1594,7 +1739,11 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const received = Math.min(s.receivedAmount ?? total, total);
+      const plannedAdvance = s.useAdvance
+        ? Math.round(Math.min(buyerAdvanceAvailable(s.mode, s.customerName), total) * 100) / 100
+        : 0;
+      const cashReceived = Math.round(Math.min(s.receivedAmount ?? (total - plannedAdvance), total - plannedAdvance) * 100) / 100;
+      const received = Math.round((plannedAdvance + cashReceived) * 100) / 100;
       const credit = Math.round((total - received) * 100) / 100;
       const primary = s.items[0];
       const primaryVariant = s.mode === "PLASTIC" ? "" : (s.items.length===1?primary.materialVariant:"MIXED");
@@ -1611,7 +1760,8 @@ export async function POST(req: NextRequest) {
         sqlite.prepare("INSERT INTO inventory_transactions (mode,material_id,material_name,transaction_type,quantity_kg,amount,purchase_id,sale_id,transaction_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
           .run(s.mode,null,materialName,"ADJUSTMENT",-item.quantityKg,-lineTotals[i],null,saleId,s.saleDate,"SALE #"+saleId+(s.notes ? " - "+s.notes : ""),nowIso());
       }
-      if (received > 0) sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,saleId,received,receiptDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
+      const advanceApplied = plannedAdvance > 0 ? applyBuyerAdvanceToSale(s.mode, s.customerName, saleId, plannedAdvance, receiptDate) : 0;
+      if (cashReceived > 0) sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,saleId,cashReceived,receiptDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
       // Contractor earns ₹2/kg on PET sale labour only.
       const earn = s.mode === "PET" ? creditContractorEarn({
         mode: s.mode,
@@ -1621,7 +1771,7 @@ export async function POST(req: NextRequest) {
         entryDate: s.saleDate,
         notes: `Sale #${saleId} labour earn`,
       }) : null;
-      return json({ok:true,id:saleId,grossAmount,labourCharges,loadingCharges,total,received,credit,contractorEarn:earn});
+      return json({ok:true,id:saleId,grossAmount,labourCharges,loadingCharges,total,received,credit,advanceApplied,contractorEarn:earn});
     }
 
     if (body.action === "updateSale") {
@@ -1704,7 +1854,7 @@ export async function POST(req: NextRequest) {
         }
 
         if (s.receivedBy !== undefined || s.paymentMode !== undefined) {
-          sqlite.prepare("UPDATE sale_payments SET received_by=COALESCE(?,received_by),payment_mode=COALESCE(?,payment_mode) WHERE id=(SELECT id FROM sale_payments WHERE sale_id=? ORDER BY id DESC LIMIT 1)")
+          sqlite.prepare("UPDATE sale_payments SET received_by=COALESCE(?,received_by),payment_mode=COALESCE(?,payment_mode) WHERE id=(SELECT id FROM sale_payments WHERE sale_id=? AND COALESCE(payment_mode,'')<>'Advance' ORDER BY id DESC LIMIT 1)")
             .run(s.receivedBy ?? null,s.paymentMode ?? null,s.saleId);
         }
 

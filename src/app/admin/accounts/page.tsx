@@ -6,9 +6,7 @@ import { AdminShell } from "@/components/admin-shell";
 import { useBusinessMode } from "@/components/business-mode-provider";
 import { ACCOUNT_PERSONS, isAccountPerson, type AccountPerson } from "@/lib/account-persons";
 import { AdminSelect } from "@/components/admin-select";
-import { FundingSelect } from "@/components/funding-select";
 import { PersonSelect } from "@/components/person-select";
-import type { FundingSource } from "@/lib/funding";
 import { ArrowDownLeft, ArrowUpRight, RefreshCw, X } from "lucide-react";
 
 type TxRow = {
@@ -33,6 +31,9 @@ type Person = AccountPerson;
 type Row = Record<string, unknown>;
 type PersonTotals = {
   received: number;
+  buyerAdvanceReceived?: number;
+  partnerLent?: number;
+  partnerLentHeld?: number;
   purchasesPaid: number;
   expensesPaid: number;
   processingPaid: number;
@@ -55,6 +56,8 @@ type Reconciliation = {
 };
 type CashflowBreakdown = {
   salesReceived: number;
+  buyerAdvances?: number;
+  partnerAdvances?: number;
   vendorPayments: number;
   borrowed: number;
   loanRepaid: number;
@@ -102,6 +105,10 @@ type AccountsData = {
   businessSplit?: Record<string, BusinessSplit>;
   externalLoanOutstanding?: Record<string, number>;
   partnerSettlements?: Row[];
+  partnerAdvances?: Row[];
+  buyerAdvances?: Row[];
+  buyerAdvanceBalance?: number;
+  partnerLentTotal?: number;
   salePayments?: Row[];
   purchases?: Row[];
   vendorPayments?: Row[];
@@ -158,15 +165,14 @@ export default function AccountsPage() {
   });
   const [settleBusy, setSettleBusy] = useState(false);
   const [detailPopup, setDetailPopup] = useState<DetailPopup | null>(null);
-  const [vendorPay, setVendorPay] = useState({
-    supplierId: "",
+  const [lend, setLend] = useState({
+    person: "" as string,
+    heldBy: "" as string,
     amount: "",
-    paymentDate: new Date().toISOString().slice(0, 10),
-    paidBy: "",
-    fundingSource: "COMPANY" as FundingSource,
+    advanceDate: new Date().toISOString().slice(0, 10),
     notes: "",
   });
-  const [vendorPayBusy, setVendorPayBusy] = useState(false);
+  const [lendBusy, setLendBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [borrowing, setBorrowing] = useState({
     lenderId: "",
@@ -244,41 +250,33 @@ export default function AccountsPage() {
     }
   }
 
-  async function payVendorLater() {
-    const amount = Number(vendorPay.amount);
-    if (!vendorPay.supplierId || !(amount > 0)) {
-      setMessage("Choose a vendor and enter a payment amount");
+  async function lendToCompany() {
+    const amount = Number(lend.amount);
+    if (!lend.person || !isAccountPerson(lend.person)) {
+      setMessage("Please select which partner is giving the money to the company");
       return;
     }
-    if (!vendorPay.paidBy || !isAccountPerson(vendorPay.paidBy)) {
-      setMessage("Payment done by is required for later vendor payments");
+    if (!(amount > 0)) {
+      setMessage("Please enter an amount greater than 0");
       return;
     }
-    setVendorPayBusy(true);
+    setLendBusy(true);
     setMessage("");
     try {
-      await postAction("payVendor", {
+      await postAction("addPartnerAdvance", {
         mode,
-        supplierId: Number(vendorPay.supplierId),
+        person: lend.person,
+        heldBy: lend.heldBy || lend.person,
         amount,
-        paymentDate: vendorPay.paymentDate,
-        paidBy: vendorPay.paidBy,
-        fundingSource: vendorPay.fundingSource,
-        notes: vendorPay.notes || "Vendor payment (later)",
+        advanceDate: lend.advanceDate,
+        notes: lend.notes,
       });
-      setVendorPay({
-        supplierId: "",
-        amount: "",
-        paymentDate: new Date().toISOString().slice(0, 10),
-        paidBy: "",
-        fundingSource: "COMPANY",
-        notes: "",
-      });
-      setMessage("Vendor payment saved — counted in Accounts on the payment date");
+      setLend({ person: "", heldBy: "", amount: "", advanceDate: new Date().toISOString().slice(0, 10), notes: "" });
+      setMessage("Partner money added to the company book. Use Settle partner when the company pays it back.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Vendor payment failed");
+      setMessage(error instanceof Error ? error.message : "Could not save partner advance");
     } finally {
-      setVendorPayBusy(false);
+      setLendBusy(false);
     }
   }
 
@@ -396,6 +394,9 @@ export default function AccountsPage() {
         return {
           person,
           received: Number(serverTotals.received || 0),
+          buyerAdvanceReceived: Number(serverTotals.buyerAdvanceReceived || 0),
+          partnerLent: Number(serverTotals.partnerLent || 0),
+          partnerLentHeld: Number(serverTotals.partnerLentHeld || 0),
           paid: Number(serverTotals.paid || 0),
           balance: Number(serverTotals.balance || 0),
           purchasesPaid: Number(serverTotals.purchasesPaid || 0),
@@ -443,6 +444,9 @@ export default function AccountsPage() {
       return {
         person,
         received,
+        buyerAdvanceReceived: 0,
+        partnerLent: 0,
+        partnerLentHeld: 0,
         paid,
         balance: cashWithPartner,
         purchasesPaid,
@@ -469,6 +473,28 @@ export default function AccountsPage() {
         amount: Number(x.amount || 0),
         direction: "in",
       }));
+
+    (data?.buyerAdvances || []).forEach((x) => rows.push({
+      date: String(x.advance_date ?? ""),
+      type: "Buyer advance",
+      description: `${x.mode || ""} · Advance from ${x.buyer_name}${x.notes ? ` — ${x.notes}` : ""}`.trim(),
+      person: String(x.received_by ?? ""),
+      amount: Number(x.amount || 0),
+      direction: "in",
+    }));
+
+    (data?.partnerAdvances || []).forEach((x) => {
+      const lender = String(x.person ?? "");
+      const holder = String(x.held_by || lender);
+      rows.push({
+        date: String(x.advance_date ?? ""),
+        type: "Partner lent to company",
+        description: `${lender} gave money to company${holder !== lender ? ` (held by ${holder})` : ""}${x.notes ? ` — ${x.notes}` : ""}`,
+        person: holder,
+        amount: Number(x.amount || 0),
+        direction: "in",
+      });
+    });
 
     (data?.vendorPayments || [])
       .filter((x) => x.paid_by && String(x.payment_type || "") !== "ADVANCE" && String(x.payment_mode || "") !== "Advance" && Number(x.amount) > 0)
@@ -629,7 +655,7 @@ export default function AccountsPage() {
           <p className={`mt-1 text-3xl font-bold ${companyBalance < 0 ? "text-[var(--ad-danger)]" : ""}`}>{money(companyBalance)}</p>
           <p className="ad-muted mt-2 text-xs leading-relaxed">
             One cash book for the firm. PET sale or Plastic purchase both move this balance.
-            Sales − Vendor payments − Expenses − Labour − Contractor cash + Loans − Repayments − Partner settlements.
+            Sales + Buyer advances − Vendor payments − Expenses − Labour − Contractor cash + Loans + Partner money given − Repayments − Partner settlements.
             Attendance-only labour does not hit this book. Unpaid purchases stay as vendor dues until paid.
           </p>
         </button>
@@ -638,13 +664,12 @@ export default function AccountsPage() {
             type="button"
             className="mt-3 flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--ad-warning)] bg-[color-mix(in_srgb,var(--ad-warning)_12%,transparent)] px-3 py-2 text-left text-sm"
             onClick={() => {
-              const el = document.getElementById("pay-vendor-later");
-              el?.scrollIntoView({ behavior: "smooth", block: "start" });
+              window.location.assign("/admin/vendors");
             }}
           >
             <span>
               <span className="font-semibold">Vendor dues outstanding</span>
-              <span className="ad-muted ml-2 text-xs">Material received, not paid yet — not in company book</span>
+              <span className="ad-muted ml-2 text-xs">Material received, not paid yet — pay it from Vendors & Buyers</span>
             </span>
             <span className="text-lg font-bold text-[var(--ad-warning)]">{money(vendorOutstandingTotal)}</span>
           </button>
@@ -695,6 +720,37 @@ export default function AccountsPage() {
                 )}
               </p>
             </button>
+            {Number(breakdown.buyerAdvances || 0) > 0 && (
+              <button
+                type="button"
+                className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)]"
+                onClick={() => openDetail(
+                  "Buyer advances",
+                  allTransactions.filter((t) => t.type === "Buyer advance"),
+                  "/admin/vendors",
+                  "Open Vendors & Buyers",
+                  "Advance money received from buyers"
+                )}
+              >
+                <p className="ad-muted">Buyer advances received</p>
+                <p className="mt-1 font-semibold text-[var(--ad-success)]">+{money(Number(breakdown.buyerAdvances))}</p>
+              </button>
+            )}
+            {Number(breakdown.partnerAdvances || 0) > 0 && (
+              <button
+                type="button"
+                className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)]"
+                onClick={() => openDetail(
+                  "Partner money given to company",
+                  allTransactions.filter((t) => t.type === "Partner lent to company"),
+                  "#partner-lend",
+                  "Open lend form"
+                )}
+              >
+                <p className="ad-muted">Partner money given (temp)</p>
+                <p className="mt-1 font-semibold text-[var(--ad-success)]">+{money(Number(breakdown.partnerAdvances))}</p>
+              </button>
+            )}
             {(breakdown.borrowed > 0 || breakdown.loanRepaid > 0) && (
               <div className="rounded-lg border border-[var(--ad-border)] p-2">
                 <p className="ad-muted">Loans net</p>
@@ -738,8 +794,7 @@ export default function AccountsPage() {
             type="button"
             className={`rounded-lg border p-3 text-left ${vendorOutstandingTotal > 0.005 ? "border-[var(--ad-warning)]" : "border-[var(--ad-border)]"}`}
             onClick={() => {
-              const el = document.getElementById("pay-vendor-later");
-              el?.scrollIntoView({ behavior: "smooth", block: "start" });
+              window.location.assign("/admin/vendors");
             }}
           >
             <p className="ad-muted text-xs">Vendor dues outstanding</p>
@@ -761,6 +816,18 @@ export default function AccountsPage() {
             <p className="ad-muted text-xs">Company needs to pay partners</p>
             <p className="mt-1 text-lg font-bold">{money(recon?.dueToPartners ?? accounts.reduce((n, a) => n + Math.max(0, -a.balance), 0))}</p>
           </div>
+          <div className="rounded-lg border border-[var(--ad-border)] p-3">
+            <p className="ad-muted text-xs">Owed to partners (own pocket + lent)</p>
+            <p className="mt-1 text-lg font-bold">{money(accounts.reduce((n, a) => n + Math.max(0, a.companyOwesPartner), 0))}</p>
+          </div>
+          <button
+            type="button"
+            className="rounded-lg border border-[var(--ad-border)] p-3 text-left"
+            onClick={() => window.location.assign("/admin/vendors")}
+          >
+            <p className="ad-muted text-xs">Buyer advance held (to adjust in sales)</p>
+            <p className="mt-1 text-lg font-bold">{money(Number(data?.buyerAdvanceBalance || 0))}</p>
+          </button>
           <div className="rounded-lg border border-[var(--ad-border)] p-3">
             <p className="ad-muted text-xs">External loans outstanding</p>
             <p className="mt-1 text-lg font-bold">{money(externalLoans)}</p>
@@ -890,63 +957,35 @@ export default function AccountsPage() {
               <div className="mt-3 space-y-1 text-xs">
                 <p>Holds company cash: <span className="font-semibold">{money(Math.max(0, bal))}</span></p>
                 <p>Company needs to pay: <span className="font-semibold">{money(Math.max(0, -bal))}</span></p>
+                {account.partnerLent > 0.005 && (
+                  <p>Lent to company (temp): <span className="font-semibold">{money(account.partnerLent)}</span></p>
+                )}
+                {account.buyerAdvanceReceived > 0.005 && (
+                  <p>Buyer advances received: <span className="font-semibold">{money(account.buyerAdvanceReceived)}</span></p>
+                )}
               </div>
             </div>
           );
         })}
       </div>
 
-      <div id="pay-vendor-later" className="mb-5 ad-card p-4 scroll-mt-4">
-        <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <h2 className="font-semibold">Pay vendor later</h2>
-            <p className="ad-muted text-xs">
-              Unpaid material (vendor dues outstanding: {money(vendorOutstandingTotal)}). Paying here hits the company book on payment date.
-            </p>
-          </div>
+      <div id="partner-lend" className="mb-5 ad-card p-4 scroll-mt-4">
+        <h2 className="mb-1 font-semibold">Partner gives money to company (temporary)</h2>
+        <p className="ad-muted mb-3 text-xs">
+          A partner lends cash to the company for now. It adds to the company book and the partner shows as &quot;company needs to pay&quot;.
+          When the company returns it, use <b>Settle partner</b> below. Example: Rahul gives ₹50,000 and Devesh keeps it — Partner = Rahul, Money held by = Devesh.
+        </p>
+        <div className="grid gap-2 md:grid-cols-6">
+          <PersonSelect label="Partner" value={lend.person} onChange={(v) => setLend({ ...lend, person: v })} required />
+          <input className="ad-input" type="number" min="0" placeholder="Amount" value={lend.amount} onChange={(e) => setLend({ ...lend, amount: e.target.value })} />
+          <input className="ad-input" type="date" value={lend.advanceDate} onChange={(e) => setLend({ ...lend, advanceDate: e.target.value })} />
+          <PersonSelect label="Money held by" value={lend.heldBy} onChange={(v) => setLend({ ...lend, heldBy: v })} />
+          <input className="ad-input" placeholder="Notes (e.g. for salary week)" value={lend.notes} onChange={(e) => setLend({ ...lend, notes: e.target.value })} />
+          <button className="ad-btn ad-btn-primary" onClick={() => void lendToCompany()} disabled={lendBusy}>
+            {lendBusy ? "Saving…" : "Give to company"}
+          </button>
         </div>
-        {outstandingByVendor.length > 0 && (
-          <div className="mb-3 flex flex-wrap gap-2 text-xs">
-            {outstandingByVendor.map((v) => (
-              <button
-                key={v.supplierId}
-                type="button"
-                className="rounded-lg border border-[var(--ad-border)] px-2 py-1"
-                onClick={() => setVendorPay({ ...vendorPay, supplierId: String(v.supplierId), amount: String(v.outstanding) })}
-              >
-                {v.name}{v.modeLabel ? ` (${v.modeLabel})` : ""}: {money(v.outstanding)}
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="grid gap-3 md:grid-cols-6">
-          <AdminSelect
-            label="Vendor"
-            required
-            placeholder="Select vendor"
-            value={vendorPay.supplierId}
-            onChange={(v) => setVendorPay({ ...vendorPay, supplierId: v })}
-            options={[
-              { value: "", label: "Select vendor" },
-              ...(data?.suppliers || []).map((s) => ({ value: String(s.id), label: s.name })),
-            ]}
-          />
-          <label className="ad-field">
-            <span className="ad-field-label">Amount</span>
-            <input className="ad-input" type="number" min="0" placeholder="Amount" value={vendorPay.amount} onChange={(e) => setVendorPay({ ...vendorPay, amount: e.target.value })} />
-          </label>
-          <label className="ad-field">
-            <span className="ad-field-label">Date</span>
-            <input className="ad-input" type="date" value={vendorPay.paymentDate} onChange={(e) => setVendorPay({ ...vendorPay, paymentDate: e.target.value })} />
-          </label>
-          <PersonSelect value={vendorPay.paidBy} onChange={(v) => setVendorPay({ ...vendorPay, paidBy: v })} required />
-          <FundingSelect value={vendorPay.fundingSource} onChange={(v) => setVendorPay({ ...vendorPay, fundingSource: v })} />
-          <div className="flex items-end">
-            <button className="ad-btn ad-btn-primary w-full" onClick={() => void payVendorLater()} disabled={vendorPayBusy}>
-              {vendorPayBusy ? "Saving…" : "Record vendor pay"}
-            </button>
-          </div>
-        </div>
+        <p className="ad-muted mt-2 text-[11px]">Money held by: leave empty if the lending partner keeps the cash himself.</p>
       </div>
 
       <div className="mb-5 ad-card p-4">

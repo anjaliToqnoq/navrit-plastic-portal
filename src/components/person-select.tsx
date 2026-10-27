@@ -7,7 +7,7 @@ type Props = {
   value: string;
   onChange: (value: AccountPerson | "") => void;
   /** Unified label used across purchases, sales, expenses, labour, settlements. */
-  label?: "Payment done by" | "Received by" | "Partner";
+  label?: "Payment done by" | "Received by" | "Partner" | "Money held by";
   className?: string;
   required?: boolean;
   id?: string;

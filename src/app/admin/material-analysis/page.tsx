@@ -93,12 +93,34 @@ export default function MaterialAnalysisPage() {
         </div>
       )}
 
-      {s && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {s && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="ad-card p-4"><p className="ad-muted text-xs">Purchased</p><p className="mt-1 text-2xl font-bold">{kg(s.purchasedKg)}</p><p className="text-xs ad-muted">{money(s.purchaseCost)}</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Finished Output</p><p className="mt-1 text-2xl font-bold">{kg(s.finishedOutputKg)}</p><p className="text-xs ad-muted">Cost {money(s.finishedCostPerKg)}/kg</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Waste / Loss</p><p className="mt-1 text-2xl font-bold">{kg(s.wasteKg)}</p><p className="text-xs ad-muted">{Number(s.wastePct).toFixed(1)}% of processed input</p></div>
+        <div className="ad-card p-4">
+          <p className="ad-muted text-xs">Electricity cost / kg</p>
+          <p className="mt-1 text-2xl font-bold">{money(s.electricityCostPerKg||0)}</p>
+          <p className="text-xs ad-muted">
+            Total {money(s.totalElectricity||0)}
+            {s.allocatedSharedElectricity>0?` · shared share ${money(s.allocatedSharedElectricity)}`:""}
+            {s.electricityDenomKg>0?` ÷ ${kg(s.electricityDenomKg)}`:""}
+          </p>
+        </div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Estimated Net Profit</p><p className={`mt-1 text-2xl font-bold ${s.estimatedNetProfit>=0?"text-[var(--ad-success)]":"text-[var(--ad-danger)]"}`}>{money(s.estimatedNetProfit)}</p><p className="text-xs ad-muted">Revenue {money(s.revenue)} · COGS {money(s.estimatedCogs)}</p></div>
       </div>}
+
+      {data?.sharedAllocation && Number(data.sharedAllocation.sharedTotal||0)>0 && (
+        <div className="ad-card p-4">
+          <h2 className="font-semibold">Shared expenses allocated to {mode}</h2>
+          <p className="ad-muted mt-1 text-xs">{data.sharedAllocation.basis}</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+            <div className="rounded-lg border border-[var(--ad-border)] p-3"><p className="ad-muted text-xs">Shared bill total</p><p className="font-semibold">{money(data.sharedAllocation.sharedTotal)}</p></div>
+            <div className="rounded-lg border border-[var(--ad-border)] p-3"><p className="ad-muted text-xs">This mode share</p><p className="font-semibold">{Number(data.sharedAllocation.modeSharePct).toFixed(1)}% → {money(data.sharedAllocation.allocatedToMode)}</p></div>
+            <div className="rounded-lg border border-[var(--ad-border)] p-3"><p className="ad-muted text-xs">PET activity</p><p className="font-semibold">{kg(data.sharedAllocation.petActivityKg)}</p></div>
+            <div className="rounded-lg border border-[var(--ad-border)] p-3"><p className="ad-muted text-xs">Plastic activity</p><p className="font-semibold">{kg(data.sharedAllocation.plasticActivityKg)}</p></div>
+          </div>
+        </div>
+      )}
 
       {s && <div className="ad-card p-4">
         <div className="mb-3 flex items-center justify-between"><h2 className="font-semibold">Material Flow</h2>{data.reconciliation.processingBalanced?<span className="inline-flex items-center gap-1 text-xs text-[var(--ad-success)]"><CheckCircle2 size={14}/> Processing reconciled</span>:<span className="inline-flex items-center gap-1 text-xs text-[var(--ad-danger)]"><AlertTriangle size={14}/> Check processing results</span>}</div>

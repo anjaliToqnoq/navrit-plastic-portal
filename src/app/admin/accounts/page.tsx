@@ -94,6 +94,7 @@ type BusinessSplit = {
   borrowed: number;
   loanRepaid: number;
   partnerSettled: number;
+  sharedExpensesAllocated?: number;
   contribution: number;
 };
 type AccountsData = {
@@ -860,8 +861,11 @@ export default function AccountsPage() {
                     <p className="mt-1 font-semibold text-[var(--ad-danger)]">−{money(split?.vendorPayments || 0)}</p>
                   </div>
                   <div className="rounded-lg bg-[var(--ad-input)] p-2">
-                    <p className="ad-muted">Expenses</p>
+                    <p className="ad-muted">Expenses{Number(split?.sharedExpensesAllocated||0)>0?" (incl. shared)":""}</p>
                     <p className="mt-1 font-semibold">−{money(split?.expenses || 0)}</p>
+                    {Number(split?.sharedExpensesAllocated||0)>0.005 && (
+                      <p className="ad-muted mt-1 text-[10px]">Shared bill share {money(split?.sharedExpensesAllocated||0)}</p>
+                    )}
                   </div>
                   <div className="rounded-lg bg-[var(--ad-input)] p-2">
                     <p className="ad-muted">Labour cash</p>

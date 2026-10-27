@@ -140,7 +140,7 @@ function createDb() {
     );
     CREATE TABLE IF NOT EXISTS other_expenses (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC','SHARED')),
       purchase_id INTEGER REFERENCES purchases(id) ON DELETE SET NULL,
       expense_type TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
@@ -564,6 +564,48 @@ function createDb() {
     CREATE INDEX IF NOT EXISTS buyer_advances_buyer_idx
       ON buyer_advances(mode, buyer_name);
   `);
+  // Allow SHARED mode on other_expenses (common bills like electricity for both machines).
+  try {
+    const otherSql = String((sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='other_expenses'").get() as { sql?: string } | undefined)?.sql || "");
+    if (otherSql && !otherSql.includes("'SHARED'")) {
+      sqlite.exec("PRAGMA foreign_keys=OFF");
+      sqlite.exec("BEGIN");
+      sqlite.exec(`
+        CREATE TABLE other_expenses_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC','SHARED')),
+          purchase_id INTEGER REFERENCES purchases(id) ON DELETE SET NULL,
+          expense_type TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          amount REAL NOT NULL CHECK(amount >= 0),
+          expense_date TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expense_frequency TEXT NOT NULL DEFAULT 'ONE_TIME',
+          paid_by TEXT NOT NULL DEFAULT '',
+          billing_month TEXT NOT NULL DEFAULT '',
+          billing_start_date TEXT NOT NULL DEFAULT '',
+          billing_end_date TEXT NOT NULL DEFAULT '',
+          funding_source TEXT NOT NULL DEFAULT 'COMPANY'
+        )
+      `);
+      sqlite.exec(`
+        INSERT INTO other_expenses_new
+        (id,mode,purchase_id,expense_type,description,amount,expense_date,created_at,expense_frequency,paid_by,billing_month,billing_start_date,billing_end_date,funding_source)
+        SELECT id,mode,purchase_id,expense_type,description,amount,expense_date,created_at,
+               COALESCE(expense_frequency,'ONE_TIME'), COALESCE(paid_by,''), COALESCE(billing_month,''),
+               COALESCE(billing_start_date,''), COALESCE(billing_end_date,''), COALESCE(funding_source,'COMPANY')
+        FROM other_expenses
+      `);
+      sqlite.exec("DROP TABLE other_expenses");
+      sqlite.exec("ALTER TABLE other_expenses_new RENAME TO other_expenses");
+      sqlite.exec("COMMIT");
+      sqlite.exec("PRAGMA foreign_keys=ON");
+    }
+  } catch (error) {
+    try { sqlite.exec("ROLLBACK"); } catch { /* no txn */ }
+    try { sqlite.exec("PRAGMA foreign_keys=ON"); } catch { /* ignore */ }
+    throw error;
+  }
   // Create the sale index only after the sale_id migration has run. Existing
   // production databases may have an older inventory_transactions table.
   try {

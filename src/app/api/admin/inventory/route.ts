@@ -49,6 +49,8 @@ async function guard() {
 }
 
 const modeSchema = z.enum(["PET", "PLASTIC"]);
+/** Business expense can be mode-specific or SHARED across PET + Plastic (e.g. electricity). */
+const expenseModeSchema = z.enum(["PET", "PLASTIC", "SHARED"]);
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 function json<T>(value: T) {
@@ -253,6 +255,42 @@ function buyerSummaryRows() {
   `).all();
 }
 
+
+/** Activity kg used to split SHARED expenses (PET process input, Plastic sales). */
+function sharedExpenseActivityKg() {
+  const petKg = Number((sqlite.prepare(`
+    SELECT COALESCE(SUM(total_input_kg),0) as n FROM processing_batches WHERE mode='PET'
+  `).get() as any)?.n || 0);
+  const plasticKg = Number((sqlite.prepare(`
+    SELECT COALESCE(SUM(quantity_kg),0) as n FROM sales WHERE mode='PLASTIC'
+  `).get() as any)?.n || 0);
+  const pet = Math.max(0, petKg);
+  const plastic = Math.max(0, plasticKg);
+  const total = pet + plastic;
+  if (total <= 0.005) return { petKg: 0, plasticKg: 0, petShare: 0.5, plasticShare: 0.5 };
+  return {
+    petKg: Math.round(pet * 1000) / 1000,
+    plasticKg: Math.round(plastic * 1000) / 1000,
+    petShare: pet / total,
+    plasticShare: plastic / total,
+  };
+}
+
+function sharedCompanyOtherExpenses() {
+  return Number((sqlite.prepare(`
+    SELECT COALESCE(SUM(amount),0) as n FROM other_expenses
+    WHERE mode='SHARED' AND COALESCE(funding_source,'COMPANY')='COMPANY'
+  `).get() as any)?.n || 0);
+}
+
+function sharedExpenseAllocation(mode: "PET" | "PLASTIC") {
+  const activity = sharedExpenseActivityKg();
+  const sharedTotal = sharedCompanyOtherExpenses();
+  const share = mode === "PET" ? activity.petShare : activity.plasticShare;
+  const allocated = Math.round(sharedTotal * share * 100) / 100;
+  return { ...activity, sharedTotal, allocated, sharePct: Math.round(share * 10000) / 100 };
+}
+
 function currentProcessingContractor(mode: string) {
   return sqlite.prepare(`
     SELECT * FROM processing_contractors
@@ -322,6 +360,12 @@ function companyCashflowParts(): CashflowParts {
   for (const key of keys) {
     out[key] = Math.round((Number(pet[key]) + Number(plastic[key])) * 100) / 100;
   }
+  // SHARED bills (electricity etc.) hit the company book once — not tagged to PET or Plastic alone.
+  const sharedOther = sharedCompanyOtherExpenses();
+  out.otherExpenses = Math.round((out.otherExpenses + sharedOther) * 100) / 100;
+  out.book = Math.round((out.salesReceived + out.buyerAdvances + out.partnerAdvances - out.vendorPayments
+    + out.borrowed - out.loanRepaid - out.processingExpenses - out.saleProcessing
+    - out.otherExpenses - out.manualLabour - out.contractorCash - out.partnerSettled) * 100) / 100;
   return out;
 }
 
@@ -579,7 +623,7 @@ export async function GET() {
   `).all();
   const processingExpenses = sqlite.prepare("SELECT * FROM processing_expenses ORDER BY expense_date DESC, id DESC LIMIT 500").all();
   const saleProcessingCosts = sqlite.prepare("SELECT * FROM sale_processing_costs ORDER BY payment_date DESC, id DESC LIMIT 500").all();
-  const otherExpenses = sqlite.prepare("SELECT * FROM other_expenses WHERE mode IN ('PET','PLASTIC') ORDER BY expense_date DESC, id DESC LIMIT 500").all();
+  const otherExpenses = sqlite.prepare("SELECT * FROM other_expenses WHERE mode IN ('PET','PLASTIC','SHARED') ORDER BY expense_date DESC, id DESC LIMIT 500").all();
 
   const inventory = sqlite.prepare(`
     SELECT mode, NULL as materialId,
@@ -733,11 +777,13 @@ export async function GET() {
       externalLoanOutstanding: externalLoanTotal,
     },
   };
+  const sharedAllocPet = sharedExpenseAllocation("PET");
+  const sharedAllocPlastic = sharedExpenseAllocation("PLASTIC");
   const businessSplit = {
     PET: {
       salesReceived: petParts.salesReceived,
       vendorPayments: petParts.vendorPayments,
-      expenses: Math.round((petParts.otherExpenses + petParts.processingExpenses + petParts.saleProcessing) * 100) / 100,
+      expenses: Math.round((petParts.otherExpenses + petParts.processingExpenses + petParts.saleProcessing + sharedAllocPet.allocated) * 100) / 100,
       labourCash: petParts.manualLabour,
       contractorCash: petParts.contractorCash,
       borrowed: petParts.borrowed,
@@ -745,12 +791,13 @@ export async function GET() {
       partnerSettled: petParts.partnerSettled,
       buyerAdvances: petParts.buyerAdvances,
       partnerAdvances: petParts.partnerAdvances,
-      contribution: operatingContribution(petParts),
+      sharedExpensesAllocated: sharedAllocPet.allocated,
+      contribution: Math.round((operatingContribution(petParts) - sharedAllocPet.allocated) * 100) / 100,
     },
     PLASTIC: {
       salesReceived: plasticParts.salesReceived,
       vendorPayments: plasticParts.vendorPayments,
-      expenses: Math.round((plasticParts.otherExpenses + plasticParts.processingExpenses + plasticParts.saleProcessing) * 100) / 100,
+      expenses: Math.round((plasticParts.otherExpenses + plasticParts.processingExpenses + plasticParts.saleProcessing + sharedAllocPlastic.allocated) * 100) / 100,
       labourCash: plasticParts.manualLabour,
       contractorCash: plasticParts.contractorCash,
       borrowed: plasticParts.borrowed,
@@ -758,8 +805,19 @@ export async function GET() {
       partnerSettled: plasticParts.partnerSettled,
       buyerAdvances: plasticParts.buyerAdvances,
       partnerAdvances: plasticParts.partnerAdvances,
-      contribution: operatingContribution(plasticParts),
+      sharedExpensesAllocated: sharedAllocPlastic.allocated,
+      contribution: Math.round((operatingContribution(plasticParts) - sharedAllocPlastic.allocated) * 100) / 100,
     },
+  };
+  const sharedExpenseSummary = {
+    total: sharedAllocPet.sharedTotal,
+    petAllocated: sharedAllocPet.allocated,
+    plasticAllocated: sharedAllocPlastic.allocated,
+    petSharePct: sharedAllocPet.sharePct,
+    plasticSharePct: sharedAllocPlastic.sharePct,
+    petActivityKg: sharedAllocPet.petKg,
+    plasticActivityKg: sharedAllocPlastic.plasticKg,
+    basis: "PET process input kg vs Plastic sold kg",
   };
 
   const plasticMaterialTypes = sqlite.prepare(
@@ -777,7 +835,7 @@ export async function GET() {
     saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, plasticMaterialTypes, processingContractors, processingContractorLedger,
     processingContractorSummaries, partnerSettlements, partnerAdvances, buyerAdvances, buyerSummary, borrowingRepayments, totals,
     buyerAdvanceBalance, partnerLentTotal,
-    personAccountTotals, personAccountTotalsFlat, externalLoanOutstanding, reconciliation, cashflowBreakdown, businessSplit,
+    personAccountTotals, personAccountTotalsFlat, externalLoanOutstanding, reconciliation, cashflowBreakdown, businessSplit, sharedExpenseSummary,
     // COMPANY is canonical; PET/PLASTIC mirrored so older UI still sees one shared book.
     cashBalance:{
       COMPANY: companyParts.book,
@@ -836,7 +894,7 @@ export async function POST(req: NextRequest) {
 
     if (body.action === "addOtherExpense") {
       const x = z.object({
-        mode: modeSchema,
+        mode: expenseModeSchema,
         expenseType: z.enum(["Electricity","Thread","GST / Admin","Infrastructure / Maintenance","Other"]),
         description: z.string().trim().optional().default(""),
         amount: z.number().positive(),

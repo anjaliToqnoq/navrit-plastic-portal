@@ -33,7 +33,7 @@ export default function InventoryPage() {
   const { mode } = useBusinessMode();
   const [data,setData] = useState<any>(null);
   const [tab,setTab] = useState("purchases");
-  const [expense,setExpense] = useState({expenseType:"Electricity",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),billingMonth:new Date().toISOString().slice(0,7),billingStartDate:"",billingEndDate:"",paidBy:"",fundingSource:"COMPANY" as FundingSource});
+  const [expense,setExpense] = useState({expenseType:"Electricity",scope:"SHARED" as "MODE"|"SHARED",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),billingMonth:new Date().toISOString().slice(0,7),billingStartDate:"",billingEndDate:"",paidBy:"",fundingSource:"COMPANY" as FundingSource});
   const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",saleDate:new Date().toISOString().slice(0,10),notes:""});
   const [useAdvance,setUseAdvance] = useState(true);
   const [editingSale,setEditingSale] = useState<number|null>(null);
@@ -179,8 +179,9 @@ export default function InventoryPage() {
   async function addExpense() {
     const amount=Number(expense.amount||0);
     if(amount<=0) { setMessage("Enter a valid expense amount"); return; }
-    const ok=await post("addOtherExpense",{mode,expenseType:expense.expenseType,description:expense.description,amount,expenseDate:expense.expenseDate,...(expense.expenseType==="Electricity"?{billingMonth:expense.billingMonth,billingStartDate:expense.billingStartDate,billingEndDate:expense.billingEndDate}:{}),paidBy:expense.paidBy||undefined,fundingSource:expense.fundingSource});
-    if(ok) setExpense({expenseType:"Electricity",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),billingMonth:new Date().toISOString().slice(0,7),billingStartDate:"",billingEndDate:"",paidBy:"",fundingSource:"COMPANY"});
+    const expenseMode = expense.scope === "SHARED" ? "SHARED" : mode;
+    const ok=await post("addOtherExpense",{mode:expenseMode,expenseType:expense.expenseType,description:expense.description,amount,expenseDate:expense.expenseDate,...(expense.expenseType==="Electricity"?{billingMonth:expense.billingMonth,billingStartDate:expense.billingStartDate,billingEndDate:expense.billingEndDate}:{}),paidBy:expense.paidBy||undefined,fundingSource:expense.fundingSource});
+    if(ok) setExpense({expenseType:"Electricity",scope:"SHARED",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),billingMonth:new Date().toISOString().slice(0,7),billingStartDate:"",billingEndDate:"",paidBy:"",fundingSource:"COMPANY"});
   }
 
   function openSalePayment(s:any) {
@@ -736,17 +737,21 @@ export default function InventoryPage() {
 
     {tab==="expenses" && <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="ad-card p-4"><p className="ad-muted text-xs">Total Expenses</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
-        <div className="ad-card p-4"><p className="ad-muted text-xs">Monthly Processing Expense</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode&&(x.expense_type==="Electricity"||x.expense_type==="Thread")).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
-        <div className="ad-card p-4"><p className="ad-muted text-xs">Other Admin & Maintenance</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode&&(x.expense_type==="GST / Admin"||x.expense_type==="Infrastructure / Maintenance"||x.expense_type==="Other")).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
-        <div className="ad-card p-4"><p className="ad-muted text-xs">Current Month</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode&&((x.expense_type==="Electricity"&&x.billing_month===new Date().toISOString().slice(0,7))||(!x.billing_month&&String(x.expense_date||"").startsWith(new Date().toISOString().slice(0,7))))).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">This mode + shared</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode===mode||x.mode==="SHARED").reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Shared (PET + Plastic)</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>x.mode==="SHARED").reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p><p className="ad-muted mt-1 text-[10px]">Split later by activity kg in reports</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Electricity + Thread</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>(x.mode===mode||x.mode==="SHARED")&&(x.expense_type==="Electricity"||x.expense_type==="Thread")).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
+        <div className="ad-card p-4"><p className="ad-muted text-xs">Current Month</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>(x.mode===mode||x.mode==="SHARED")&&((x.expense_type==="Electricity"&&x.billing_month===new Date().toISOString().slice(0,7))||(!x.billing_month&&String(x.expense_date||"").startsWith(new Date().toISOString().slice(0,7))))).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
       </div>
       <div className="ad-card p-4">
         <h2 className="mb-3 font-semibold">Add Business Expense</h2>
-        <p className="mb-3 text-xs ad-muted">Use this for costs outside a specific sale or purchase. Sale labour/loading stay on the Sale screen.</p>
+        <p className="mb-3 text-xs ad-muted">Electricity for both machines → choose <b>Shared (PET + Plastic)</b>. Company book records it once; Material Analysis allocates cost per kg by activity.</p>
         <div className="grid gap-2 md:grid-cols-6">
-          <select className="ad-input" value={expense.expenseType} onChange={e=>setExpense({...expense,expenseType:e.target.value})}>
+          <select className="ad-input" value={expense.expenseType} onChange={e=>setExpense({...expense,expenseType:e.target.value,scope:e.target.value==="Electricity"?expense.scope:"MODE"})}>
             <option>Electricity</option><option>Thread</option><option>GST / Admin</option><option>Infrastructure / Maintenance</option><option>Other</option>
+          </select>
+          <select className="ad-input" value={expense.scope} onChange={e=>setExpense({...expense,scope:e.target.value as "MODE"|"SHARED"})}>
+            <option value="SHARED">Shared (PET + Plastic)</option>
+            <option value="MODE">{mode} only</option>
           </select>
           <input className="ad-input" type="number" min="0" placeholder="Amount" value={expense.amount} onChange={e=>setExpense({...expense,amount:e.target.value})}/>
           <input className="ad-input" type="date" value={expense.expenseDate} onChange={e=>setExpense({...expense,expenseDate:e.target.value})}/>
@@ -757,8 +762,8 @@ export default function InventoryPage() {
         </div>
         <button className="ad-btn ad-btn-primary mt-3" onClick={addExpense}>Save Expense</button>
       </div>
-      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Payment Date</th><th>Category</th><th>Billing Period</th><th>Description</th><th>Amount</th><th>Payment done by</th><th>Paid from</th></tr></thead><tbody>
-        {(data.otherExpenses||[]).filter((x:any)=>x.mode===mode).map((x:any)=><tr key={x.id}><td>{x.expense_date}</td><td>{x.expense_type}</td><td>{x.expense_type==="Electricity" ? (x.billing_start_date&&x.billing_end_date ? `${x.billing_start_date} → ${x.billing_end_date}` : x.billing_month||"—") : "Expense date month"}</td><td>{x.description||"—"}</td><td>₹{Number(x.amount).toFixed(2)}</td><td>{x.paid_by||"—"}</td><td>{x.funding_source==="OWN_POCKET"?"Own pocket":"Company cash"}</td></tr>)}
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Payment Date</th><th>Scope</th><th>Category</th><th>Billing Period</th><th>Description</th><th>Amount</th><th>Payment done by</th><th>Paid from</th></tr></thead><tbody>
+        {(data.otherExpenses||[]).filter((x:any)=>x.mode===mode||x.mode==="SHARED").map((x:any)=><tr key={x.id}><td>{x.expense_date}</td><td>{x.mode==="SHARED"?"Shared":x.mode}</td><td>{x.expense_type}</td><td>{x.expense_type==="Electricity" ? (x.billing_start_date&&x.billing_end_date ? `${x.billing_start_date} → ${x.billing_end_date}` : x.billing_month||"—") : "Expense date month"}</td><td>{x.description||"—"}</td><td>₹{Number(x.amount).toFixed(2)}</td><td>{x.paid_by||"—"}</td><td>{x.funding_source==="OWN_POCKET"?"Own pocket":"Company cash"}</td></tr>)}
       </tbody></table></div>
     </div>}
 

@@ -96,6 +96,8 @@ export default function ProcessingPage() {
   const [popupWageAmount, setPopupWageAmount] = useState("");
   const [popupPayOutstanding, setPopupPayOutstanding] = useState(true);
   const [popupAdvanceAmount, setPopupAdvanceAmount] = useState("");
+  const [popupAdvancePaidBy, setPopupAdvancePaidBy] = useState("");
+  const [popupAdvanceDate, setPopupAdvanceDate] = useState(today);
   const [popupDate, setPopupDate] = useState(today);
 
   const load = useCallback(async () => {
@@ -285,8 +287,8 @@ export default function ProcessingPage() {
 
   async function giveAdvanceFromPopup() {
     if (!detail) return;
-    if (!popupPaidBy) {
-      setMessage("Choose who paid.");
+    if (!popupAdvancePaidBy) {
+      setMessage("Choose who paid the advance.");
       return;
     }
     const amountPerWorker = Number(popupAdvanceAmount || 0);
@@ -301,13 +303,14 @@ export default function ProcessingPage() {
       taskType: tasks[0],
       paymentKind: "ADVANCE",
       amountPerWorker,
-      paymentDate: popupDate,
-      paidBy: popupPaidBy,
+      paymentDate: popupAdvanceDate,
+      paidBy: popupAdvancePaidBy,
       notes: "",
     });
     if (ok) {
       setPopupAdvanceAmount("");
-      setPopupPaidBy("");
+      setPopupAdvancePaidBy("");
+      setPopupAdvanceDate(today);
     }
   }
 
@@ -402,6 +405,8 @@ export default function ProcessingPage() {
     setPopupWageAmount("");
     setPopupPayOutstanding(true);
     setPopupAdvanceAmount("");
+    setPopupAdvancePaidBy("");
+    setPopupAdvanceDate(today);
     setPopupDate(today);
   }
 
@@ -815,6 +820,21 @@ export default function ProcessingPage() {
 
             <div className="mb-4 space-y-3 rounded-xl border border-[var(--ad-border)] p-3">
               <h4 className="font-semibold">Give advance</h4>
+              <label className="ad-field">
+                <span className="ad-field-label">Date</span>
+                <input
+                  className="ad-input"
+                  type="date"
+                  value={popupAdvanceDate}
+                  onChange={(e) => setPopupAdvanceDate(e.target.value)}
+                />
+              </label>
+              <PersonSelect
+                value={popupAdvancePaidBy}
+                onChange={setPopupAdvancePaidBy}
+                required
+                label="Payment done by"
+              />
               <input
                 className="ad-input"
                 type="number"
@@ -827,7 +847,7 @@ export default function ProcessingPage() {
               <button
                 type="button"
                 className="ad-btn ad-btn-primary w-full"
-                disabled={busy || !(Number(popupAdvanceAmount) > 0) || !popupPaidBy}
+                disabled={busy || !(Number(popupAdvanceAmount) > 0) || !popupAdvancePaidBy}
                 onClick={() => void giveAdvanceFromPopup()}
               >
                 Save advance

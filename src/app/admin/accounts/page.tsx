@@ -571,30 +571,23 @@ export default function AccountsPage() {
       .forEach((x) => {
         const paidBy = String(x.paid_by || "");
         const partner = String(x.person ?? "");
+        // One list row only — company book is hit once. Who handed cash stays in the description
+        // (and in each partner's wallet math), so it does not look like ₹amount × 2 left the company.
+        const note = x.notes ? String(x.notes) : "";
+        const who = paidBy && paidBy !== partner
+          ? `Company repaid ${partner}; cash handed by ${paidBy}`
+          : paidBy
+            ? `Company repaid ${partner} (by ${paidBy})`
+            : `Company repaid ${partner}`;
         rows.push({
           date: String(x.settlement_date ?? ""),
           type: "Partner settlement",
-          description: x.notes
-            ? String(x.notes)
-            : paidBy
-              ? `Company repaid ${partner} (done by ${paidBy})`
-              : `Company repaid ${partner}`,
+          description: note || who,
           person: partner,
           amount: Number(x.amount || 0),
           direction: "out",
           funding: "Company cash",
         });
-        if (paidBy && paidBy !== partner) {
-          rows.push({
-            date: String(x.settlement_date ?? ""),
-            type: "Settlement payout",
-            description: `Paid settlement to ${partner} on behalf of company`,
-            person: paidBy,
-            amount: Number(x.amount || 0),
-            direction: "out",
-            funding: "Company cash",
-          });
-        }
       });
 
     return rows.sort((a, b) => b.date.localeCompare(a.date));

@@ -69,9 +69,15 @@ function withTransaction<T>(fn: () => T): T {
   }
 }
 
-/** PET ledger stock key: Natural (mixed) or Red. */
+const RED_SALE_VARIANTS = ["Red Bottle", "Red Bottle Cap", "Red"] as const;
+
+function isRedSaleVariant(variant: string) {
+  return (RED_SALE_VARIANTS as readonly string[]).includes(variant.trim());
+}
+
+/** PET ledger stock key: Natural (mixed) or Red Bottles pool. */
 function saleMaterialName(materialCategory: string, materialVariant: string) {
-  if (materialCategory === "Red Bottles" || materialVariant === "Red") return "Red Bottles";
+  if (materialCategory === "Red Bottles" || isRedSaleVariant(materialVariant)) return "Red Bottles";
   return "Natural Bottles";
 }
 
@@ -1130,12 +1136,14 @@ export async function POST(req: NextRequest) {
         purchaseType: z.enum(["NORMAL", "SUPPLIER_CREDIT", "BORROWED_FUND"]),
         quantityKg: z.number().positive(),
         ratePerKg: z.number().nonnegative(),
+        paidAmount: z.number().nonnegative().optional(),
         purchaseDate: dateSchema,
         paymentDate: dateSchema.optional(),
         paidBy: optionalAccountPersonSchema,
+        fundingSource: optionalFundingSourceSchema,
         notes: z.string().trim().optional().default(""),
       }).parse(body);
-      const existing = sqlite.prepare("SELECT id, paid_amount, material_id, material_name as existing_material_name, supplier_id as existing_supplier_id FROM purchases WHERE id=? AND mode=?").get(s.purchaseId, s.mode) as {id:number;paid_amount:number;material_id:number|null;existing_material_name:string;existing_supplier_id:number|null} | undefined;
+      const existing = sqlite.prepare("SELECT id, paid_amount, material_id, material_name as existing_material_name, supplier_id as existing_supplier_id, paid_by FROM purchases WHERE id=? AND mode=?").get(s.purchaseId, s.mode) as {id:number;paid_amount:number;material_id:number|null;existing_material_name:string;existing_supplier_id:number|null;paid_by:string} | undefined;
       if (!existing) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
       let stockName: string;
       try {
@@ -1145,34 +1153,66 @@ export async function POST(req: NextRequest) {
       }
       const variant = stockName === "Red Bottles" ? "Red" : "Mixed";
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
-      if (existing.paid_amount > total + 0.005) return NextResponse.json({ error: "Purchase total cannot be less than amount already paid" }, { status: 400 });
-      const credit = Math.round((total - existing.paid_amount) * 100) / 100;
       if (!s.supplierId) return NextResponse.json({ error: "Vendor is required for every purchase" }, { status: 400 });
+
+      const advanceApplied = Number((sqlite.prepare(`
+        SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments
+        WHERE purchase_id=? AND (payment_type='ADVANCE' OR COALESCE(payment_mode,'')='Advance')
+      `).get(s.purchaseId) as any)?.n || 0);
+      const cashRows = sqlite.prepare(`
+        SELECT id, amount, payment_date, paid_by, funding_source FROM vendor_payments
+        WHERE purchase_id=? AND payment_type<>'ADVANCE' AND COALESCE(payment_mode,'')<>'Advance'
+        ORDER BY id ASC
+      `).all(s.purchaseId) as Array<{id:number;amount:number;payment_date:string;paid_by:string;funding_source:string}>;
+
+      let cashPaid: number;
+      if (s.paidAmount === undefined) {
+        cashPaid = Math.round(cashRows.reduce((n, r) => n + Number(r.amount || 0), 0) * 100) / 100;
+      } else {
+        cashPaid = Math.min(s.paidAmount, Math.max(0, Math.round((total - advanceApplied) * 100) / 100));
+      }
+      if (cashPaid > 0.005 && !(s.paidBy || existing.paid_by || cashRows[0]?.paid_by)) {
+        return NextResponse.json({ error: "Please select Payment done by when paying the vendor" }, { status: 400 });
+      }
+      const paid = Math.round((cashPaid + advanceApplied) * 100) / 100;
+      if (paid > total + 0.005) {
+        return NextResponse.json({ error: "Paid amount cannot exceed purchase total" }, { status: 400 });
+      }
+      const credit = Math.round((total - paid) * 100) / 100;
       const materialId = s.materialId ?? existing.material_id ?? null;
-      sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, credit_amount=?, purchase_date=?, paid_by=?, notes=?, material_variant=?, updated_at=? WHERE id=? AND mode=?`)
-        .run(materialId, stockName, s.supplierId, s.purchaseType, s.quantityKg, s.ratePerKg, total, credit, s.purchaseDate, s.paidBy ?? "", s.notes, variant, nowIso(), s.purchaseId, s.mode);
+      const paidBy = s.paidBy || existing.paid_by || cashRows[0]?.paid_by || "";
+      const paymentDoneDate = s.paymentDate || cashRows[0]?.payment_date || s.purchaseDate;
+      const funding = s.fundingSource || cashRows[0]?.funding_source || "COMPANY";
+
+      sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, paid_amount=?, credit_amount=?, purchase_date=?, paid_by=?, notes=?, material_variant=?, updated_at=? WHERE id=? AND mode=?`)
+        .run(materialId, stockName, s.supplierId, s.purchaseType, s.quantityKg, s.ratePerKg, total, paid, credit, s.purchaseDate, paidBy, s.notes, variant, nowIso(), s.purchaseId, s.mode);
       sqlite.prepare("UPDATE inventory_transactions SET material_id=?, material_name=?, quantity_kg=?, amount=?, transaction_date=?, notes=? WHERE purchase_id=? AND transaction_type='PURCHASE'")
         .run(materialId, stockName, s.quantityKg, total, s.purchaseDate, s.notes, s.purchaseId);
       if (s.supplierId !== existing.existing_supplier_id) {
         sqlite.prepare("UPDATE vendor_payments SET supplier_id=? WHERE purchase_id=?").run(s.supplierId, s.purchaseId);
       }
-      // Keep Accounts correct: payment date can differ from purchase date (paid after cash came in).
-      if (s.paymentDate || s.paidBy) {
-        const payRows = sqlite.prepare(`
-          SELECT id FROM vendor_payments
-          WHERE purchase_id=? AND payment_type<>'ADVANCE' AND COALESCE(payment_mode,'')<>'Advance'
-        `).all(s.purchaseId) as Array<{ id: number }>;
-        for (const row of payRows) {
-          if (s.paymentDate) {
-            sqlite.prepare("UPDATE vendor_payments SET payment_date=? WHERE id=?").run(s.paymentDate, row.id);
+
+      // Sync cash vendor payment rows with edited paid-to-vendor amount.
+      if (cashPaid > 0.005) {
+        if (cashRows.length) {
+          const [first, ...rest] = cashRows;
+          sqlite.prepare("UPDATE vendor_payments SET amount=?, payment_date=?, paid_by=?, funding_source=?, supplier_id=? WHERE id=?")
+            .run(cashPaid, paymentDoneDate, paidBy, funding, s.supplierId, first.id);
+          for (const row of rest) {
+            sqlite.prepare("DELETE FROM vendor_payments WHERE id=?").run(row.id);
           }
-          if (s.paidBy) {
-            sqlite.prepare("UPDATE vendor_payments SET paid_by=? WHERE id=?").run(s.paidBy, row.id);
-          }
+        } else {
+          sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+            .run(s.mode, s.supplierId, s.purchaseId, "PURCHASE", cashPaid, paymentDoneDate, "Cash", s.notes, paidBy, nowIso(), funding);
+        }
+      } else {
+        for (const row of cashRows) {
+          sqlite.prepare("DELETE FROM vendor_payments WHERE id=?").run(row.id);
         }
       }
+
       assertNoNegativeStock(s.mode, [existing.existing_material_name, stockName]);
-      return json({ ok: true, total, paid: existing.paid_amount, credit, materialName: stockName });
+      return json({ ok: true, total, paid, credit, materialName: stockName });
     }
 
     // Fix payment date / done-by on already-paid purchases without rewriting the whole purchase.
@@ -1766,8 +1806,8 @@ export async function POST(req: NextRequest) {
           if (item.materialCategory === "Natural Bottles" && !["Green","White","White Milk",""].includes(item.materialVariant)) {
             return NextResponse.json({ error: "Natural Bottles can be Green, White or White Milk" }, { status: 400 });
           }
-          if (item.materialCategory === "Red Bottles" && item.materialVariant !== "Red") {
-            return NextResponse.json({ error: "Red Bottles must use Red type" }, { status: 400 });
+          if (item.materialCategory === "Red Bottles" && !isRedSaleVariant(item.materialVariant || "Red Bottle")) {
+            return NextResponse.json({ error: "Red Bottles subtype must be Red Bottle or Red Bottle Cap" }, { status: 400 });
           }
         } else {
           try { requireActivePlasticType(item.materialCategory); }

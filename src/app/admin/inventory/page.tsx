@@ -260,12 +260,15 @@ export default function InventoryPage() {
     const clientError = validatePurchaseForm();
     if (clientError) { setMessage(clientError); return; }
     const m=materials.find((x:Material)=>String(x.id)===purchase.materialId);
+    const cashPaid=purchase.paidAmount===""?undefined:Number(purchase.paidAmount);
     const ok=await post("updatePurchase",{
       purchaseId:editingPurchase, mode, materialId:m?.id, materialName:purchase.materialName||m?.name_en,
       materialVariant:purchase.materialName==="Red Bottles"?"Red":"Mixed",
       supplierId:purchase.supplierId?Number(purchase.supplierId):undefined, purchaseType:purchase.purchaseType,
       quantityKg:Number(purchase.quantityKg), ratePerKg:Number(purchase.ratePerKg),
+      paidAmount:cashPaid,
       paidBy:purchase.paidBy||undefined,
+      fundingSource:purchase.fundingSource,
       purchaseDate:purchase.purchaseDate,
       paymentDate:purchase.paymentDate||undefined,
       notes:purchase.notes
@@ -675,11 +678,11 @@ export default function InventoryPage() {
               </select>
             ) : (
               <>
-                <select className="ad-input" value={item.materialCategory} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialCategory:e.target.value,materialVariant:e.target.value==="Red Bottles"?"Red":"Green"}:x))}>
+                <select className="ad-input" value={item.materialCategory} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialCategory:e.target.value,materialVariant:e.target.value==="Red Bottles"?"Red Bottle":"Green"}:x))}>
                   <option>Natural Bottles</option><option>Red Bottles</option>
                 </select>
-                <select className="ad-input" value={item.materialVariant} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialVariant:e.target.value}:x))}>
-                  {item.materialCategory==="Red Bottles" ? <option value="Red">Red</option> : <><option value="Green">Green</option><option value="White">White</option><option value="White Milk">White Milk</option></>}
+                <select className="ad-input" value={item.materialVariant==="Red"?"Red Bottle":item.materialVariant} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialVariant:e.target.value}:x))}>
+                  {item.materialCategory==="Red Bottles" ? <><option value="Red Bottle">Red Bottle</option><option value="Red Bottle Cap">Red Bottle Cap</option></> : <><option value="Green">Green</option><option value="White">White</option><option value="White Milk">White Milk</option></>}
                 </select>
               </>
             )}

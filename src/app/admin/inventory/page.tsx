@@ -34,7 +34,7 @@ export default function InventoryPage() {
   const [data,setData] = useState<any>(null);
   const [tab,setTab] = useState("purchases");
   const [expense,setExpense] = useState({expenseType:"Electricity",scope:"SHARED" as "MODE"|"SHARED",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),billingMonth:new Date().toISOString().slice(0,7),billingStartDate:"",billingEndDate:"",paidBy:"",fundingSource:"COMPANY" as FundingSource});
-  const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",saleDate:new Date().toISOString().slice(0,10),notes:""});
+  const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",labourMode:"CONTRACT" as "CONTRACT"|"DAILY_WAGE",saleDate:new Date().toISOString().slice(0,10),notes:""});
   const [useAdvance,setUseAdvance] = useState(true);
   const [editingSale,setEditingSale] = useState<number|null>(null);
   const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
@@ -92,7 +92,7 @@ export default function InventoryPage() {
   const currentKg=filteredInventory.reduce((n:any,x:any)=>n+Number(x.quantityKg||0),0);
   const saleGrossAmount=saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0)*(Number(x.ratePerKg)||0),0);
   const saleTotalWeight=saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0),0);
-  const saleLabourCharges=mode==="PET"?saleTotalWeight*2:0;
+  const saleLabourCharges=mode==="PET"&&sale.labourMode==="CONTRACT"?saleTotalWeight*2:0;
   const saleLoadingCharges=Number(sale.loadingCharges||0);
   const saleFinalAmount=Math.max(0,saleGrossAmount-saleLabourCharges-saleLoadingCharges);
   const modeBuyers=useMemo(()=>{
@@ -160,19 +160,19 @@ export default function InventoryPage() {
 
   function resetSaleForm() {
     setEditingSale(null);
-    setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",saleDate:new Date().toISOString().slice(0,10),notes:""});
+    setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",labourMode:"CONTRACT",saleDate:new Date().toISOString().slice(0,10),notes:""});
     setSaleItems([defaultSaleItem()]);
   }
 
   async function addSale() {
     if (!sale.customerName.trim()) { setMessage("Select a buyer from the list (add in Vendors & Buyers first)"); return; }
-    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),saleDate:sale.saleDate,useAdvance,notes:sale.notes});
+    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),labourMode:sale.labourMode,saleDate:sale.saleDate,useAdvance,notes:sale.notes});
     if(ok) resetSaleForm();
   }
 
   async function editSale() {
     if(editingSale===null) return;
-    const ok=await post("updateSale",{saleId:editingSale,mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),loadingCharges:Number(sale.loadingCharges||0),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
+    const ok=await post("updateSale",{saleId:editingSale,mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),loadingCharges:Number(sale.loadingCharges||0),labourMode:sale.labourMode,receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
     if(ok) resetSaleForm();
   }
 
@@ -189,6 +189,7 @@ export default function InventoryPage() {
       receivedBy:latestPayment?.received_by||"",
       paymentMode:latestPayment?.payment_mode||"Cash",
       loadingCharges:String(s.loading_charges??""),
+      labourMode:(s.labour_mode==="DAILY_WAGE" || (Number(s.labour_charges||0)<=0 && mode==="PET")) ? "DAILY_WAGE" : "CONTRACT",
       saleDate:s.sale_date,
       notes:s.notes||""
     });
@@ -725,7 +726,19 @@ export default function InventoryPage() {
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-4">
           <span className="ad-input flex items-center font-semibold">Gross Sale: ₹{saleGrossAmount.toFixed(2)}</span>
-          {mode==="PET" && <span className="ad-input flex items-center">Labour Charges (₹2/kg): -₹{saleLabourCharges.toFixed(2)}</span>}
+          {mode==="PET" && (
+            <select className="ad-input" value={sale.labourMode} onChange={e=>setSale({...sale,labourMode:e.target.value as "CONTRACT"|"DAILY_WAGE"})}>
+              <option value="CONTRACT">Labour: Contract ₹2/kg</option>
+              <option value="DAILY_WAGE">Labour: Daily wage (no ₹2/kg)</option>
+            </select>
+          )}
+          {mode==="PET" && (
+            <span className="ad-input flex items-center">
+              {sale.labourMode==="CONTRACT"
+                ? <>Contract labour (₹2/kg): -₹{saleLabourCharges.toFixed(2)}</>
+                : <>Daily wage — pay via Labour Management (no sale deduction)</>}
+            </span>
+          )}
           <input className="ad-input" type="number" min="0" placeholder="Loading Charges" value={sale.loadingCharges||""} onChange={e=>setSale({...sale,loadingCharges:e.target.value})}/>
           <span className="ad-input flex items-center font-semibold">Final Amount: ₹{saleFinalAmount.toFixed(2)}</span>
           {buyerAdvanceAvail>0 && editingSale===null && <label className="ad-input flex items-center gap-2 text-sm md:col-span-4 border border-[var(--ad-accent)]">
@@ -738,7 +751,7 @@ export default function InventoryPage() {
           <input className="ad-input md:col-span-2" placeholder="Notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
           <button className="ad-btn ad-btn-primary" onClick={editingSale ? editSale : addSale}>{editingSale ? "Update Sale" : "Save Full Truck Sale"}</button>{editingSale&&<button className="ad-btn ad-btn-ghost" onClick={resetSaleForm}>Cancel</button>}
         </div>
-        <p className="mt-2 text-xs ad-muted">{mode==="PET"?"Processing labour is automatically ₹2/kg for every PET sale.":"Plastic sales use material types with no ₹2/kg process labour deduction."} Loading charges are sale-specific. GST is intentionally not included for now.</p>
+        <p className="mt-2 text-xs ad-muted">{mode==="PET"?"Choose Contract ₹2/kg (contractor earn) or Daily wage (mark/pay attendance in Labour Management — sale amount is not reduced).":"Plastic sales use material types with no ₹2/kg process labour deduction."} Loading charges are sale-specific. GST is intentionally not included for now.</p>
       </div>
       {salePay && <div className="ad-card p-4 border border-[var(--ad-accent)]">
         <h3 className="mb-3 text-sm font-semibold">Receive sale payment — sale #{salePay.saleId}</h3>

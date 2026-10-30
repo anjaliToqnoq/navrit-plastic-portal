@@ -229,6 +229,7 @@ function createDb() {
       gross_amount REAL NOT NULL DEFAULT 0,
       labour_charges REAL NOT NULL DEFAULT 0,
       loading_charges REAL NOT NULL DEFAULT 0,
+      labour_mode TEXT NOT NULL DEFAULT 'CONTRACT',
       received_amount REAL NOT NULL DEFAULT 0 CHECK(received_amount >= 0),
       credit_amount REAL NOT NULL DEFAULT 0 CHECK(credit_amount >= 0),
       sale_date TEXT NOT NULL,
@@ -428,6 +429,7 @@ function createDb() {
     "ALTER TABLE processing_manual_labour ADD COLUMN attendance_type TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE processing_manual_labour ADD COLUMN hours REAL NOT NULL DEFAULT 0",
     "ALTER TABLE processing_manual_labour ADD COLUMN payment_kind TEXT NOT NULL DEFAULT 'WAGE'",
+    "ALTER TABLE sales ADD COLUMN labour_mode TEXT NOT NULL DEFAULT 'CONTRACT'",
   ]) {
     try { sqlite.exec(migration); } catch { /* column already exists */ }
   }

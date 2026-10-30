@@ -165,6 +165,7 @@ export default function InventoryPage() {
   }
 
   async function addSale() {
+    if (!sale.customerName.trim()) { setMessage("Select a buyer from the list (add in Vendors & Buyers first)"); return; }
     const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),saleDate:sale.saleDate,useAdvance,notes:sale.notes});
     if(ok) resetSaleForm();
   }

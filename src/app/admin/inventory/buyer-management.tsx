@@ -22,6 +22,8 @@ export default function BuyerManagement({
   const sales = useMemo(() => ((data?.sales || []) as any[]).filter((s) => s.mode === mode), [data?.sales, mode]);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newBuyer, setNewBuyer] = useState({ name: "", phone: "", location: "", notes: "" });
   const [form, setForm] = useState({ buyerName: "", amount: "", advanceDate: today(), receivedBy: "", paymentMode: "Cash", notes: "" });
   const [busy, setBusy] = useState(false);
 
@@ -38,6 +40,23 @@ export default function BuyerManagement({
   const buyer = buyers.find((b) => key(b.name) === selected);
   const buyerAdvances = buyer ? advances.filter((a) => key(a.buyer_name) === selected) : [];
   const buyerSales = buyer ? sales.filter((s) => key(s.customer_name) === selected) : [];
+
+  async function addBuyer() {
+    if (!newBuyer.name.trim()) return;
+    setBusy(true);
+    const ok = await post("addBuyer", {
+      mode,
+      name: newBuyer.name.trim(),
+      phone: newBuyer.phone,
+      location: newBuyer.location,
+      notes: newBuyer.notes,
+    });
+    setBusy(false);
+    if (ok) {
+      setNewBuyer({ name: "", phone: "", location: "", notes: "" });
+      setShowAdd(false);
+    }
+  }
 
   async function giveAdvance(name?: string) {
     const buyerName = (name ?? form.buyerName).trim();
@@ -74,6 +93,29 @@ export default function BuyerManagement({
           <p className="ad-muted text-xs">Pending from buyers</p>
           <p className="mt-1 text-2xl font-bold">{money(totals.pending)}</p>
         </div>
+      </div>
+
+      <div className="ad-card p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="font-semibold">Add buyer</h3>
+            <p className="ad-muted text-xs">Save buyer here first — Sales form will only pick from this list.</p>
+          </div>
+          <button type="button" className="ad-btn ad-btn-primary" onClick={() => setShowAdd((v) => !v)}>
+            {showAdd ? "Close" : "+ Add buyer"}
+          </button>
+        </div>
+        {showAdd && (
+          <div className="grid gap-2 md:grid-cols-4">
+            <input className="ad-input" placeholder="Buyer name *" value={newBuyer.name} onChange={(e) => setNewBuyer({ ...newBuyer, name: e.target.value })} />
+            <input className="ad-input" placeholder="Contact number" value={newBuyer.phone} onChange={(e) => setNewBuyer({ ...newBuyer, phone: e.target.value })} />
+            <input className="ad-input" placeholder="Location" value={newBuyer.location} onChange={(e) => setNewBuyer({ ...newBuyer, location: e.target.value })} />
+            <input className="ad-input" placeholder="Notes" value={newBuyer.notes} onChange={(e) => setNewBuyer({ ...newBuyer, notes: e.target.value })} />
+            <button type="button" className="ad-btn ad-btn-primary md:col-span-4" disabled={busy || !newBuyer.name.trim()} onClick={() => void addBuyer()}>
+              Save buyer
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="ad-card p-4">
@@ -120,7 +162,7 @@ export default function BuyerManagement({
         </div>
         {filtered.length === 0 ? (
           <p className="ad-muted text-sm">
-            No buyers yet. Buyers appear here automatically when you save a sale, or when you record an advance above.
+            No buyers yet. Use <b>+ Add buyer</b> above, then pick them on the Sales form.
           </p>
         ) : (
           <div className="overflow-x-auto">

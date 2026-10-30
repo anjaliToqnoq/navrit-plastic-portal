@@ -241,21 +241,54 @@ function applyBuyerAdvanceToSale(mode: string, buyerName: string, saleId: number
   return applied;
 }
 
+function ensureBuyer(mode: string, name: string, phone = "", location = "") {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const existing = sqlite.prepare(
+    "SELECT id, phone, location FROM buyers WHERE mode=? AND lower(trim(name))=lower(?)"
+  ).get(mode, trimmed) as { id: number; phone: string; location: string } | undefined;
+  if (existing) {
+    const nextPhone = phone.trim() || existing.phone || "";
+    const nextLocation = location.trim() || existing.location || "";
+    if (nextPhone !== existing.phone || nextLocation !== existing.location) {
+      sqlite.prepare("UPDATE buyers SET phone=?, location=?, updated_at=? WHERE id=?")
+        .run(nextPhone, nextLocation, nowIso(), existing.id);
+    }
+    return existing.id;
+  }
+  const r = sqlite.prepare(
+    "INSERT INTO buyers (mode, name, phone, location, notes, active, created_at, updated_at) VALUES (?,?,?,?, '',1,?,?)"
+  ).run(mode, trimmed, phone.trim(), location.trim(), nowIso(), nowIso());
+  return Number(r.lastInsertRowid);
+}
+
 function buyerSummaryRows() {
   return sqlite.prepare(`
     WITH names AS (
+      SELECT mode, lower(trim(name)) AS k, MAX(name) AS name FROM buyers WHERE active=1 GROUP BY mode, lower(trim(name))
+      UNION
       SELECT mode, lower(trim(customer_name)) AS k, MAX(customer_name) AS name FROM sales GROUP BY mode, lower(trim(customer_name))
       UNION
       SELECT mode, lower(trim(buyer_name)) AS k, MAX(buyer_name) AS name FROM buyer_advances GROUP BY mode, lower(trim(buyer_name))
     ),
     uniq AS (SELECT mode, k, MAX(name) AS name FROM names GROUP BY mode, k)
     SELECT u.mode, u.name,
+      COALESCE((SELECT b.id FROM buyers b WHERE b.mode=u.mode AND lower(trim(b.name))=u.k LIMIT 1), 0) AS id,
       ROUND(COALESCE((SELECT SUM(total_amount) FROM sales s WHERE s.mode=u.mode AND lower(trim(s.customer_name))=u.k),0),2) AS totalSales,
       ROUND(COALESCE((SELECT SUM(credit_amount) FROM sales s WHERE s.mode=u.mode AND lower(trim(s.customer_name))=u.k),0),2) AS pendingCredit,
       ROUND(COALESCE((SELECT SUM(quantity_kg) FROM sales s WHERE s.mode=u.mode AND lower(trim(s.customer_name))=u.k),0),2) AS totalKg,
       ROUND(COALESCE((SELECT SUM(amount) FROM buyer_advances a WHERE a.mode=u.mode AND lower(trim(a.buyer_name))=u.k),0),2) AS advanceGiven,
       ROUND(COALESCE((SELECT SUM(amount-used_amount) FROM buyer_advances a WHERE a.mode=u.mode AND lower(trim(a.buyer_name))=u.k),0),2) AS advanceBalance,
-      (SELECT MAX(phone) FROM sales s WHERE s.mode=u.mode AND lower(trim(s.customer_name))=u.k) AS phone
+      COALESCE(
+        (SELECT phone FROM buyers b WHERE b.mode=u.mode AND lower(trim(b.name))=u.k LIMIT 1),
+        (SELECT MAX(phone) FROM sales s WHERE s.mode=u.mode AND lower(trim(s.customer_name))=u.k),
+        ''
+      ) AS phone,
+      COALESCE(
+        (SELECT location FROM buyers b WHERE b.mode=u.mode AND lower(trim(b.name))=u.k LIMIT 1),
+        (SELECT MAX(location) FROM sales s WHERE s.mode=u.mode AND lower(trim(s.customer_name))=u.k),
+        ''
+      ) AS location
     FROM uniq u
     ORDER BY u.name COLLATE NOCASE, u.mode
   `).all();
@@ -579,6 +612,7 @@ export async function GET() {
   const partnerSettlements = sqlite.prepare("SELECT * FROM partner_settlements ORDER BY settlement_date DESC, id DESC LIMIT 500").all();
   const partnerAdvances = sqlite.prepare("SELECT * FROM partner_advances ORDER BY advance_date DESC, id DESC LIMIT 500").all();
   const buyerAdvances = sqlite.prepare("SELECT * FROM buyer_advances ORDER BY advance_date DESC, id DESC LIMIT 500").all();
+  const buyers = sqlite.prepare("SELECT * FROM buyers WHERE active=1 ORDER BY name COLLATE NOCASE, mode").all();
   const buyerSummary = buyerSummaryRows();
   const borrowingRepayments = sqlite.prepare("SELECT br.*, b.mode FROM borrowing_repayments br JOIN borrowings b ON b.id=br.borrowing_id ORDER BY br.repayment_date DESC, br.id DESC LIMIT 500").all();
   const sales = sqlite.prepare("SELECT * FROM sales ORDER BY sale_date DESC, id DESC LIMIT 200").all();
@@ -839,7 +873,7 @@ export async function GET() {
     materials, suppliers, lenders, inventory, preStock, purchases, borrowings, supplierCredit, vendorSummary, vendorPayments,
     sales, saleItems, salePayments, processingBatches, processingBatchItems, processingBatchOutputs, processingExpenses,
     saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, plasticMaterialTypes, processingContractors, processingContractorLedger,
-    processingContractorSummaries, partnerSettlements, partnerAdvances, buyerAdvances, buyerSummary, borrowingRepayments, totals,
+    processingContractorSummaries, partnerSettlements, partnerAdvances, buyers, buyerAdvances, buyerSummary, borrowingRepayments, totals,
     buyerAdvanceBalance, partnerLentTotal,
     personAccountTotals, personAccountTotalsFlat, externalLoanOutstanding, reconciliation, cashflowBreakdown, businessSplit, sharedExpenseSummary,
     // COMPANY is canonical; PET/PLASTIC mirrored so older UI still sees one shared book.
@@ -885,6 +919,38 @@ export async function POST(req: NextRequest) {
     if (body.action === "updateSupplier") {
       const s = z.object({ supplierId: z.number().int().positive(), name: z.string().trim().min(1), phone: z.string().trim().optional().default(""), location: z.string().trim().optional().default(""), notes: z.string().trim().optional().default("") }).parse(body);
       sqlite.prepare("UPDATE suppliers SET name=?, phone=?, location=?, notes=?, updated_at=? WHERE id=?").run(s.name, s.phone, s.location, s.notes, nowIso(), s.supplierId);
+      return json({ ok: true });
+    }
+
+    if (body.action === "addBuyer") {
+      const s = z.object({
+        mode: modeSchema,
+        name: z.string().trim().min(1, "Buyer name is required"),
+        phone: z.string().trim().optional().default(""),
+        location: z.string().trim().optional().default(""),
+        notes: z.string().trim().optional().default(""),
+      }).parse(body);
+      const exists = sqlite.prepare("SELECT id FROM buyers WHERE mode=? AND lower(trim(name))=lower(?)").get(s.mode, s.name) as {id:number}|undefined;
+      if (exists) return NextResponse.json({ error: "Buyer already exists for this mode" }, { status: 400 });
+      const r = sqlite.prepare("INSERT INTO buyers (mode, name, phone, location, notes, active, created_at, updated_at) VALUES (?,?,?,?,?,1,?,?)")
+        .run(s.mode, s.name, s.phone, s.location, s.notes, nowIso(), nowIso());
+      return json({ ok: true, id: Number(r.lastInsertRowid) });
+    }
+
+    if (body.action === "updateBuyer") {
+      const s = z.object({
+        buyerId: z.number().int().positive(),
+        name: z.string().trim().min(1),
+        phone: z.string().trim().optional().default(""),
+        location: z.string().trim().optional().default(""),
+        notes: z.string().trim().optional().default(""),
+      }).parse(body);
+      const row = sqlite.prepare("SELECT id, mode FROM buyers WHERE id=?").get(s.buyerId) as {id:number;mode:string}|undefined;
+      if (!row) return NextResponse.json({ error: "Buyer not found" }, { status: 404 });
+      const clash = sqlite.prepare("SELECT id FROM buyers WHERE mode=? AND lower(trim(name))=lower(?) AND id<>?").get(row.mode, s.name, s.buyerId) as {id:number}|undefined;
+      if (clash) return NextResponse.json({ error: "Another buyer already uses this name" }, { status: 400 });
+      sqlite.prepare("UPDATE buyers SET name=?, phone=?, location=?, notes=?, updated_at=? WHERE id=?")
+        .run(s.name, s.phone, s.location, s.notes, nowIso(), s.buyerId);
       return json({ ok: true });
     }
 
@@ -1014,6 +1080,7 @@ export async function POST(req: NextRequest) {
         paymentMode: z.string().trim().min(1).optional().default("Cash"),
         notes: z.string().trim().optional().default(""),
       }).parse(body);
+      ensureBuyer(s.mode, s.buyerName);
       sqlite.prepare("INSERT INTO buyer_advances (mode, buyer_name, amount, used_amount, advance_date, received_by, payment_mode, notes, created_at) VALUES (?,?,?,0,?,?,?,?,?)")
         .run(s.mode, s.buyerName, s.amount, s.advanceDate, s.receivedBy, s.paymentMode, s.notes, nowIso());
       return json({ ok: true });
@@ -1848,6 +1915,7 @@ export async function POST(req: NextRequest) {
       const r = sqlite.prepare("INSERT INTO sales (mode,customer_name,phone,location,material_category,material_variant,quantity_kg,rate_per_kg,gross_amount,labour_charges,loading_charges,total_amount,received_amount,credit_amount,sale_date,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
         .run(s.mode,s.customerName,s.phone,s.location,primary.materialCategory,primaryVariant,totalWeight,0,grossAmount,labourCharges,loadingCharges,total,received,credit,s.saleDate,s.notes,nowIso(),nowIso());
       const saleId = Number(r.lastInsertRowid);
+      ensureBuyer(s.mode, s.customerName, s.phone, s.location);
 
       for (let i = 0; i < s.items.length; i++) {
         const item = s.items[i];

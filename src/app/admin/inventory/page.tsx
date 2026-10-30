@@ -95,9 +95,27 @@ export default function InventoryPage() {
   const saleLabourCharges=mode==="PET"?saleTotalWeight*2:0;
   const saleLoadingCharges=Number(sale.loadingCharges||0);
   const saleFinalAmount=Math.max(0,saleGrossAmount-saleLabourCharges-saleLoadingCharges);
-  const buyerAdvanceAvail=((data?.buyerSummary||[]) as any[]).find((b:any)=>b.mode===mode&&String(b.name||"").trim().toLowerCase()===sale.customerName.trim().toLowerCase())?.advanceBalance||0;
+  const modeBuyers=useMemo(()=>{
+    const registered=((data?.buyers||[]) as any[]).filter((b:any)=>b.mode===mode&&b.name);
+    if (registered.length) return registered;
+    // Fallback until buyers table is populated from history.
+    return ((data?.buyerSummary||[]) as any[]).filter((b:any)=>b.mode===mode&&b.name);
+  }, [data?.buyers, data?.buyerSummary, mode]);
+  const selectedBuyer=((data?.buyerSummary||[]) as any[]).find((b:any)=>b.mode===mode&&String(b.name||"").trim().toLowerCase()===sale.customerName.trim().toLowerCase());
+  const buyerAdvanceAvail=Number(selectedBuyer?.advanceBalance||0);
   const advanceWillApply=useAdvance?Math.min(Number(buyerAdvanceAvail),saleFinalAmount):0;
   const cashAfterAdvance=Math.max(0,saleFinalAmount-advanceWillApply);
+  function pickBuyer(name: string) {
+    const key=name.trim().toLowerCase();
+    const buyer = modeBuyers.find((b:any)=>String(b.name||"").trim().toLowerCase()===key)
+      || ((data?.buyerSummary||[]) as any[]).find((b:any)=>b.mode===mode&&String(b.name||"").trim().toLowerCase()===key);
+    setSale({
+      ...sale,
+      customerName: buyer?.name || name,
+      phone: buyer?.phone || "",
+      location: buyer?.location || "",
+    });
+  }
 
   async function post(action:string, body:any) {
     const r=await fetch("/api/admin/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...body})});
@@ -664,11 +682,22 @@ export default function InventoryPage() {
       <div className="ad-card p-4">
         <h2 className="mb-3 font-semibold">{editingSale ? `Edit Sale #${editingSale}` : "Add Sale — One Go / Full Truck"}</h2>
         <div className="grid gap-2 md:grid-cols-4">
-          <input className="ad-input" placeholder="Customer / Buyer name" value={sale.customerName} onChange={e=>setSale({...sale,customerName:e.target.value})}/>
+          <AdminSelect
+            label="Buyer"
+            required
+            placeholder={modeBuyers.length ? "Select buyer" : "Add buyer in Vendors & Buyers first"}
+            value={sale.customerName}
+            onChange={(v) => pickBuyer(v)}
+            options={[
+              { value: "", label: modeBuyers.length ? "Select buyer" : "No buyers yet — add in Vendors & Buyers" },
+              ...modeBuyers.map((b:any) => ({ value: b.name, label: b.name })),
+            ]}
+          />
           <input className="ad-input" placeholder="Contact number" value={sale.phone} onChange={e=>setSale({...sale,phone:e.target.value})}/>
           <input className="ad-input" placeholder="Location" value={sale.location} onChange={e=>setSale({...sale,location:e.target.value})}/>
           <input className="ad-input" type="date" value={sale.saleDate} onChange={e=>setSale({...sale,saleDate:e.target.value})}/>
         </div>
+        <p className="mt-2 text-xs ad-muted">Buyer list comes from <a className="underline" href="/admin/vendors">Vendors &amp; Buyers → Buyers</a>. Add the buyer there first, then select here.</p>
         <div className="mt-3 space-y-2">
           {saleItems.map((item:any,i:number)=><div key={i} className="grid gap-2 md:grid-cols-6">
             {mode==="PLASTIC" ? (

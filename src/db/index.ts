@@ -563,7 +563,40 @@ function createDb() {
     );
     CREATE INDEX IF NOT EXISTS buyer_advances_buyer_idx
       ON buyer_advances(mode, buyer_name);
+    CREATE TABLE IF NOT EXISTS buyers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      name TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      location TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(mode, name COLLATE NOCASE)
+    );
+    CREATE INDEX IF NOT EXISTS buyers_mode_name_idx ON buyers(mode, name);
   `);
+  // Backfill buyers from historical sales / advances (one-time safe upsert).
+  try {
+    sqlite.exec(`
+      INSERT OR IGNORE INTO buyers (mode, name, phone, location, notes, active, created_at, updated_at)
+      SELECT mode, name, phone, location, '', 1, datetime('now'), datetime('now')
+      FROM (
+        SELECT mode, trim(customer_name) AS name,
+               COALESCE(MAX(phone),'') AS phone,
+               COALESCE(MAX(location),'') AS location
+        FROM sales
+        WHERE trim(customer_name) <> ''
+        GROUP BY mode, lower(trim(customer_name))
+        UNION
+        SELECT mode, trim(buyer_name) AS name, '' AS phone, '' AS location
+        FROM buyer_advances
+        WHERE trim(buyer_name) <> ''
+        GROUP BY mode, lower(trim(buyer_name))
+      )
+    `);
+  } catch { /* table may be brand new in same boot */ }
   // Allow SHARED mode on other_expenses (common bills like electricity for both machines).
   try {
     const otherSql = String((sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='other_expenses'").get() as { sql?: string } | undefined)?.sql || "");

@@ -1903,8 +1903,8 @@ export async function POST(req: NextRequest) {
           if (item.materialCategory === "Natural Bottles" && !["Green","White","White Milk",""].includes(item.materialVariant)) {
             return NextResponse.json({error:"Natural Bottles can be Green, White or White Milk"},{status:400});
           }
-          if (item.materialCategory === "Red Bottles" && item.materialVariant !== "Red") {
-            return NextResponse.json({error:"Red Bottles must use Red type"},{status:400});
+          if (item.materialCategory === "Red Bottles" && !isRedSaleVariant(item.materialVariant || "Red Bottle")) {
+            return NextResponse.json({error:"Red Bottles subtype must be Red Bottle or Red Bottle Cap"},{status:400});
           }
         } else {
           try { requireActivePlasticType(item.materialCategory); }

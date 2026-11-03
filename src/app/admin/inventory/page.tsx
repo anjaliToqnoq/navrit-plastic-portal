@@ -73,6 +73,16 @@ export default function InventoryPage() {
           : first,
         materialVariant: "",
       })));
+      setPreStock((ps) => {
+        const isPlasticType = (data?.plasticMaterialTypes || []).some(
+          (t: any) => t.active && t.name === ps.materialName
+        );
+        return {
+          ...ps,
+          materialName: isPlasticType ? ps.materialName : first,
+          materialVariant: "",
+        };
+      });
     } else {
       // Switching back to PET must reset sale lines — otherwise a Plastic type stays in
       // state while the dropdown visually shows "Natural Bottles" and save fails.
@@ -91,6 +101,16 @@ export default function InventoryPage() {
         }
         return { ...it, materialCategory: "Natural Bottles", materialVariant: "Green" };
       }));
+      setPreStock((ps) => {
+        const materialName = ps.materialName === "Natural Bottles" || ps.materialName === "Red Bottles"
+          ? ps.materialName
+          : "Natural Bottles";
+        return {
+          ...ps,
+          materialName,
+          materialVariant: materialName === "Red Bottles" ? "Red" : "Mixed",
+        };
+      });
     }
   }, [mode, data?.plasticMaterialTypes]);
 
@@ -399,17 +419,34 @@ export default function InventoryPage() {
     const ratePerKg=Number(preStock.ratePerKg);
     if(!(quantityKg>0)) { setMessage("Enter pre-stock weight (kg)"); return; }
     if(!(ratePerKg>=0) || preStock.ratePerKg==="") { setMessage("Enter pre-stock rate / kg"); return; }
+    if(mode==="PLASTIC" && !preStock.materialName.trim()) {
+      setMessage("Select a Plastic material type for pre stock (add under Add type first)");
+      return;
+    }
+    const materialVariant = mode==="PLASTIC"
+      ? ""
+      : (preStock.materialName==="Red Bottles" ? "Red" : "Mixed");
     const ok=await post("addPreStock",{
       mode,
       materialName:preStock.materialName,
-      materialVariant:preStock.materialName==="Red Bottles"?"Red":"Mixed",
+      materialVariant,
       quantityKg,
       ratePerKg,
       stockDate:preStock.stockDate||"2026-09-30",
       notes:preStock.notes,
     });
     if(ok) {
-      setPreStock({materialName:"Natural Bottles",materialVariant:"Mixed",quantityKg:"",ratePerKg:"",stockDate:"2026-09-30",notes:""});
+      const resetName = mode==="PLASTIC"
+        ? (plasticTypes[0]?.name || "")
+        : "Natural Bottles";
+      setPreStock({
+        materialName: resetName,
+        materialVariant: mode==="PLASTIC" ? "" : "Mixed",
+        quantityKg:"",
+        ratePerKg:"",
+        stockDate:"2026-09-30",
+        notes:"",
+      });
       setShowPreStock(false);
     }
   }
@@ -462,22 +499,42 @@ export default function InventoryPage() {
         <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
           <div>
             <h2 className="font-semibold">Add pre stock (before audit)</h2>
-            <p className="ad-muted text-xs">Physical stock already present before 30 Sept — Natural (mixed) or Red only. Weight + rate, no vendor/payment.</p>
+            <p className="ad-muted text-xs">
+              {mode==="PLASTIC"
+                ? "Physical stock already present before 30 Sept — choose a Plastic type (same list as purchases). Weight + rate, no vendor/payment."
+                : "Physical stock already present before 30 Sept — Natural (mixed) or Red only. Weight + rate, no vendor/payment."}
+            </p>
           </div>
         </div>
         <div className="grid gap-2 md:grid-cols-5">
-          <select className="ad-input" value={preStock.materialName} onChange={e=>{
-            const materialName=e.target.value;
-            setPreStock({...preStock,materialName,materialVariant:materialName==="Red Bottles"?"Red":"Mixed"});
-          }}>
-            <option value="Natural Bottles">Natural (mixed)</option>
-            <option value="Red Bottles">Red</option>
-          </select>
+          {mode==="PLASTIC" ? (
+            <select
+              className="ad-input"
+              value={preStock.materialName}
+              onChange={e=>setPreStock({...preStock,materialName:e.target.value,materialVariant:""})}
+            >
+              <option value="">Select plastic type</option>
+              {plasticTypes.map((t:any)=>(
+                <option key={t.id} value={t.name}>{t.name}</option>
+              ))}
+            </select>
+          ) : (
+            <select className="ad-input" value={preStock.materialName} onChange={e=>{
+              const materialName=e.target.value;
+              setPreStock({...preStock,materialName,materialVariant:materialName==="Red Bottles"?"Red":"Mixed"});
+            }}>
+              <option value="Natural Bottles">Natural (mixed)</option>
+              <option value="Red Bottles">Red</option>
+            </select>
+          )}
           <input className="ad-input" type="number" min="0" placeholder="Weight (kg)" value={preStock.quantityKg} onChange={e=>setPreStock({...preStock,quantityKg:e.target.value})}/>
           <input className="ad-input" type="number" min="0" placeholder="Rate / kg" value={preStock.ratePerKg} onChange={e=>setPreStock({...preStock,ratePerKg:e.target.value})}/>
           <input className="ad-input" type="date" value={preStock.stockDate} onChange={e=>setPreStock({...preStock,stockDate:e.target.value})}/>
-          <button className="ad-btn ad-btn-primary" onClick={addPreStock}>Save pre stock</button>
+          <button className="ad-btn ad-btn-primary" onClick={addPreStock} disabled={mode==="PLASTIC"&&plasticTypes.length===0}>Save pre stock</button>
         </div>
+        {mode==="PLASTIC" && plasticTypes.length===0 && (
+          <p className="mt-2 text-xs text-[var(--ad-danger)]">No plastic types yet — click Add type first, then add pre stock.</p>
+        )}
         <p className="mt-2 text-xs ad-muted">
           Value: ₹{((Number(preStock.quantityKg)||0)*(Number(preStock.ratePerKg)||0)).toFixed(2)}
           {filteredPreStock.length>0 ? ` · ${filteredPreStock.length} pre-stock rows · ${preStockKg.toFixed(2)} kg recorded` : ""}

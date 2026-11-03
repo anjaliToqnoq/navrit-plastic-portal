@@ -74,10 +74,22 @@ export default function InventoryPage() {
         materialVariant: "",
       })));
     } else {
+      // Switching back to PET must reset sale lines — otherwise a Plastic type stays in
+      // state while the dropdown visually shows "Natural Bottles" and save fails.
       setPurchase((p) => ({
         ...p,
         materialName: p.materialName === "Natural Bottles" || p.materialName === "Red Bottles" ? p.materialName : "Natural Bottles",
         materialVariant: p.materialName === "Red Bottles" ? "Red" : (p.materialVariant || "Mixed"),
+      }));
+      setSaleItems((items) => items.map((it) => {
+        const ok = it.materialCategory === "Natural Bottles" || it.materialCategory === "Red Bottles";
+        if (ok) {
+          const variant = it.materialCategory === "Red Bottles"
+            ? (["Red Bottle", "Red Bottle Cap", "Red"].includes(String(it.materialVariant)) ? it.materialVariant : "Red Bottle")
+            : (["Green", "White", "White Milk"].includes(String(it.materialVariant)) ? it.materialVariant : "Green");
+          return { ...it, materialVariant: variant };
+        }
+        return { ...it, materialCategory: "Natural Bottles", materialVariant: "Green" };
       }));
     }
   }, [mode, data?.plasticMaterialTypes]);
@@ -164,15 +176,48 @@ export default function InventoryPage() {
     setSaleItems([defaultSaleItem()]);
   }
 
+  function saleItemsPayload() {
+    return saleItems.map((x) => {
+      let materialCategory = String(x.materialCategory || "").trim();
+      let materialVariant = String(x.materialVariant || "").trim();
+      if (mode === "PET") {
+        if (materialCategory !== "Natural Bottles" && materialCategory !== "Red Bottles") {
+          materialCategory = "Natural Bottles";
+        }
+        if (materialCategory === "Red Bottles") {
+          if (materialVariant === "Red") materialVariant = "Red Bottle";
+          if (materialVariant !== "Red Bottle" && materialVariant !== "Red Bottle Cap") materialVariant = "Red Bottle";
+        } else if (!["Green", "White", "White Milk"].includes(materialVariant)) {
+          materialVariant = "Green";
+        }
+      }
+      return {
+        materialCategory,
+        materialVariant,
+        quantityKg: Number(x.quantityKg),
+        ratePerKg: Number(x.ratePerKg),
+      };
+    });
+  }
+
   async function addSale() {
     if (!sale.customerName.trim()) { setMessage("Select a buyer from the list (add in Vendors & Buyers first)"); return; }
-    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),labourMode:sale.labourMode,saleDate:sale.saleDate,useAdvance,notes:sale.notes});
+    // If PET↔Plastic left a wrong category in state while the select looked correct, normalize before save.
+    const items = saleItemsPayload();
+    if (mode === "PET") {
+      setSaleItems((prev) => prev.map((it, idx) => ({
+        ...it,
+        materialCategory: items[idx]?.materialCategory ?? "Natural Bottles",
+        materialVariant: items[idx]?.materialVariant ?? "Green",
+      })));
+    }
+    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items,receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),labourMode:sale.labourMode,saleDate:sale.saleDate,useAdvance,notes:sale.notes});
     if(ok) resetSaleForm();
   }
 
   async function editSale() {
     if(editingSale===null) return;
-    const ok=await post("updateSale",{saleId:editingSale,mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItems.map(x=>({...x,quantityKg:Number(x.quantityKg),ratePerKg:Number(x.ratePerKg)})),loadingCharges:Number(sale.loadingCharges||0),labourMode:sale.labourMode,receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
+    const ok=await post("updateSale",{saleId:editingSale,mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItemsPayload(),loadingCharges:Number(sale.loadingCharges||0),labourMode:sale.labourMode,receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
     if(ok) resetSaleForm();
   }
 
@@ -709,8 +754,9 @@ export default function InventoryPage() {
               </select>
             ) : (
               <>
-                <select className="ad-input" value={item.materialCategory} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialCategory:e.target.value,materialVariant:e.target.value==="Red Bottles"?"Red Bottle":"Green"}:x))}>
-                  <option>Natural Bottles</option><option>Red Bottles</option>
+                <select className="ad-input" value={item.materialCategory==="Natural Bottles"||item.materialCategory==="Red Bottles"?item.materialCategory:"Natural Bottles"} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialCategory:e.target.value,materialVariant:e.target.value==="Red Bottles"?"Red Bottle":"Green"}:x))}>
+                  <option value="Natural Bottles">Natural Bottles</option>
+                  <option value="Red Bottles">Red Bottles</option>
                 </select>
                 <select className="ad-input" value={item.materialVariant==="Red"?"Red Bottle":item.materialVariant} onChange={e=>setSaleItems(saleItems.map((x:any,j:number)=>j===i?{...x,materialVariant:e.target.value}:x))}>
                   {item.materialCategory==="Red Bottles" ? <><option value="Red Bottle">Red Bottle</option><option value="Red Bottle Cap">Red Bottle Cap</option></> : <><option value="Green">Green</option><option value="White">White</option><option value="White Milk">White Milk</option></>}

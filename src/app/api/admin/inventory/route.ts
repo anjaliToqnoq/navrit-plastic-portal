@@ -1869,7 +1869,9 @@ export async function POST(req: NextRequest) {
       for (const item of s.items) {
         if (s.mode === "PET") {
           if (!["Natural Bottles","Red Bottles"].includes(item.materialCategory)) {
-            return NextResponse.json({ error: "PET sales use Natural Bottles or Red Bottles" }, { status: 400 });
+            return NextResponse.json({
+              error: `PET sales use Natural Bottles or Red Bottles (got "${item.materialCategory || "empty"}"). Re-select material on the Sales form — a Plastic type may have been left over.`,
+            }, { status: 400 });
           }
           if (item.materialCategory === "Natural Bottles" && !["Green","White","White Milk",""].includes(item.materialVariant)) {
             return NextResponse.json({ error: "Natural Bottles can be Green, White or White Milk" }, { status: 400 });
@@ -1969,7 +1971,9 @@ export async function POST(req: NextRequest) {
       for (const item of s.items) {
         if (s.mode === "PET") {
           if (!["Natural Bottles","Red Bottles"].includes(item.materialCategory)) {
-            return NextResponse.json({error:"PET sales use Natural Bottles or Red Bottles"},{status:400});
+            return NextResponse.json({
+              error: `PET sales use Natural Bottles or Red Bottles (got "${item.materialCategory || "empty"}"). Re-select material — a Plastic type may have been left over.`,
+            }, { status: 400 });
           }
           if (item.materialCategory === "Natural Bottles" && !["Green","White","White Milk",""].includes(item.materialVariant)) {
             return NextResponse.json({error:"Natural Bottles can be Green, White or White Milk"},{status:400});

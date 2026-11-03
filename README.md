@@ -53,9 +53,9 @@ Default login (from `.env.local`): `admin` / `admin123`
 - On **add/update purchase** and **vendor payment**, the portal builds a PDF (kg, rate, paid, remaining on bill, vendor outstanding + advance) and emails it to your Gmail.
 - You can forward the PDF to a WhatsApp group / vendor manually.
 - Free with Gmail App Password. Set on Railway:
-  - `GMAIL_USER` — Gmail that sends (e.g. `navrit.baheri@gmail.com`)
+  - `GMAIL_USER` — Gmail that sends (e.g. `rahulnitingupta741@gmail.com`)
   - `GMAIL_APP_PASSWORD` — 16-char App Password (Google Account → Security → 2-Step Verification → App passwords)
-  - `NOTIFY_EMAIL` — inbox to receive slips (defaults to `GMAIL_USER`)
+  - `NOTIFY_EMAIL` — inbox to receive slips (defaults to `GMAIL_USER`, use `rahulnitingupta741@gmail.com`)
 
 ### Verified business rules (local smoke)
 - Purchase → inventory_transactions (+kg); sale → adjustment (−kg) using the same stock key

@@ -49,6 +49,16 @@ Default login (from `.env.local`): `admin` / `admin123`
   - `NAVI_API_KEY` or `OPENAI_API_KEY` (OpenAI-compatible)
   - optional `NAVI_API_BASE`, `NAVI_MODEL` (default `gpt-4o-mini`)
 
+### WhatsApp purchase / payment slips (Meta Cloud API)
+- On **add/update purchase** and **vendor payment**, the portal builds a PDF (kg, rate, paid, remaining on bill, vendor outstanding + advance) and can send it via WhatsApp Business.
+- **Vendor:** sent only if the vendor has a WhatsApp number (Vendors & Buyers). No number → skip, purchase still saves.
+- **Office copy:** set `WHATSAPP_OFFICE_NOTIFY_PHONES` (you/partners). Meta cannot post into an existing personal WhatsApp group.
+- Cost: Meta India **utility** ≈ ₹0.115 per delivered message (no monthly Cloud API fee). Configure on Railway:
+  - `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`
+  - `WHATSAPP_PURCHASE_TEMPLATE=purchase_slip`, `WHATSAPP_PAYMENT_TEMPLATE=vendor_payment_slip`
+  - Approve **Utility** templates with a **Document** header in Meta Business Manager (variable order in `.env.example`)
+  - optional `WHATSAPP_OFFICE_NOTIFY_PHONES`, `WHATSAPP_TEMPLATE_LANG`
+
 ### Verified business rules (local smoke)
 - Purchase → inventory_transactions (+kg); sale → adjustment (−kg) using the same stock key
 - Natural bottles stock keys: `Natural Bottles - Green|White|White Milk`; red: `Red Bottles`

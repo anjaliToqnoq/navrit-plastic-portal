@@ -447,6 +447,19 @@ function createDb() {
     );
     CREATE INDEX IF NOT EXISTS plastic_material_types_active_idx
       ON plastic_material_types(mode, active, sort_order, name);
+    CREATE TABLE IF NOT EXISTS whatsapp_send_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_type TEXT NOT NULL,
+      purchase_id INTEGER,
+      payment_id INTEGER,
+      to_phone TEXT NOT NULL DEFAULT '',
+      role TEXT NOT NULL CHECK(role IN ('vendor','office')),
+      status TEXT NOT NULL,
+      error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS whatsapp_send_log_purchase_idx
+      ON whatsapp_send_log(purchase_id, created_at);
   `);
   // Allow Plastic freeform material names on sales (drop Natural/Red-only CHECK).
   try {

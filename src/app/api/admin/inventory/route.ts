@@ -2192,12 +2192,26 @@ export async function POST(req: NextRequest) {
     });
 
     if (pendingEmail && response.ok) {
+      const base = await response.json().catch(() => ({ ok: true }));
+      // Never let SMTP hang kill the purchase save (Railway/proxy timeouts become generic client errors).
       try {
-        const email = await notifyPurchaseEmail(pendingEmail);
-        const base = await response.json();
+        const email = await Promise.race([
+          notifyPurchaseEmail(pendingEmail),
+          new Promise<Awaited<ReturnType<typeof notifyPurchaseEmail>>>((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  configured: true,
+                  skipped: false,
+                  ok: false,
+                  error: "Email timed out — purchase saved. Check Gmail App Password or use RESEND_API_KEY",
+                }),
+              12000
+            )
+          ),
+        ]);
         return NextResponse.json({ ...base, email });
       } catch (mailError) {
-        const base = await response.json().catch(() => ({ ok: true }));
         return NextResponse.json({
           ...base,
           email: {

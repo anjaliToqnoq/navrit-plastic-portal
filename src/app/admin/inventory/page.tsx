@@ -160,11 +160,26 @@ export default function InventoryPage() {
   }
 
   async function post(action:string, body:any) {
-    const r=await fetch("/api/admin/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...body})});
-    const j=await r.json().catch(()=>({}));
+    let r: Response;
+    try {
+      r = await fetch("/api/admin/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...body})});
+    } catch {
+      setMessage("Network error — could not reach server. Check internet / Railway status.");
+      return false;
+    }
+    const raw = await r.text();
+    let j: any = {};
+    try { j = raw ? JSON.parse(raw) : {}; } catch { j = {}; }
     if(!r.ok){
       const mailNote = emailMessage(j.email);
-      setMessage(mailNote || j.error || "Could not save — please check the form and try again");
+      const detail = mailNote || j.error || (r.status === 502 || r.status === 504
+        ? "Server timed out (often Gmail SMTP blocked on Railway). Purchase may still be saved — refresh list. Use Send test email / RESEND_API_KEY."
+        : r.status === 401
+          ? "Session expired — please login again"
+          : raw && !raw.trim().startsWith("{")
+            ? `Save failed (HTTP ${r.status}). Server returned a non-JSON error.`
+            : `Could not save (HTTP ${r.status}) — please check the form and try again`);
+      setMessage(detail);
       return false;
     }
     const mailNote = emailMessage(j.email);

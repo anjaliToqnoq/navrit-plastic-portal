@@ -38,14 +38,22 @@ Default login (from `.env.local`): `admin` / `admin123`
 - Labour management: attendance (full/half/custom hours), wage vs advance, editable entries
 - PET processing contractor at ₹/kg: earns on batch complete and on sale; advances/settlements sync to Accounts
 - Material & profit analysis, accounts by person (Rahul / Devesh / Nitin)
+- **Navi** 🌱 — cute AI assistant that reads portal ledgers for summaries/reports (optional LLM key + web research)
 - Backup create / download / restore (both modes)
 - Rates catalog + historical `rate_snapshots` still available under admin
+
+### Navi (AI assistant)
+- Sidebar: **Navi** → chat about cash, profit sketches, dues, stock, labour, buyers/vendors
+- Data source is this portal (read-only tools). Optional internet snippets via DuckDuckGo.
+- Without a key Navi still answers from a local portal brain. For full LLM chat set on Railway:
+  - `NAVI_API_KEY` or `OPENAI_API_KEY` (OpenAI-compatible)
+  - optional `NAVI_API_BASE`, `NAVI_MODEL` (default `gpt-4o-mini`)
 
 ### Verified business rules (local smoke)
 - Purchase → inventory_transactions (+kg); sale → adjustment (−kg) using the same stock key
 - Natural bottles stock keys: `Natural Bottles - Green|White|White Milk`; red: `Red Bottles`
 - Oversell rejected; supplier credit payment cannot exceed outstanding
-- Sale labour = ₹2/kg + optional loading; PLASTIC figures stay isolated from PET
+- PET sale labour: Contract ₹2/kg or Daily wage; PLASTIC figures stay isolated from PET
 - Build uses in-memory SQLite; runtime production DB is only `/app/data/plastic-rates.db`
 
 ## Data model

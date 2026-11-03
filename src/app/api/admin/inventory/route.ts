@@ -10,7 +10,7 @@ import { friendlyZodError } from "@/lib/api-errors";
 import { LABOUR_TASKS } from "@/lib/labour-tasks";
 import { attendanceEarnedAmount, halfDayRate } from "@/lib/labour-math";
 import { notifyPurchaseEmail, type NotifyKind } from "@/lib/email/notify-purchase";
-import { isEmailConfigured } from "@/lib/email/gmail";
+import { emailConfigDiagnostics, isEmailConfigured, sendTestEmail } from "@/lib/email/gmail";
 
 function workerWageDue(workerId: number, dailyRate: number, mode?: string) {
   const rows = mode
@@ -879,7 +879,8 @@ export async function GET() {
     buyerAdvanceBalance, partnerLentTotal,
     personAccountTotals, personAccountTotalsFlat, externalLoanOutstanding, reconciliation, cashflowBreakdown, businessSplit, sharedExpenseSummary,
     emailConfigured: isEmailConfigured(),
-    notifyEmail: process.env.NOTIFY_EMAIL?.trim() || process.env.GMAIL_USER?.trim() || "",
+    emailDiagnostics: emailConfigDiagnostics(),
+    notifyEmail: emailConfigDiagnostics().notifyEmail,
     // COMPANY is canonical; PET/PLASTIC mirrored so older UI still sees one shared book.
     cashBalance:{
       COMPANY: companyParts.book,
@@ -908,7 +909,23 @@ export async function POST(req: NextRequest) {
   if (!body?.action) return NextResponse.json({ error: "Missing action" }, { status: 400 });
 
   try {
-    // Resend does not need a write transaction
+    // Email helpers do not need a write transaction
+    if (body.action === "testEmail") {
+      const result = await sendTestEmail();
+      if (!result.ok) {
+        return NextResponse.json(
+          { error: result.error, email: { configured: result.diagnostics.configured, ok: false, error: result.error }, diagnostics: result.diagnostics },
+          { status: 400 }
+        );
+      }
+      return json({
+        ok: true,
+        email: { configured: true, skipped: false, ok: true, to: result.to },
+        transport: result.transport,
+        messageId: result.messageId,
+      });
+    }
+
     if (body.action === "resendPurchaseEmail") {
       const s = z.object({
         purchaseId: z.number().int().positive(),

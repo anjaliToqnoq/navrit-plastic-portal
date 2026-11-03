@@ -152,7 +152,7 @@ export default function InventoryPage() {
 
   function emailMessage(email:any): string {
     if (!email) return "";
-    if (!email.configured) return "Email not configured yet (saved offline)";
+    if (!email.configured) return email.skippedReason || "Email not configured yet (saved offline)";
     if (email.skipped && email.skippedReason === "Email notify turned off") return "Email skipped";
     if (email.skipped) return email.skippedReason ? `Email: ${email.skippedReason}` : "Email skipped";
     if (email.ok) return `Email sent to ${email.to || "your Gmail"}`;
@@ -162,11 +162,31 @@ export default function InventoryPage() {
   async function post(action:string, body:any) {
     const r=await fetch("/api/admin/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...body})});
     const j=await r.json().catch(()=>({}));
-    if(!r.ok){setMessage(j.error||"Could not save — please check the form and try again");return false;}
+    if(!r.ok){
+      const mailNote = emailMessage(j.email);
+      setMessage(mailNote || j.error || "Could not save — please check the form and try again");
+      return false;
+    }
     const mailNote = emailMessage(j.email);
     setMessage(mailNote ? `Saved successfully · ${mailNote}` : "Saved successfully");
     await load();
     return true;
+  }
+
+  async function sendTestEmail() {
+    setMessage("Sending test email…");
+    const r = await fetch("/api/admin/inventory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "testEmail" }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const missing = Array.isArray(j.diagnostics?.missing) ? j.diagnostics.missing.join(", ") : "";
+      setMessage(j.error || j.email?.error || (missing ? `Missing Railway vars: ${missing}` : "Test email failed"));
+      return;
+    }
+    setMessage(`Test email sent to ${j.email?.to || data?.notifyEmail || "inbox"}${j.transport ? ` via ${j.transport}` : ""} — check inbox/Spam`);
   }
 
   async function savePlasticType() {
@@ -502,13 +522,32 @@ export default function InventoryPage() {
     {message && (
       <div
         className={`mb-4 rounded-lg border px-3 py-2 text-sm ${
-          message === "Saved successfully"
+          message === "Saved successfully" || (message.startsWith("Saved successfully") && message.includes("Email sent")) || message.startsWith("Test email sent")
             ? "border-[var(--ad-success)] text-[var(--ad-success)]"
-            : "border-[var(--ad-danger)] bg-[color-mix(in_srgb,var(--ad-danger)_12%,transparent)] text-[var(--ad-danger)]"
+            : message.includes("Sending test")
+              ? "border-[var(--ad-accent)] text-[var(--ad-fg)]"
+              : "border-[var(--ad-danger)] bg-[color-mix(in_srgb,var(--ad-danger)_12%,transparent)] text-[var(--ad-danger)]"
         }`}
         role="alert"
       >
         {message}
+      </div>
+    )}
+    {tab==="purchases" && (
+      <div className={`mb-4 rounded-lg border px-3 py-2 text-sm ${data?.emailConfigured ? "border-[var(--ad-success)]/40" : "border-[var(--ad-danger)]/50 bg-[color-mix(in_srgb,var(--ad-danger)_8%,transparent)]"}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="font-medium">{data?.emailConfigured ? "Email notify ready" : "Email notify not ready"}</p>
+            <p className="ad-muted text-xs mt-0.5">
+              {data?.emailConfigured
+                ? `Slips go to ${data.notifyEmail || "your inbox"} (${data.emailDiagnostics?.transport || "mail"})`
+                : `Add Railway vars: ${(data?.emailDiagnostics?.missing || ["GMAIL_USER","GMAIL_APP_PASSWORD","NOTIFY_EMAIL"]).join(", ")} then redeploy`}
+            </p>
+          </div>
+          <button type="button" className="ad-btn ad-btn-ghost" onClick={()=>void sendTestEmail()}>
+            <Mail size={14} className="mr-1 inline" /> Send test email
+          </button>
+        </div>
       </div>
     )}
 
@@ -713,7 +752,7 @@ export default function InventoryPage() {
               Email PDF slip to my Gmail
               {data?.emailConfigured
                 ? data?.notifyEmail ? ` (${data.notifyEmail})` : ""
-                : " — set GMAIL_USER + GMAIL_APP_PASSWORD on Railway"}
+                : ` — missing ${(data?.emailDiagnostics?.missing || ["GMAIL_USER","GMAIL_APP_PASSWORD"]).join(", ")}`}
             </span>
           </label>
           <div className="flex flex-wrap items-end gap-2 md:col-span-2">

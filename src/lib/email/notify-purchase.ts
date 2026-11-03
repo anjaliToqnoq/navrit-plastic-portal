@@ -1,6 +1,6 @@
 import { sqlite } from "@/db";
 import { nowIso } from "@/lib/rates";
-import { isEmailConfigured, notifyInbox, sendMailWithPdf } from "@/lib/email/gmail";
+import { emailConfigDiagnostics, isEmailConfigured, notifyInbox, sendMailWithPdf } from "@/lib/email/gmail";
 import { buildPurchaseSlipPdf, type PurchaseSlipData } from "@/lib/whatsapp/purchase-pdf";
 import { formatPhoneDisplay } from "@/lib/whatsapp/phone";
 
@@ -155,7 +155,14 @@ export async function notifyPurchaseEmail(opts: {
     return { configured: isEmailConfigured(), skipped: true, skippedReason: "Email notify turned off" };
   }
   if (!isEmailConfigured()) {
-    return { configured: false, skipped: true, skippedReason: "Gmail not configured" };
+    const d = emailConfigDiagnostics();
+    return {
+      configured: false,
+      skipped: true,
+      skippedReason: d.missing.length
+        ? `Email not configured — missing ${d.missing.join(", ")} on Railway`
+        : "Email not configured",
+    };
   }
 
   const to = notifyInbox();

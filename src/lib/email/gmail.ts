@@ -1,26 +1,184 @@
 import nodemailer from "nodemailer";
 
-export function isEmailConfigured() {
-  return Boolean(
-    process.env.GMAIL_USER?.trim() &&
-      process.env.GMAIL_APP_PASSWORD?.trim() &&
-      (process.env.NOTIFY_EMAIL?.trim() || process.env.GMAIL_USER?.trim())
+/** Strip accidental quotes/spaces from Railway variable values. */
+export function cleanEnv(value: string | undefined | null): string {
+  return String(value || "")
+    .trim()
+    .replace(/^["']+|["']+$/g, "")
+    .trim();
+}
+
+export function gmailUser() {
+  return cleanEnv(process.env.GMAIL_USER || process.env.EMAIL_USER);
+}
+
+export function gmailAppPassword() {
+  return cleanEnv(process.env.GMAIL_APP_PASSWORD || process.env.EMAIL_APP_PASSWORD || process.env.GOOGLE_APP_PASSWORD).replace(
+    /\s+/g,
+    ""
   );
 }
 
 export function notifyInbox(): string {
-  return (process.env.NOTIFY_EMAIL || process.env.GMAIL_USER || "").trim();
+  return cleanEnv(process.env.NOTIFY_EMAIL) || gmailUser();
 }
 
-function transporter() {
-  const user = process.env.GMAIL_USER!.trim();
-  const pass = process.env.GMAIL_APP_PASSWORD!.trim().replace(/\s+/g, "");
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST?.trim() || "smtp.gmail.com",
-    port: Number(process.env.SMTP_PORT || 465),
-    secure: process.env.SMTP_SECURE !== "false",
-    auth: { user, pass },
-  });
+export function resendApiKey() {
+  return cleanEnv(process.env.RESEND_API_KEY);
+}
+
+export function isEmailConfigured() {
+  if (resendApiKey() && notifyInbox()) return true;
+  return Boolean(gmailUser() && gmailAppPassword() && notifyInbox());
+}
+
+export function emailConfigDiagnostics() {
+  const user = gmailUser();
+  const pass = gmailAppPassword();
+  const notify = notifyInbox();
+  const resend = Boolean(resendApiKey());
+  const missing: string[] = [];
+  if (!resend) {
+    if (!user) missing.push("GMAIL_USER");
+    if (!pass) missing.push("GMAIL_APP_PASSWORD");
+  }
+  if (!notify) missing.push("NOTIFY_EMAIL");
+  return {
+    configured: isEmailConfigured(),
+    hasGmailUser: Boolean(user),
+    hasGmailAppPassword: Boolean(pass),
+    hasResendKey: resend,
+    notifyEmail: notify || "",
+    transport: resend ? "resend" : user && pass ? "gmail-smtp" : "none",
+    missing,
+  };
+}
+
+async function sendViaResend(opts: {
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+  filename: string;
+  pdf: Buffer;
+}): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }> {
+  const key = resendApiKey();
+  if (!key) return { ok: false, error: "RESEND_API_KEY missing" };
+  const from =
+    cleanEnv(process.env.RESEND_FROM) ||
+    `${process.env.NEXT_PUBLIC_BUSINESS_NAME || "NAVRIT"} Portal <onboarding@resend.dev>`;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        from,
+        to: [opts.to],
+        subject: opts.subject,
+        text: opts.text,
+        html: opts.html || undefined,
+        attachments: [
+          {
+            filename: opts.filename,
+            content: opts.pdf.toString("base64"),
+          },
+        ],
+      }),
+    }).finally(() => clearTimeout(timer));
+
+    const json = (await res.json().catch(() => ({}))) as { id?: string; message?: string; name?: string };
+    if (!res.ok) {
+      return { ok: false, error: json.message || json.name || `Resend failed (${res.status})` };
+    }
+    return { ok: true, messageId: json.id };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Resend failed";
+    return { ok: false, error: msg.includes("abort") ? "Resend timed out" : msg };
+  }
+}
+
+async function sendViaGmailSmtp(opts: {
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+  filename: string;
+  pdf: Buffer;
+}): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }> {
+  const user = gmailUser();
+  const pass = gmailAppPassword();
+  if (!user || !pass) return { ok: false, error: "GMAIL_USER / GMAIL_APP_PASSWORD missing" };
+
+  const fromName = process.env.NEXT_PUBLIC_BUSINESS_NAME || "NAVRIT";
+  const attempts: Array<{ host: string; port: number; secure: boolean }> = [
+    { host: cleanEnv(process.env.SMTP_HOST) || "smtp.gmail.com", port: Number(process.env.SMTP_PORT || 465), secure: true },
+    { host: "smtp.gmail.com", port: 587, secure: false },
+  ];
+
+  let lastError = "Gmail SMTP failed";
+  for (const attempt of attempts) {
+    try {
+      const transport = nodemailer.createTransport({
+        host: attempt.host,
+        port: attempt.port,
+        secure: attempt.secure,
+        auth: { user, pass },
+        connectionTimeout: 12000,
+        greetingTimeout: 12000,
+        socketTimeout: 20000,
+        tls: { rejectUnauthorized: true },
+      });
+
+      const info = await transport.sendMail({
+        from: `"${fromName} Portal" <${user}>`,
+        to: opts.to,
+        subject: opts.subject,
+        text: opts.text,
+        html: opts.html,
+        attachments: [
+          {
+            filename: opts.filename,
+            content: opts.pdf,
+            contentType: "application/pdf",
+          },
+        ],
+      });
+      try {
+        transport.close();
+      } catch {
+        /* ignore */
+      }
+      return { ok: true, messageId: info.messageId };
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : "Gmail SMTP failed";
+      // Try next port/mode
+    }
+  }
+
+  // Friendlier hints for common Gmail failures
+  const lower = lastError.toLowerCase();
+  if (lower.includes("invalid login") || lower.includes("username and password") || lower.includes("badcredentials") || lower.includes("535")) {
+    return {
+      ok: false,
+      error:
+        "Gmail login failed — use a 16-char App Password (not normal password), and ensure GMAIL_USER is exactly the Gmail that created it",
+    };
+  }
+  if (lower.includes("timeout") || lower.includes("econnrefused") || lower.includes("etimedout") || lower.includes("enotfound")) {
+    return {
+      ok: false,
+      error:
+        "Gmail SMTP blocked/unreachable from Railway — add free RESEND_API_KEY (HTTPS) or allow smtp.gmail.com",
+    };
+  }
+  return { ok: false, error: lastError };
 }
 
 export async function sendMailWithPdf(opts: {
@@ -30,29 +188,54 @@ export async function sendMailWithPdf(opts: {
   html?: string;
   filename: string;
   pdf: Buffer;
-}): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }> {
+}): Promise<{ ok: true; messageId?: string; transport?: string } | { ok: false; error: string }> {
   if (!isEmailConfigured()) {
-    return { ok: false, error: "Gmail not configured" };
+    const d = emailConfigDiagnostics();
+    return {
+      ok: false,
+      error: d.missing.length
+        ? `Email not configured — missing ${d.missing.join(", ")}`
+        : "Email not configured",
+    };
   }
-  try {
-    const fromName = process.env.NEXT_PUBLIC_BUSINESS_NAME || "NAVRIT";
-    const fromUser = process.env.GMAIL_USER!.trim();
-    const info = await transporter().sendMail({
-      from: `"${fromName} Portal" <${fromUser}>`,
-      to: opts.to,
-      subject: opts.subject,
-      text: opts.text,
-      html: opts.html,
-      attachments: [
-        {
-          filename: opts.filename,
-          content: opts.pdf,
-          contentType: "application/pdf",
-        },
-      ],
-    });
-    return { ok: true, messageId: info.messageId };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Email send failed" };
+
+  // Prefer Resend (HTTPS) when set — most reliable on Railway.
+  if (resendApiKey()) {
+    const sent = await sendViaResend(opts);
+    if (sent.ok) return { ...sent, transport: "resend" };
+    // Fall through to Gmail SMTP if both configured
+    if (!(gmailUser() && gmailAppPassword())) return sent;
   }
+
+  if (gmailUser() && gmailAppPassword()) {
+    const sent = await sendViaGmailSmtp(opts);
+    if (sent.ok) return { ...sent, transport: "gmail-smtp" };
+    return sent;
+  }
+
+  return { ok: false, error: "No email transport configured" };
+}
+
+export async function sendTestEmail(): Promise<
+  { ok: true; to: string; transport?: string; messageId?: string } | { ok: false; error: string; diagnostics: ReturnType<typeof emailConfigDiagnostics> }
+> {
+  const diagnostics = emailConfigDiagnostics();
+  if (!diagnostics.configured) {
+    return { ok: false, error: `Missing ${diagnostics.missing.join(", ") || "email settings"}`, diagnostics };
+  }
+  const to = notifyInbox();
+  const pdf = Buffer.from(
+    "%PDF-1.1\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n",
+    "utf8"
+  );
+  const sent = await sendMailWithPdf({
+    to,
+    subject: "NAVRIT portal — test email",
+    text: "Test from NAVRIT portal. If you received this, purchase PDF email is working. Check Spam if needed.",
+    html: "<p>Test from <b>NAVRIT</b> portal. If you received this, purchase PDF email is working.</p><p>Check Spam if needed.</p>",
+    filename: "navrit-test.txt.pdf",
+    pdf,
+  });
+  if (!sent.ok) return { ok: false, error: sent.error, diagnostics };
+  return { ok: true, to, transport: sent.transport, messageId: sent.messageId };
 }

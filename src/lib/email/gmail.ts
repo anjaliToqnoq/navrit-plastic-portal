@@ -54,6 +54,13 @@ export function emailConfigDiagnostics() {
   };
 }
 
+function resendFromAddress() {
+  const raw = cleanEnv(process.env.RESEND_FROM);
+  // Railway often truncates unquoted values at `<`, leaving "NAVRIT Portal" with no email.
+  if (raw && raw.includes("@")) return raw;
+  return "NAVRIT Portal <onboarding@resend.dev>";
+}
+
 async function sendViaResend(opts: {
   to: string;
   subject: string;
@@ -64,9 +71,10 @@ async function sendViaResend(opts: {
 }): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }> {
   const key = resendApiKey();
   if (!key) return { ok: false, error: "RESEND_API_KEY missing" };
-  const from =
-    cleanEnv(process.env.RESEND_FROM) ||
-    `${process.env.NEXT_PUBLIC_BUSINESS_NAME || "NAVRIT"} Portal <onboarding@resend.dev>`;
+  if (!key.startsWith("re_")) {
+    return { ok: false, error: "RESEND_API_KEY looks invalid — it should start with re_" };
+  }
+  const from = resendFromAddress();
 
   try {
     const controller = new AbortController();
@@ -93,9 +101,24 @@ async function sendViaResend(opts: {
       }),
     }).finally(() => clearTimeout(timer));
 
-    const json = (await res.json().catch(() => ({}))) as { id?: string; message?: string; name?: string };
+    const json = (await res.json().catch(() => ({}))) as {
+      id?: string;
+      message?: string;
+      name?: string;
+      error?: { message?: string; name?: string };
+    };
     if (!res.ok) {
-      return { ok: false, error: json.message || json.name || `Resend failed (${res.status})` };
+      const detail = json.error?.message || json.message || json.name || json.error?.name || `Resend failed (${res.status})`;
+      if (/only send testing emails to your own/i.test(detail) || /validation/i.test(detail)) {
+        return {
+          ok: false,
+          error: `${detail} — NOTIFY_EMAIL must be the same Gmail you used to sign up on Resend (while on free test domain)`,
+        };
+      }
+      if (/api key|unauthorized|401/i.test(detail) || res.status === 401) {
+        return { ok: false, error: "Resend API key rejected — recreate key in Resend and update RESEND_API_KEY on Railway" };
+      }
+      return { ok: false, error: `Resend: ${detail}` };
     }
     return { ok: true, messageId: json.id };
   } catch (e) {
@@ -200,11 +223,11 @@ export async function sendMailWithPdf(opts: {
   }
 
   // Prefer Resend (HTTPS) when set — most reliable on Railway.
+  // Do NOT fall back to Gmail SMTP here; that hides the real Resend error behind "SMTP blocked".
   if (resendApiKey()) {
     const sent = await sendViaResend(opts);
     if (sent.ok) return { ...sent, transport: "resend" };
-    // Fall through to Gmail SMTP if both configured
-    if (!(gmailUser() && gmailAppPassword())) return sent;
+    return sent;
   }
 
   if (gmailUser() && gmailAppPassword()) {

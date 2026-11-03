@@ -2,7 +2,8 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { AdminShell } from "@/components/admin-shell";
-import { Leaf, Loader2, Send, Sparkles } from "lucide-react";
+import { Loader2, Send, Sparkles } from "lucide-react";
+import { NaviLogo } from "@/components/navi-logo";
 
 type Msg = { role: "user" | "assistant"; content: string; meta?: string };
 
@@ -92,13 +93,11 @@ export default function NaviAssistantPage() {
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-4">
         <div className="ad-card overflow-hidden">
-          <div className="flex items-center gap-3 border-b border-[var(--ad-border)] bg-[color-mix(in_srgb,var(--ad-accent)_12%,transparent)] px-4 py-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--ad-accent)] text-white shadow-sm">
-              <Leaf size={22} />
-            </div>
+          <div className="flex items-center gap-3 border-b border-[var(--ad-border)] bg-[color-mix(in_srgb,#7C3AED_12%,transparent)] px-4 py-3">
+            <NaviLogo size={48} className="shadow-sm" />
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-2 font-semibold">
-                Navi <Sparkles size={14} className="text-[var(--ad-accent)]" />
+                Navi <Sparkles size={14} className="text-[#7C3AED]" />
               </p>
               <p className="ad-muted truncate text-xs">
                 {status?.ready

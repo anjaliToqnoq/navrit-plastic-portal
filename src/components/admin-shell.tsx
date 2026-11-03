@@ -22,9 +22,9 @@ import {
   Users,
   WalletCards,
   Factory,
-  Leaf,
 } from "lucide-react";
 import { NaviFloat } from "@/components/navi-float";
+import { NaviNavIcon } from "@/components/navi-logo";
 import "@/app/admin-theme.css";
 
 const navByMode = {
@@ -35,7 +35,7 @@ const navByMode = {
     { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
     { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
     { href: "/admin/processing", label: "Labour Management", icon: Factory },
-    { href: "/admin/assistant", label: "Navi AI", icon: Leaf },
+    { href: "/admin/assistant", label: "Navi AI", icon: NaviNavIcon },
     { href: "/admin/backup", label: "Backup", icon: HardDrive },
   ],
   PLASTIC: [
@@ -45,7 +45,7 @@ const navByMode = {
     { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
     { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
     { href: "/admin/processing", label: "Labour Management", icon: Factory },
-    { href: "/admin/assistant", label: "Navi AI", icon: Leaf },
+    { href: "/admin/assistant", label: "Navi AI", icon: NaviNavIcon },
     { href: "/admin/backup", label: "Backup", icon: HardDrive },
   ],
 } as const;

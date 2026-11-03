@@ -2,7 +2,8 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import { Leaf, Loader2, Send, Sparkles, X } from "lucide-react";
+import { Loader2, Send, Sparkles, X } from "lucide-react";
+import { NaviLogo } from "@/components/navi-logo";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
@@ -71,13 +72,11 @@ export function NaviFloat() {
     <div className="pointer-events-none fixed bottom-5 right-5 z-[60] flex flex-col items-end gap-3">
       {open && (
         <div className="pointer-events-auto flex h-[min(70vh,520px)] w-[min(92vw,380px)] flex-col overflow-hidden rounded-2xl border border-[var(--ad-border)] bg-[var(--ad-card)] shadow-2xl">
-          <div className="flex items-center gap-2 border-b border-[var(--ad-border)] bg-[color-mix(in_srgb,var(--ad-accent)_14%,transparent)] px-3 py-2.5">
-            <span className="flex size-8 items-center justify-center rounded-xl bg-[var(--ad-accent)] text-[#052e16]">
-              <Leaf size={16} />
-            </span>
+          <div className="flex items-center gap-2 border-b border-[var(--ad-border)] bg-[color-mix(in_srgb,#7C3AED_14%,transparent)] px-3 py-2.5">
+            <NaviLogo size={36} />
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-1 text-sm font-semibold">
-                Navi <Sparkles size={12} />
+                Navi <Sparkles size={12} className="text-[#7C3AED]" />
               </p>
               <p className="ad-muted text-[10px]">Your Navrit buddy</p>
             </div>
@@ -123,10 +122,10 @@ export function NaviFloat() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="pointer-events-auto flex items-center gap-2 rounded-full bg-[var(--ad-accent)] px-4 py-3 font-semibold text-[#052e16] shadow-lg transition hover:scale-[1.03]"
+        className="pointer-events-auto flex items-center gap-2 rounded-full border border-[var(--ad-border)] bg-[var(--ad-card)] py-2 pl-2 pr-4 font-semibold shadow-lg transition hover:scale-[1.03]"
         aria-label="Open Navi assistant"
       >
-        <Leaf size={18} />
+        <NaviLogo size={40} />
         <span>Ask Navi</span>
       </button>
     </div>

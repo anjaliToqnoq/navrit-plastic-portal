@@ -107,7 +107,7 @@ export default function VendorManagement({
         paidBy: payment.paidBy,
         fundingSource: payment.fundingSource,
         notes: payment.notes,
-        sendWhatsApp: true,
+        sendEmail: true,
       })
     ) {
       setPayment({
@@ -143,10 +143,9 @@ export default function VendorManagement({
           <div className="grid gap-2 md:grid-cols-4">
             <input className="ad-input" placeholder="Vendor name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             <input className="ad-input" placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
-            <input className="ad-input" placeholder="WhatsApp number (10-digit)" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            <input className="ad-input" placeholder="Contact number" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
             <input className="ad-input" placeholder="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </div>
-          <p className="mt-2 text-xs ad-muted">Add WhatsApp number so purchase/payment PDF slips can be sent automatically. Leave blank to skip WhatsApp for this vendor.</p>
           <div className="mt-3 flex gap-2">
             <button className="ad-btn ad-btn-primary" onClick={addVendor}>
               Save Vendor
@@ -241,7 +240,7 @@ export default function VendorManagement({
               <div>
                 <h2 className="text-xl font-bold">{vendor.name}</h2>
                 <p className="ad-muted text-sm">
-                  {vendor.location || "Location not added"} · {vendor.phone || "No WhatsApp number"}
+                  {vendor.location || "Location not added"} · {vendor.phone || "No contact number"}
                 </p>
               </div>
               <div className="flex gap-2">
@@ -263,7 +262,7 @@ export default function VendorManagement({
               <div className="mt-4 grid gap-2 md:grid-cols-4">
                 <input className="ad-input" placeholder="Vendor name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                 <input className="ad-input" placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
-                <input className="ad-input" placeholder="WhatsApp number (10-digit)" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+                <input className="ad-input" placeholder="Contact number" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
                 <input className="ad-input" placeholder="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
                 <div className="md:col-span-4 flex gap-2">
                   <button className="ad-btn ad-btn-primary" onClick={editVendor}>

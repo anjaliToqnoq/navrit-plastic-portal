@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Pencil, CalendarClock, Wallet, Trash2, MessageCircle } from "lucide-react";
+import { Pencil, CalendarClock, Wallet, Trash2, Mail } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
 import { AdminSelect } from "@/components/admin-select";
 import { FundingSelect } from "@/components/funding-select";
@@ -52,7 +52,7 @@ export default function InventoryPage() {
   const [salePay,setSalePay] = useState<{saleId:number; amount:string; receivedBy:string; paymentMode:string} | null>(null);
   const [plasticTypeName,setPlasticTypeName] = useState("");
   const [plasticTypeNotes,setPlasticTypeNotes] = useState("");
-  const [sendWhatsApp,setSendWhatsApp] = useState(true);
+  const [sendEmail,setSendEmail] = useState(true);
 
   async function load() {
     const r=await fetch("/api/admin/inventory");
@@ -150,28 +150,21 @@ export default function InventoryPage() {
     });
   }
 
-  function whatsappMessage(wa:any): string {
-    if (!wa) return "";
-    if (!wa.configured) return "WhatsApp not configured yet (saved offline)";
-    if (wa.skipped && wa.skippedReason === "Send WhatsApp turned off") return "WhatsApp skipped";
-    const parts: string[] = [];
-    if (wa.vendor?.ok) parts.push("sent to vendor");
-    else if (wa.vendor?.skipped) parts.push("vendor skipped (no WhatsApp number)");
-    else if (wa.vendor && !wa.vendor.ok) parts.push(`vendor failed (${wa.vendor.error || "error"})`);
-    const officeOk = (wa.office || []).filter((x: any) => x.ok).length;
-    const officeFail = (wa.office || []).filter((x: any) => !x.ok && !x.skipped).length;
-    if (officeOk) parts.push(`office copy ×${officeOk}`);
-    if (officeFail) parts.push(`office failed ×${officeFail}`);
-    if (!parts.length) return wa.skippedReason ? `WhatsApp: ${wa.skippedReason}` : "";
-    return `WhatsApp: ${parts.join(" · ")}`;
+  function emailMessage(email:any): string {
+    if (!email) return "";
+    if (!email.configured) return "Email not configured yet (saved offline)";
+    if (email.skipped && email.skippedReason === "Email notify turned off") return "Email skipped";
+    if (email.skipped) return email.skippedReason ? `Email: ${email.skippedReason}` : "Email skipped";
+    if (email.ok) return `Email sent to ${email.to || "your Gmail"}`;
+    return `Email failed: ${email.error || "error"}`;
   }
 
   async function post(action:string, body:any) {
     const r=await fetch("/api/admin/inventory",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...body})});
     const j=await r.json().catch(()=>({}));
     if(!r.ok){setMessage(j.error||"Could not save — please check the form and try again");return false;}
-    const waNote = whatsappMessage(j.whatsapp);
-    setMessage(waNote ? `Saved successfully · ${waNote}` : "Saved successfully");
+    const mailNote = emailMessage(j.email);
+    setMessage(mailNote ? `Saved successfully · ${mailNote}` : "Saved successfully");
     await load();
     return true;
   }
@@ -324,13 +317,13 @@ export default function InventoryPage() {
       paidBy:creditPay.paidBy,
       fundingSource:creditPay.fundingSource,
       paymentDate:creditPay.paymentDate,
-      sendWhatsApp,
+      sendEmail,
     });
     if(ok) setCreditPay(null);
   }
 
-  async function resendPurchaseWhatsApp(purchaseId: number) {
-    await post("resendPurchaseWhatsApp", { purchaseId, kind: "purchase" });
+  async function resendPurchaseEmail(purchaseId: number) {
+    await post("resendPurchaseEmail", { purchaseId, kind: "purchase" });
   }
 
   function purchaseCategoryAndVariant(materialName:string, materialVariant?:string) {
@@ -359,7 +352,7 @@ export default function InventoryPage() {
       purchaseDate:purchase.purchaseDate,
       paymentDate: cashPaid && cashPaid>0 ? (purchase.paymentDate || purchase.purchaseDate) : undefined,
       notes:purchase.notes,
-      sendWhatsApp,
+      sendEmail,
     });
     if(ok)setPurchase({...emptyPurchase});
   }
@@ -381,7 +374,7 @@ export default function InventoryPage() {
       purchaseDate:purchase.purchaseDate,
       paymentDate:purchase.paymentDate||undefined,
       notes:purchase.notes,
-      sendWhatsApp,
+      sendEmail,
     });
     if(ok){setEditingPurchase(null);setPurchase({...emptyPurchase});}
   }
@@ -715,12 +708,12 @@ export default function InventoryPage() {
             <input className="ad-input" placeholder="Optional notes" value={purchase.notes} onChange={e=>setPurchase({...purchase,notes:e.target.value})}/>
           </label>
           <label className="ad-field md:col-span-2 flex items-center gap-2 pt-6">
-            <input type="checkbox" checked={sendWhatsApp} onChange={e=>setSendWhatsApp(e.target.checked)} />
+            <input type="checkbox" checked={sendEmail} onChange={e=>setSendEmail(e.target.checked)} />
             <span className="text-sm">
-              Send WhatsApp PDF slip
-              {data?.whatsappConfigured
-                ? " (vendor + office notify)"
-                : " — configure WHATSAPP_* on Railway to enable"}
+              Email PDF slip to my Gmail
+              {data?.emailConfigured
+                ? data?.notifyEmail ? ` (${data.notifyEmail})` : ""
+                : " — set GMAIL_USER + GMAIL_APP_PASSWORD on Railway"}
             </span>
           </label>
           <div className="flex flex-wrap items-end gap-2 md:col-span-2">
@@ -728,7 +721,7 @@ export default function InventoryPage() {
             {editingPurchase&&<button className="ad-btn ad-btn-ghost" onClick={()=>{setEditingPurchase(null);setPurchase({...emptyPurchase})}}>Cancel</button>}
           </div>
         </div>
-        <p className="mt-3 text-xs ad-muted">Purchase date = material aaya. Payment date = vendor ko paisa diya (often after sale cash). Accounts uses payment date. WhatsApp PDF includes remaining money + vendor outstanding — skipped if vendor has no WhatsApp number.</p>
+        <p className="mt-3 text-xs ad-muted">Purchase date = material aaya. Payment date = vendor ko paisa diya (often after sale cash). Accounts uses payment date. PDF emailed to your Gmail includes remaining money + vendor outstanding — forward to WhatsApp yourself if needed.</p>
       </div>
 
       {paymentEdit && <div className="ad-card p-4 border border-[var(--ad-accent)] ad-fade-in">
@@ -800,8 +793,8 @@ export default function InventoryPage() {
                     <Wallet size={13} /> Pay
                   </button>
                 )}
-                <button type="button" className="ad-icon-btn" onClick={()=>void resendPurchaseWhatsApp(p.id)} title="Resend WhatsApp PDF slip">
-                  <MessageCircle size={13} /> WA
+                <button type="button" className="ad-icon-btn" onClick={()=>void resendPurchaseEmail(p.id)} title="Resend PDF to Gmail">
+                  <Mail size={13} /> Mail
                 </button>
                 <button type="button" className="ad-icon-btn ad-icon-btn-danger" onClick={()=>void deletePurchase(p)} title="Delete purchase">
                   <Trash2 size={13} /> Delete

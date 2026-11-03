@@ -9,7 +9,8 @@ import { optionalFundingSourceSchema } from "@/lib/funding";
 import { friendlyZodError } from "@/lib/api-errors";
 import { LABOUR_TASKS } from "@/lib/labour-tasks";
 import { attendanceEarnedAmount, halfDayRate } from "@/lib/labour-math";
-import { notifyPurchaseWhatsApp, type NotifyKind } from "@/lib/whatsapp/notify";
+import { notifyPurchaseEmail, type NotifyKind } from "@/lib/email/notify-purchase";
+import { isEmailConfigured } from "@/lib/email/gmail";
 
 function workerWageDue(workerId: number, dailyRate: number, mode?: string) {
   const rows = mode
@@ -877,7 +878,8 @@ export async function GET() {
     processingContractorSummaries, partnerSettlements, partnerAdvances, buyers, buyerAdvances, buyerSummary, borrowingRepayments, totals,
     buyerAdvanceBalance, partnerLentTotal,
     personAccountTotals, personAccountTotalsFlat, externalLoanOutstanding, reconciliation, cashflowBreakdown, businessSplit, sharedExpenseSummary,
-    whatsappConfigured: Boolean(process.env.WHATSAPP_TOKEN?.trim() && process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()),
+    emailConfigured: isEmailConfigured(),
+    notifyEmail: process.env.NOTIFY_EMAIL?.trim() || process.env.GMAIL_USER?.trim() || "",
     // COMPANY is canonical; PET/PLASTIC mirrored so older UI still sees one shared book.
     cashBalance:{
       COMPANY: companyParts.book,
@@ -887,10 +889,10 @@ export async function GET() {
   });
 }
 
-type PendingWhatsApp = {
+type PendingEmail = {
   purchaseId: number;
   kind: NotifyKind;
-  sendWhatsApp?: boolean;
+  sendEmail?: boolean;
   payment?: {
     amount: number;
     paymentDate: string;
@@ -907,20 +909,20 @@ export async function POST(req: NextRequest) {
 
   try {
     // Resend does not need a write transaction
-    if (body.action === "resendPurchaseWhatsApp") {
+    if (body.action === "resendPurchaseEmail") {
       const s = z.object({
         purchaseId: z.number().int().positive(),
         kind: z.enum(["purchase", "purchase_update", "vendor_payment"]).optional().default("purchase"),
       }).parse(body);
-      const whatsapp = await notifyPurchaseWhatsApp({
+      const email = await notifyPurchaseEmail({
         purchaseId: s.purchaseId,
         kind: s.kind,
-        sendWhatsApp: true,
+        sendEmail: true,
       });
-      return json({ ok: true, whatsapp });
+      return json({ ok: true, email });
     }
 
-    let pendingWhatsApp: PendingWhatsApp | null = null;
+    let pendingEmail: PendingEmail | null = null;
     const response = withTransaction(() => {
     if (body.action === "addSupplier") {
       const s = z.object({
@@ -1219,10 +1221,10 @@ export async function POST(req: NextRequest) {
         VALUES (?, ?, ?, 'PURCHASE', ?, ?, ?, ?, ?, ?)
       `).run(s.mode, s.materialId ?? null, stockName, s.quantityKg, total, purchaseId, s.purchaseDate, s.notes, nowIso());
 
-      pendingWhatsApp = {
+      pendingEmail = {
         purchaseId,
         kind: "purchase",
-        sendWhatsApp: body.sendWhatsApp !== false,
+        sendEmail: body.sendEmail !== false,
       };
       return json({ ok: true, id: purchaseId, total, paid, credit, materialName: stockName });
     }
@@ -1314,10 +1316,10 @@ export async function POST(req: NextRequest) {
       }
 
       assertNoNegativeStock(s.mode, [existing.existing_material_name, stockName]);
-      pendingWhatsApp = {
+      pendingEmail = {
         purchaseId: s.purchaseId,
         kind: "purchase_update",
-        sendWhatsApp: body.sendWhatsApp !== false,
+        sendEmail: body.sendEmail !== false,
       };
       return json({ ok: true, total, paid, credit, materialName: stockName });
     }
@@ -1470,10 +1472,10 @@ export async function POST(req: NextRequest) {
       }
       const firstPurchaseId = purchases[0]?.id;
       if (firstPurchaseId) {
-        pendingWhatsApp = {
+        pendingEmail = {
           purchaseId: firstPurchaseId,
           kind: "vendor_payment",
-          sendWhatsApp: body.sendWhatsApp !== false,
+          sendEmail: body.sendEmail !== false,
           payment: {
             amount: s.amount,
             paymentDate: s.paymentDate,
@@ -1501,10 +1503,10 @@ export async function POST(req: NextRequest) {
         .run(s.amount, s.amount, nowIso(), s.purchaseId);
       sqlite.prepare("INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
         .run(p.mode,p.supplier_id,s.purchaseId,"CREDIT_SETTLEMENT",s.amount,s.paymentDate,"Cash","Vendor payment (later)",s.paidBy,nowIso(),s.fundingSource);
-      pendingWhatsApp = {
+      pendingEmail = {
         purchaseId: s.purchaseId,
         kind: "vendor_payment",
-        sendWhatsApp: body.sendWhatsApp !== false,
+        sendEmail: body.sendEmail !== false,
         payment: {
           amount: s.amount,
           paymentDate: s.paymentDate,
@@ -2172,20 +2174,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     });
 
-    if (pendingWhatsApp && response.ok) {
+    if (pendingEmail && response.ok) {
       try {
-        const whatsapp = await notifyPurchaseWhatsApp(pendingWhatsApp);
+        const email = await notifyPurchaseEmail(pendingEmail);
         const base = await response.json();
-        return NextResponse.json({ ...base, whatsapp });
-      } catch (waError) {
+        return NextResponse.json({ ...base, email });
+      } catch (mailError) {
         const base = await response.json().catch(() => ({ ok: true }));
         return NextResponse.json({
           ...base,
-          whatsapp: {
+          email: {
             configured: true,
             skipped: false,
-            skippedReason: waError instanceof Error ? waError.message : "WhatsApp failed",
-            office: [],
+            ok: false,
+            error: mailError instanceof Error ? mailError.message : "Email failed",
           },
         });
       }

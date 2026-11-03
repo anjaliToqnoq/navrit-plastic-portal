@@ -68,7 +68,7 @@ export async function buildPurchaseSlipPdf(data: PurchaseSlipData): Promise<Buff
   y -= 18;
   draw(data.businessAddress || "", { size: 9, color: muted });
   y -= 12;
-  draw(`Phone / WhatsApp: ${data.businessPhone || "—"}`, { size: 9, color: muted });
+  draw(`Phone: ${data.businessPhone || "—"}`, { size: 9, color: muted });
   y -= 22;
   page.drawLine({ start: { x: 40, y }, end: { x: 555, y }, thickness: 1.2, color: green });
   y -= 28;
@@ -80,7 +80,7 @@ export async function buildPurchaseSlipPdf(data: PurchaseSlipData): Promise<Buff
 
   const leftRows: Array<[string, string]> = [
     ["Vendor", data.vendorName || "—"],
-    ["WhatsApp", data.vendorPhone || "—"],
+    ["Contact", data.vendorPhone || "—"],
     ["Location", data.vendorLocation || "—"],
     ["Material", data.materialName || "—"],
     ["Type / variant", data.materialVariant || "—"],
@@ -157,7 +157,7 @@ export async function buildPurchaseSlipPdf(data: PurchaseSlipData): Promise<Buff
   y = Math.min(y, 80);
   draw(`Generated ${data.generatedAt}`, { size: 8, color: muted });
   y -= 12;
-  draw("GST not included. Auto-sent from NAVRIT portal via WhatsApp Business.", { size: 8, color: muted });
+  draw("GST not included. Auto-emailed from NAVRIT portal — forward manually if needed.", { size: 8, color: muted });
 
   const bytes = await doc.save();
   return Buffer.from(bytes);

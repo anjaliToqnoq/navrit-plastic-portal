@@ -460,6 +460,17 @@ function createDb() {
     );
     CREATE INDEX IF NOT EXISTS whatsapp_send_log_purchase_idx
       ON whatsapp_send_log(purchase_id, created_at);
+    CREATE TABLE IF NOT EXISTS email_send_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_type TEXT NOT NULL,
+      purchase_id INTEGER,
+      to_email TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS email_send_log_purchase_idx
+      ON email_send_log(purchase_id, created_at);
   `);
   // Allow Plastic freeform material names on sales (drop Natural/Red-only CHECK).
   try {

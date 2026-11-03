@@ -24,6 +24,7 @@ import {
   Factory,
   Leaf,
 } from "lucide-react";
+import { NaviFloat } from "@/components/navi-float";
 import "@/app/admin-theme.css";
 
 const navByMode = {
@@ -34,7 +35,7 @@ const navByMode = {
     { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
     { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
     { href: "/admin/processing", label: "Labour Management", icon: Factory },
-    { href: "/admin/assistant", label: "Navi", icon: Leaf },
+    { href: "/admin/assistant", label: "Navi AI", icon: Leaf },
     { href: "/admin/backup", label: "Backup", icon: HardDrive },
   ],
   PLASTIC: [
@@ -44,7 +45,7 @@ const navByMode = {
     { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
     { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
     { href: "/admin/processing", label: "Labour Management", icon: Factory },
-    { href: "/admin/assistant", label: "Navi", icon: Leaf },
+    { href: "/admin/assistant", label: "Navi AI", icon: Leaf },
     { href: "/admin/backup", label: "Backup", icon: HardDrive },
   ],
 } as const;
@@ -341,6 +342,8 @@ export function AdminShell({
           </div>
         ))}
       </div>
+
+      <NaviFloat />
     </div>
   );
 }

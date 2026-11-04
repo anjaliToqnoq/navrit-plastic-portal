@@ -18,6 +18,7 @@ type Purchase = {
   id:number; mode:Mode; material_name:string; purchase_type:string; quantity_kg:number;
   rate_per_kg:number; total_amount:number; paid_amount:number; credit_amount:number;
   transport_charges:number; weight_charges:number; labour_charges:number; effective_cost:number;
+  landed_total?:number;
   supplierName?:string; lenderName?:string; purchase_date:string; payment_date?:string;
   paid_by?:string; payment_done_by?:string;
 };
@@ -40,7 +41,7 @@ export default function InventoryPage() {
   const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
 
   const [message,setMessage] = useState("");
-  const emptyPurchase = { materialId:"", materialName:"", materialVariant:"Mixed", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", fundingSource:"COMPANY" as FundingSource, borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), paymentDate:new Date().toISOString().slice(0,10), notes:"",  };
+  const emptyPurchase = { materialId:"", materialName:"", materialVariant:"Mixed", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", fundingSource:"COMPANY" as FundingSource, borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), paymentDate:new Date().toISOString().slice(0,10), notes:"", transportCharges:"", loadingCharges:"" };
   const [purchase,setPurchase] = useState(emptyPurchase);
   const [editingPurchase,setEditingPurchase] = useState<number|null>(null);
   const [paymentEdit,setPaymentEdit] = useState<{purchaseId:number; paymentDate:string; paidBy:string} | null>(null);
@@ -231,10 +232,21 @@ export default function InventoryPage() {
     if (purchase.ratePerKg === "" || Number.isNaN(rate) || rate < 0) return "Please enter Rate / kg";
     const paid = purchase.paidAmount === "" ? 0 : Number(purchase.paidAmount);
     if (purchase.paidAmount !== "" && (Number.isNaN(paid) || paid < 0)) return "Paid to vendor must be a valid amount (0 or more)";
+    const transport = purchase.transportCharges === "" ? 0 : Number(purchase.transportCharges);
+    const loading = purchase.loadingCharges === "" ? 0 : Number(purchase.loadingCharges);
+    if (purchase.transportCharges !== "" && (Number.isNaN(transport) || transport < 0)) return "Transport must be 0 or more";
+    if (purchase.loadingCharges !== "" && (Number.isNaN(loading) || loading < 0)) return "Loading charges must be 0 or more";
     if (paid > 0 && !purchase.paidBy) return "Please select Payment done by when paying the vendor";
+    if ((transport > 0 || loading > 0) && !purchase.paidBy) return "Please select Payment done by when paying transport / loading";
     if (!purchase.purchaseDate) return "Please select Purchase date";
     return "";
   }
+
+  const materialTotal = (Number(purchase.quantityKg) || 0) * (Number(purchase.ratePerKg) || 0);
+  const transportAmt = Number(purchase.transportCharges) || 0;
+  const loadingAmt = Number(purchase.loadingCharges) || 0;
+  const landedTotal = materialTotal + transportAmt + loadingAmt;
+  const finalRate = (Number(purchase.quantityKg) || 0) > 0 ? landedTotal / Number(purchase.quantityKg) : 0;
 
   function resetSaleForm() {
     setEditingSale(null);
@@ -387,6 +399,8 @@ export default function InventoryPage() {
       purchaseDate:purchase.purchaseDate,
       paymentDate: cashPaid && cashPaid>0 ? (purchase.paymentDate || purchase.purchaseDate) : undefined,
       notes:purchase.notes,
+      transportCharges: purchase.transportCharges==="" ? 0 : Number(purchase.transportCharges),
+      loadingCharges: purchase.loadingCharges==="" ? 0 : Number(purchase.loadingCharges),
       sendEmail,
     });
     if(ok)setPurchase({...emptyPurchase});
@@ -409,6 +423,8 @@ export default function InventoryPage() {
       purchaseDate:purchase.purchaseDate,
       paymentDate:purchase.paymentDate||undefined,
       notes:purchase.notes,
+      transportCharges: purchase.transportCharges==="" ? 0 : Number(purchase.transportCharges),
+      loadingCharges: purchase.loadingCharges==="" ? 0 : Number(purchase.loadingCharges),
       sendEmail,
     });
     if(ok){setEditingPurchase(null);setPurchase({...emptyPurchase});}
@@ -434,6 +450,8 @@ export default function InventoryPage() {
       purchaseDate:p.purchase_date,
       paymentDate:payDate,
       notes:"",
+      transportCharges: String(p.transport_charges || ""),
+      loadingCharges: String(p.labour_charges || ""),
     });
     window.scrollTo({top:0,behavior:"smooth"});
   }
@@ -727,11 +745,27 @@ export default function InventoryPage() {
             <input className="ad-input" type="number" min="0" step="any" placeholder="e.g. 49" value={purchase.ratePerKg} onChange={e=>setPurchase({...purchase,ratePerKg:e.target.value})}/>
           </label>
           <div className="ad-field">
-            <span className="ad-field-label">Total</span>
-            <div className="ad-input flex items-center text-sm font-semibold">₹{((Number(purchase.quantityKg)||0)*(Number(purchase.ratePerKg)||0)).toFixed(2)}</div>
+            <span className="ad-field-label">Vendor material total</span>
+            <div className="ad-input flex items-center text-sm font-semibold">₹{materialTotal.toFixed(2)}</div>
           </div>
           <label className="ad-field">
-            <span className="ad-field-label">Paid to vendor</span>
+            <span className="ad-field-label">Transport (driver)</span>
+            <input className="ad-input" type="number" min="0" step="any" placeholder="0 if none" value={purchase.transportCharges} onChange={e=>setPurchase({...purchase,transportCharges:e.target.value})}/>
+          </label>
+          <label className="ad-field">
+            <span className="ad-field-label">Loading (outside labour)</span>
+            <input className="ad-input" type="number" min="0" step="any" placeholder="0 if none" value={purchase.loadingCharges} onChange={e=>setPurchase({...purchase,loadingCharges:e.target.value})}/>
+          </label>
+          <div className="ad-field">
+            <span className="ad-field-label">Landed total</span>
+            <div className="ad-input flex items-center text-sm font-semibold">₹{landedTotal.toFixed(2)}</div>
+          </div>
+          <div className="ad-field">
+            <span className="ad-field-label">Final rate / kg</span>
+            <div className="ad-input flex items-center text-sm font-semibold">₹{finalRate.toFixed(2)}</div>
+          </div>
+          <label className="ad-field">
+            <span className="ad-field-label">Paid to vendor (material only)</span>
             <input className="ad-input" type="number" min="0" step="any" placeholder="0 if pay later" value={purchase.paidAmount} onChange={e=>setPurchase({...purchase,paidAmount:e.target.value})}/>
           </label>
           {(Number(purchase.paidAmount)>0 || editingPurchase!==null) && (
@@ -775,7 +809,7 @@ export default function InventoryPage() {
             {editingPurchase&&<button className="ad-btn ad-btn-ghost" onClick={()=>{setEditingPurchase(null);setPurchase({...emptyPurchase})}}>Cancel</button>}
           </div>
         </div>
-        <p className="mt-3 text-xs ad-muted">Purchase date = material aaya. Payment date = vendor ko paisa diya (often after sale cash). Accounts uses payment date. PDF emailed to your Gmail includes remaining money + vendor outstanding — forward to WhatsApp yourself if needed.</p>
+        <p className="mt-3 text-xs ad-muted">Vendor gets <b>material cost only</b>. Transport (driver) and loading (outside labour) are separate expenses — not added to vendor bill. Final rate / kg = (material + transport + loading) ÷ kg. PDF emailed to your Gmail.</p>
       </div>
 
       {paymentEdit && <div className="ad-card p-4 border border-[var(--ad-accent)] ad-fade-in">
@@ -815,7 +849,7 @@ export default function InventoryPage() {
         </div>
       </div>}
 
-      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Purchase date</th><th>Payment date</th><th>Vendor</th><th>Material</th><th>Qty</th><th>Rate</th><th>Vendor Total</th><th>Paid</th><th>Unpaid</th><th>Payment done by</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Purchase date</th><th>Payment date</th><th>Vendor</th><th>Material</th><th>Qty</th><th>Rate</th><th>Vendor</th><th>Transport</th><th>Loading</th><th>Final ₹/kg</th><th>Paid</th><th>Unpaid</th><th>By</th><th>Status</th><th>Actions</th></tr></thead><tbody>
         {filteredPurchases.map((p:Purchase)=>{
           const payDate=p.payment_date|| (Number(p.paid_amount)>0 ? p.purchase_date : "");
           const payer=p.payment_done_by||p.paid_by||"—";
@@ -827,10 +861,13 @@ export default function InventoryPage() {
             <td>{p.material_name==="Natural Bottles"||String(p.material_name).startsWith("Natural Bottles")?"Natural (mixed)":p.material_name}</td>
             <td>{p.quantity_kg} kg</td>
             <td>₹{p.rate_per_kg}</td>
-            <td>₹{p.total_amount}</td>
+            <td>₹{Number(p.total_amount).toFixed(2)}</td>
+            <td>₹{Number(p.transport_charges||0).toFixed(2)}</td>
+            <td>₹{Number(p.labour_charges||0).toFixed(2)}</td>
+            <td>₹{Number(p.effective_cost||p.rate_per_kg).toFixed(2)}</td>
             <td>₹{p.paid_amount}</td>
             <td>₹{p.credit_amount}</td>
-            <td>{paid?payer:"—"}</td>
+            <td>{paid||Number(p.transport_charges||0)>0||Number(p.labour_charges||0)>0?payer:"—"}</td>
             <td><span className={paid?"ad-status-paid":"ad-status-unpaid"}>{paid?"PAID":"UNPAID"}</span></td>
             <td>
               <div className="ad-row-actions">

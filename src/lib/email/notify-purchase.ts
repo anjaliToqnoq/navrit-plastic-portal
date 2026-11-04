@@ -78,6 +78,8 @@ function loadPurchaseSlip(
         quantity_kg: number;
         rate_per_kg: number;
         total_amount: number;
+        transport_charges?: number;
+        labour_charges?: number;
         paid_amount: number;
         credit_amount: number;
         paid_by: string;
@@ -98,6 +100,12 @@ function loadPurchaseSlip(
       : kind === "purchase_update"
         ? "Purchase update slip"
         : "Purchase slip";
+  const transportCharges = Number(row.transport_charges || 0);
+  const loadingCharges = Number(row.labour_charges || 0);
+  const totalAmount = Number(row.total_amount);
+  const quantityKg = Number(row.quantity_kg);
+  const landedTotal = Math.round((totalAmount + transportCharges + loadingCharges) * 100) / 100;
+  const effectiveRate = quantityKg > 0 ? Math.round((landedTotal / quantityKg) * 100) / 100 : Number(row.rate_per_kg);
 
   return {
     docTitle,
@@ -110,9 +118,13 @@ function loadPurchaseSlip(
     vendorLocation: row.supplierLocation || "",
     materialName: row.material_name,
     materialVariant: row.material_variant || "",
-    quantityKg: Number(row.quantity_kg),
+    quantityKg,
     ratePerKg: Number(row.rate_per_kg),
-    totalAmount: Number(row.total_amount),
+    totalAmount,
+    transportCharges,
+    loadingCharges,
+    landedTotal,
+    effectiveRate,
     paidAmount: Number(row.paid_amount),
     creditAmount: Number(row.credit_amount),
     paidBy: row.paid_by || "",
@@ -197,9 +209,13 @@ export async function notifyPurchaseEmail(opts: {
     `Vendor: ${slip.vendorName}`,
     `Material: ${slip.materialName} ${slip.materialVariant || ""}`.trim(),
     `Qty: ${Number(slip.quantityKg).toFixed(2)} kg @ ₹${Number(slip.ratePerKg).toFixed(2)}`,
-    `Total: ₹${Number(slip.totalAmount).toFixed(2)}`,
-    `Paid: ₹${Number(slip.paidAmount).toFixed(2)}`,
-    `Remaining on this purchase: ₹${Number(slip.creditAmount).toFixed(2)}`,
+    `Vendor material: ₹${Number(slip.totalAmount).toFixed(2)}`,
+    `Transport (driver): ₹${Number(slip.transportCharges || 0).toFixed(2)}`,
+    `Loading (outside labour): ₹${Number(slip.loadingCharges || 0).toFixed(2)}`,
+    `Landed total: ₹${Number(slip.landedTotal || slip.totalAmount).toFixed(2)}`,
+    `Final rate / kg: ₹${Number(slip.effectiveRate || slip.ratePerKg).toFixed(2)}`,
+    `Paid to vendor: ₹${Number(slip.paidAmount).toFixed(2)}`,
+    `Remaining to vendor: ₹${Number(slip.creditAmount).toFixed(2)}`,
     `Vendor outstanding: ₹${Number(slip.vendorOutstanding).toFixed(2)}`,
     `Vendor advance: ₹${Number(slip.vendorAdvance).toFixed(2)}`,
     "",

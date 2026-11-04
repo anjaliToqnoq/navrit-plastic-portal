@@ -124,6 +124,61 @@ function isNaturalStockName(materialName: string) {
   return materialName === "Natural Bottles" || materialName.startsWith("Natural Bottles");
 }
 
+/** Transport (driver) + Loading (outside labour) — not paid to vendor; hits company cash via other_expenses. */
+function syncPurchaseSideCosts(opts: {
+  mode: string;
+  purchaseId: number;
+  transportCharges: number;
+  loadingCharges: number;
+  expenseDate: string;
+  paidBy: string;
+  fundingSource: string;
+}) {
+  const transport = Math.round(Math.max(0, Number(opts.transportCharges) || 0) * 100) / 100;
+  const loading = Math.round(Math.max(0, Number(opts.loadingCharges) || 0) * 100) / 100;
+  sqlite
+    .prepare("DELETE FROM other_expenses WHERE purchase_id=? AND expense_type IN ('Transport','Loading')")
+    .run(opts.purchaseId);
+  const insert = sqlite.prepare(`
+    INSERT INTO other_expenses
+    (mode,purchase_id,expense_type,description,amount,expense_date,expense_frequency,paid_by,created_at,billing_month,billing_start_date,billing_end_date,funding_source)
+    VALUES (?,?,?,?,?,?,'ONE_TIME',?,?,?,?,?,?)
+  `);
+  if (transport > 0.005) {
+    insert.run(
+      opts.mode,
+      opts.purchaseId,
+      "Transport",
+      `Driver / transport for purchase #${opts.purchaseId}`,
+      transport,
+      opts.expenseDate,
+      opts.paidBy || "",
+      nowIso(),
+      "",
+      "",
+      "",
+      opts.fundingSource || "COMPANY"
+    );
+  }
+  if (loading > 0.005) {
+    insert.run(
+      opts.mode,
+      opts.purchaseId,
+      "Loading",
+      `Outside loading labour for purchase #${opts.purchaseId}`,
+      loading,
+      opts.expenseDate,
+      opts.paidBy || "",
+      nowIso(),
+      "",
+      "",
+      "",
+      opts.fundingSource || "COMPANY"
+    );
+  }
+  return { transport, loading, landedExtra: Math.round((transport + loading) * 100) / 100 };
+}
+
 function getAvailableStock(mode: string, materialName: string, date: string, excludeSaleId?: number) {
   // Natural buys are mixed; include legacy colour rows so older data still counts.
   if (isNaturalStockName(materialName)) {
@@ -695,7 +750,8 @@ export async function GET() {
 
   const purchases = sqlite.prepare(`
     SELECT p.*, s.name as supplierName, l.name as lenderName,
-           ROUND(p.total_amount / NULLIF(p.quantity_kg,0), 2) as effective_cost,
+           ROUND((p.total_amount + COALESCE(p.transport_charges,0) + COALESCE(p.labour_charges,0)) / NULLIF(p.quantity_kg,0), 2) as effective_cost,
+           ROUND(p.total_amount + COALESCE(p.transport_charges,0) + COALESCE(p.labour_charges,0), 2) as landed_total,
            (
              SELECT vp.payment_date FROM vendor_payments vp
              WHERE vp.purchase_id = p.id
@@ -1183,14 +1239,21 @@ export async function POST(req: NextRequest) {
         purchaseDate: dateSchema.optional().default(todayStr()),
         paymentDate: dateSchema.optional(),
         notes: z.string().trim().optional().default(""),
+        transportCharges: z.number({ invalid_type_error: "Transport must be a valid number" }).nonnegative("Transport cannot be negative").optional().default(0),
+        loadingCharges: z.number({ invalid_type_error: "Loading charges must be a valid number" }).nonnegative("Loading charges cannot be negative").optional().default(0),
       }).parse(body);
       const paymentDoneDate = s.paymentDate || s.purchaseDate;
+      const transportCharges = Math.round((s.transportCharges || 0) * 100) / 100;
+      const loadingCharges = Math.round((s.loadingCharges || 0) * 100) / 100;
 
       if (!s.supplierId) {
         return NextResponse.json({ error: "Please select a Vendor before saving the purchase" }, { status: 400 });
       }
       if ((s.paidAmount ?? 0) > 0 && !s.paidBy) {
         return NextResponse.json({ error: "Please select Payment done by when paying the vendor" }, { status: 400 });
+      }
+      if ((transportCharges > 0 || loadingCharges > 0) && !s.paidBy) {
+        return NextResponse.json({ error: "Please select Payment done by when paying transport / loading" }, { status: 400 });
       }
       if (s.purchaseType === "SUPPLIER_CREDIT" && !s.supplierId) {
         return NextResponse.json({ error: "Supplier is required for supplier credit" }, { status: 400 });
@@ -1207,6 +1270,7 @@ export async function POST(req: NextRequest) {
       }
       const variant = stockName === "Red Bottles" ? "Red" : "Mixed";
 
+      // Vendor bill = material only. Transport/loading are separate payees.
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
       let cashPaid = s.paidAmount ?? 0;
       if (cashPaid > total) cashPaid = total;
@@ -1214,6 +1278,8 @@ export async function POST(req: NextRequest) {
       if(s.supplierId){ const rows=sqlite.prepare("SELECT id,amount,used_amount FROM vendor_advances WHERE mode=? AND supplier_id=? AND amount-used_amount>0.005 ORDER BY advance_date ASC,id ASC").all(s.mode,s.supplierId) as Array<{id:number;amount:number;used_amount:number}>; let rem=Math.max(0,total-cashPaid); for(const a of rows){ if(rem<=0) break; const use=Math.min(a.amount-a.used_amount,rem); if(use>0){sqlite.prepare("UPDATE vendor_advances SET used_amount=used_amount+?,updated_at=? WHERE id=?").run(use,nowIso(),a.id); advanceApplied+=use; rem-=use;}} }
       const paid=Math.round((cashPaid+advanceApplied)*100)/100;
       const credit=Math.round((total-paid)*100)/100;
+      const landedTotal = Math.round((total + transportCharges + loadingCharges) * 100) / 100;
+      const effectiveRate = s.quantityKg > 0 ? Math.round((landedTotal / s.quantityKg) * 100) / 100 : 0;
 
       const r = sqlite.prepare(`
         INSERT INTO purchases
@@ -1223,7 +1289,7 @@ export async function POST(req: NextRequest) {
       `).run(
         s.mode, s.materialId ?? null, stockName, s.supplierId ?? null, s.purchaseType,
         s.quantityKg, s.ratePerKg, total, paid, credit, s.lenderId ?? null, s.borrowingId ?? null,
-        s.purchaseDate, s.notes, s.paidBy ?? "", 0, 0, 0, variant, nowIso(), nowIso()
+        s.purchaseDate, s.notes, s.paidBy ?? "", transportCharges, 0, loadingCharges, variant, nowIso(), nowIso()
       );
       const purchaseId = Number(r.lastInsertRowid);
       if (s.fundingSource === "OWN_POCKET" && cashPaid > 0 && !s.paidBy) {
@@ -1232,18 +1298,40 @@ export async function POST(req: NextRequest) {
       if(cashPaid>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"PURCHASE",cashPaid,paymentDoneDate,"Cash",s.notes,s.paidBy ?? "",nowIso(),s.fundingSource);
       if(advanceApplied>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"CREDIT_SETTLEMENT",advanceApplied,paymentDoneDate,"Advance","Advance applied to purchase #"+purchaseId,nowIso());
 
+      syncPurchaseSideCosts({
+        mode: s.mode,
+        purchaseId,
+        transportCharges,
+        loadingCharges,
+        expenseDate: s.purchaseDate,
+        paidBy: s.paidBy ?? "",
+        fundingSource: s.fundingSource || "COMPANY",
+      });
+
+      // Stock value uses landed cost (material + transport + loading).
       sqlite.prepare(`
         INSERT INTO inventory_transactions
         (mode, material_id, material_name, transaction_type, quantity_kg, amount, purchase_id, transaction_date, notes, created_at)
         VALUES (?, ?, ?, 'PURCHASE', ?, ?, ?, ?, ?, ?)
-      `).run(s.mode, s.materialId ?? null, stockName, s.quantityKg, total, purchaseId, s.purchaseDate, s.notes, nowIso());
+      `).run(s.mode, s.materialId ?? null, stockName, s.quantityKg, landedTotal, purchaseId, s.purchaseDate, s.notes, nowIso());
 
       pendingEmail = {
         purchaseId,
         kind: "purchase",
         sendEmail: body.sendEmail !== false,
       };
-      return json({ ok: true, id: purchaseId, total, paid, credit, materialName: stockName });
+      return json({
+        ok: true,
+        id: purchaseId,
+        total,
+        paid,
+        credit,
+        transportCharges,
+        loadingCharges,
+        landedTotal,
+        effectiveRate,
+        materialName: stockName,
+      });
     }
 
     if (body.action === "updatePurchase") {
@@ -1263,6 +1351,8 @@ export async function POST(req: NextRequest) {
         paidBy: optionalAccountPersonSchema,
         fundingSource: optionalFundingSourceSchema,
         notes: z.string().trim().optional().default(""),
+        transportCharges: z.number().nonnegative().optional().default(0),
+        loadingCharges: z.number().nonnegative().optional().default(0),
       }).parse(body);
       const existing = sqlite.prepare("SELECT id, paid_amount, material_id, material_name as existing_material_name, supplier_id as existing_supplier_id, paid_by FROM purchases WHERE id=? AND mode=?").get(s.purchaseId, s.mode) as {id:number;paid_amount:number;material_id:number|null;existing_material_name:string;existing_supplier_id:number|null;paid_by:string} | undefined;
       if (!existing) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
@@ -1274,6 +1364,8 @@ export async function POST(req: NextRequest) {
       }
       const variant = stockName === "Red Bottles" ? "Red" : "Mixed";
       const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
+      const transportCharges = Math.round((s.transportCharges || 0) * 100) / 100;
+      const loadingCharges = Math.round((s.loadingCharges || 0) * 100) / 100;
       if (!s.supplierId) return NextResponse.json({ error: "Vendor is required for every purchase" }, { status: 400 });
 
       const advanceApplied = Number((sqlite.prepare(`
@@ -1292,8 +1384,12 @@ export async function POST(req: NextRequest) {
       } else {
         cashPaid = Math.min(s.paidAmount, Math.max(0, Math.round((total - advanceApplied) * 100) / 100));
       }
-      if (cashPaid > 0.005 && !(s.paidBy || existing.paid_by || cashRows[0]?.paid_by)) {
+      const paidBy = s.paidBy || existing.paid_by || cashRows[0]?.paid_by || "";
+      if (cashPaid > 0.005 && !paidBy) {
         return NextResponse.json({ error: "Please select Payment done by when paying the vendor" }, { status: 400 });
+      }
+      if ((transportCharges > 0 || loadingCharges > 0) && !paidBy) {
+        return NextResponse.json({ error: "Please select Payment done by when paying transport / loading" }, { status: 400 });
       }
       const paid = Math.round((cashPaid + advanceApplied) * 100) / 100;
       if (paid > total + 0.005) {
@@ -1301,14 +1397,15 @@ export async function POST(req: NextRequest) {
       }
       const credit = Math.round((total - paid) * 100) / 100;
       const materialId = s.materialId ?? existing.material_id ?? null;
-      const paidBy = s.paidBy || existing.paid_by || cashRows[0]?.paid_by || "";
       const paymentDoneDate = s.paymentDate || cashRows[0]?.payment_date || s.purchaseDate;
       const funding = s.fundingSource || cashRows[0]?.funding_source || "COMPANY";
+      const landedTotal = Math.round((total + transportCharges + loadingCharges) * 100) / 100;
+      const effectiveRate = s.quantityKg > 0 ? Math.round((landedTotal / s.quantityKg) * 100) / 100 : 0;
 
-      sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, paid_amount=?, credit_amount=?, purchase_date=?, paid_by=?, notes=?, material_variant=?, updated_at=? WHERE id=? AND mode=?`)
-        .run(materialId, stockName, s.supplierId, s.purchaseType, s.quantityKg, s.ratePerKg, total, paid, credit, s.purchaseDate, paidBy, s.notes, variant, nowIso(), s.purchaseId, s.mode);
+      sqlite.prepare(`UPDATE purchases SET material_id=?, material_name=?, supplier_id=?, purchase_type=?, quantity_kg=?, rate_per_kg=?, total_amount=?, paid_amount=?, credit_amount=?, purchase_date=?, paid_by=?, notes=?, material_variant=?, transport_charges=?, labour_charges=?, updated_at=? WHERE id=? AND mode=?`)
+        .run(materialId, stockName, s.supplierId, s.purchaseType, s.quantityKg, s.ratePerKg, total, paid, credit, s.purchaseDate, paidBy, s.notes, variant, transportCharges, loadingCharges, nowIso(), s.purchaseId, s.mode);
       sqlite.prepare("UPDATE inventory_transactions SET material_id=?, material_name=?, quantity_kg=?, amount=?, transaction_date=?, notes=? WHERE purchase_id=? AND transaction_type='PURCHASE'")
-        .run(materialId, stockName, s.quantityKg, total, s.purchaseDate, s.notes, s.purchaseId);
+        .run(materialId, stockName, s.quantityKg, landedTotal, s.purchaseDate, s.notes, s.purchaseId);
       if (s.supplierId !== existing.existing_supplier_id) {
         sqlite.prepare("UPDATE vendor_payments SET supplier_id=? WHERE purchase_id=?").run(s.supplierId, s.purchaseId);
       }
@@ -1332,13 +1429,23 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      syncPurchaseSideCosts({
+        mode: s.mode,
+        purchaseId: s.purchaseId,
+        transportCharges,
+        loadingCharges,
+        expenseDate: s.purchaseDate,
+        paidBy,
+        fundingSource: funding,
+      });
+
       assertNoNegativeStock(s.mode, [existing.existing_material_name, stockName]);
       pendingEmail = {
         purchaseId: s.purchaseId,
         kind: "purchase_update",
         sendEmail: body.sendEmail !== false,
       };
-      return json({ ok: true, total, paid, credit, materialName: stockName });
+      return json({ ok: true, total, paid, credit, transportCharges, loadingCharges, landedTotal, effectiveRate, materialName: stockName });
     }
 
     // Fix payment date / done-by on already-paid purchases without rewriting the whole purchase.
@@ -1457,6 +1564,7 @@ export async function POST(req: NextRequest) {
 
       sqlite.prepare("DELETE FROM vendor_payments WHERE purchase_id=?").run(s.purchaseId);
       sqlite.prepare("DELETE FROM inventory_transactions WHERE purchase_id=?").run(s.purchaseId);
+      sqlite.prepare("DELETE FROM other_expenses WHERE purchase_id=? AND expense_type IN ('Transport','Loading')").run(s.purchaseId);
       sqlite.prepare("UPDATE other_expenses SET purchase_id=NULL WHERE purchase_id=?").run(s.purchaseId);
       sqlite.prepare("DELETE FROM purchases WHERE id=? AND mode=?").run(s.purchaseId, s.mode);
       assertNoNegativeStock(s.mode, [existing.material_name]);

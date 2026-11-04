@@ -16,6 +16,10 @@ export type PurchaseSlipData = {
   quantityKg: number;
   ratePerKg: number;
   totalAmount: number;
+  transportCharges?: number;
+  loadingCharges?: number;
+  landedTotal?: number;
+  effectiveRate?: number;
   paidAmount: number;
   creditAmount: number;
   paidBy: string;
@@ -99,15 +103,31 @@ export async function buildPurchaseSlipPdf(data: PurchaseSlipData): Promise<Buff
 
   draw("This purchase", { size: 12, font: bold, color: green });
   y -= 18;
+  const transport = Number(data.transportCharges || 0);
+  const loading = Number(data.loadingCharges || 0);
+  const landed =
+    data.landedTotal != null
+      ? Number(data.landedTotal)
+      : Number(data.totalAmount) + transport + loading;
+  const effective =
+    data.effectiveRate != null
+      ? Number(data.effectiveRate)
+      : data.quantityKg > 0
+        ? landed / Number(data.quantityKg)
+        : Number(data.ratePerKg);
   const moneyRows: Array<[string, string]> = [
-    ["Gross / vendor total", money(data.totalAmount)],
-    ["Paid on this purchase", money(data.paidAmount)],
-    ["Remaining on this purchase", money(data.creditAmount)],
+    ["Vendor material total", money(data.totalAmount)],
+    ["Transport (driver)", money(transport)],
+    ["Loading (outside labour)", money(loading)],
+    ["Landed total", money(landed)],
+    ["Final rate / kg", money(effective)],
+    ["Paid to vendor (material)", money(data.paidAmount)],
+    ["Remaining to vendor", money(data.creditAmount)],
     ["Payment done by", data.paidBy || "—"],
   ];
   for (const [label, value] of moneyRows) {
     draw(label, { size: 9, color: muted, font: bold });
-    draw(value, { x: 220, size: 11, font: bold });
+    draw(value, { x: 240, size: 11, font: bold });
     y -= 16;
   }
 

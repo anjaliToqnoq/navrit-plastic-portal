@@ -54,11 +54,18 @@ export function emailConfigDiagnostics() {
   };
 }
 
+const FREE_MAIL_FROM_BLOCK =
+  /@(gmail|googlemail|yahoo|outlook|hotmail|live|icloud|me)\./i;
+
 function resendFromAddress() {
+  const fallback = "NAVRIT Portal <onboarding@resend.dev>";
   const raw = cleanEnv(process.env.RESEND_FROM);
   // Railway often truncates unquoted values at `<`, leaving "NAVRIT Portal" with no email.
-  if (raw && raw.includes("@")) return raw;
-  return "NAVRIT Portal <onboarding@resend.dev>";
+  if (!raw || !raw.includes("@")) return fallback;
+  // Resend cannot send FROM gmail.com / other free inboxes unless you own that domain.
+  // NOTIFY_EMAIL (to) can still be Gmail — only the From: address must be resend.dev or your domain.
+  if (FREE_MAIL_FROM_BLOCK.test(raw)) return fallback;
+  return raw;
 }
 
 async function sendViaResend(opts: {
@@ -109,7 +116,14 @@ async function sendViaResend(opts: {
     };
     if (!res.ok) {
       const detail = json.error?.message || json.message || json.name || json.error?.name || `Resend failed (${res.status})`;
-      if (/only send testing emails to your own/i.test(detail) || /validation/i.test(detail)) {
+      if (/domain is not verified|gmail\.com domain/i.test(detail)) {
+        return {
+          ok: false,
+          error:
+            "Resend From address cannot be Gmail. On Railway delete RESEND_FROM (or set RESEND_FROM=\"NAVRIT Portal <onboarding@resend.dev>\"), keep NOTIFY_EMAIL as your Gmail, redeploy, then Send test email",
+        };
+      }
+      if (/only send testing emails to your own/i.test(detail)) {
         return {
           ok: false,
           error: `${detail} — NOTIFY_EMAIL must be the same Gmail you used to sign up on Resend (while on free test domain)`,

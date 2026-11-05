@@ -10,6 +10,8 @@ import { BACKUP_DIR, DATA_DIR, DB_FILE, createBackup, formatBytes } from "@/lib/
 export const MIGRATION_ENV_KEYS = [
   "ADMIN_USERNAME",
   "ADMIN_PASSWORD",
+  "READONLY_USERNAME",
+  "READONLY_PASSWORD",
   "AUTH_SECRET",
   "NAVRIT_DATA_DIR",
   "NAVRIT_DB_PATH",
@@ -46,6 +48,7 @@ export const MIGRATION_ENV_KEYS = [
 
 const SECRET_ENV_KEYS = new Set([
   "ADMIN_PASSWORD",
+  "READONLY_PASSWORD",
   "AUTH_SECRET",
   "NAVI_API_KEY",
   "OPENAI_API_KEY",

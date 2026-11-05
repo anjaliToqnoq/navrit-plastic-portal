@@ -202,24 +202,53 @@ function getAvailableStock(mode: string, materialName: string, date: string, exc
   return Number(row?.kg || 0);
 }
 
+function stockRowsForMaterial(mode: string, materialName: string) {
+  return isNaturalStockName(materialName)
+    ? (sqlite.prepare(`
+        SELECT quantity_kg, transaction_date FROM inventory_transactions
+        WHERE mode=? AND (material_name='Natural Bottles' OR material_name LIKE 'Natural Bottles - %')
+        ORDER BY transaction_date ASC, id ASC
+      `).all(mode) as Array<{ quantity_kg: number; transaction_date: string }>)
+    : (sqlite.prepare(
+        "SELECT quantity_kg, transaction_date FROM inventory_transactions WHERE mode=? AND material_name=? ORDER BY transaction_date ASC, id ASC"
+      ).all(mode, materialName) as Array<{ quantity_kg: number; transaction_date: string }>);
+}
+
 function assertNoNegativeStock(mode: string, materialNames: string[]) {
   const normalized = [...new Set(materialNames.map((name) => (isNaturalStockName(name) ? "Natural Bottles" : name)))];
   for (const materialName of normalized) {
-    const rows = isNaturalStockName(materialName)
-      ? sqlite.prepare(`
-          SELECT quantity_kg FROM inventory_transactions
-          WHERE mode=? AND (material_name='Natural Bottles' OR material_name LIKE 'Natural Bottles - %')
-          ORDER BY transaction_date ASC, id ASC
-        `).all(mode) as Array<{ quantity_kg: number }>
-      : sqlite.prepare(
-          "SELECT quantity_kg FROM inventory_transactions WHERE mode=? AND material_name=? ORDER BY transaction_date ASC, id ASC"
-        ).all(mode, materialName) as Array<{ quantity_kg: number }>;
+    const rows = stockRowsForMaterial(mode, materialName);
     let balance = 0;
     for (const row of rows) {
       balance += Number(row.quantity_kg || 0);
       if (balance < -0.005) {
         throw new Error("Stock cannot go negative for " + materialName + ". Resulting balance: " + balance.toFixed(3) + " kg");
       }
+    }
+  }
+}
+
+/** For purchase edits / material corrections: only require final ledger balance >= 0.
+ * Chronological dips (e.g. Red sold before a mis-tagged Natural purchase is moved to Red)
+ * should not block fixing the purchase type — user can also backdate the purchase if needed.
+ */
+function assertEndingStockNonNegative(mode: string, materialNames: string[]) {
+  const normalized = [...new Set(materialNames.map((name) => (isNaturalStockName(name) ? "Natural Bottles" : name)))];
+  for (const materialName of normalized) {
+    const rows = stockRowsForMaterial(mode, materialName);
+    let balance = 0;
+    let worst = 0;
+    for (const row of rows) {
+      balance += Number(row.quantity_kg || 0);
+      if (balance < worst) worst = balance;
+    }
+    if (balance < -0.005) {
+      throw new Error(
+        `Stock cannot go negative for ${materialName}. Ending balance: ${balance.toFixed(3)} kg` +
+          (worst < -0.005
+            ? ` (lowest mid-history ${worst.toFixed(3)} kg — set purchase date earlier than Red sales, or add Red stock first)`
+            : "")
+      );
     }
   }
 }
@@ -1439,7 +1468,10 @@ export async function POST(req: NextRequest) {
         fundingSource: funding,
       });
 
-      assertNoNegativeStock(s.mode, [existing.existing_material_name, stockName]);
+      // Purchase edits (esp. Natural → Red corrections) use ending-balance check so
+      // earlier Red sales don't block fixing a mis-tagged purchase date/type.
+      // Throw (don't return) so withTransaction rolls back the edit.
+      assertEndingStockNonNegative(s.mode, [existing.existing_material_name, stockName]);
       pendingEmail = {
         purchaseId: s.purchaseId,
         kind: "purchase_update",
@@ -2334,6 +2366,8 @@ export async function POST(req: NextRequest) {
     return response;
   } catch (e) {
     if (e instanceof z.ZodError) return NextResponse.json({ error: friendlyZodError(e) }, { status: 400 });
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Something went wrong — please try again" }, { status: 500 });
+    const msg = e instanceof Error ? e.message : "Something went wrong — please try again";
+    const stockIssue = /stock cannot go negative/i.test(msg);
+    return NextResponse.json({ error: msg }, { status: stockIssue ? 400 : 500 });
   }
 }

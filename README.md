@@ -105,10 +105,22 @@ Your live data lives in **`data/plastic-rates.db`**. Backups go to **`data/backu
 | `npm run db:restore -- <file.db>` | Restore (creates safety backup first) |
 | `npm run deploy:safe` | Backup → install → build (then restart) |
 
-**Admin UI:** `/admin/backup` — create, download, restore.
+**Admin UI:** `/admin/backup`
+
+- **Export migration pack** — zip with full SQLite DB + `railway-variables.env` (secrets) + row-count manifest. Save on your laptop before changing Railway accounts.
+- **Import** — upload that zip (or a raw `.db`) on the new deploy, type `RESTORE`, then redeploy/restart.
+- DB snapshots — create / download / restore individual SQLite files.
+
+### Move to a new Railway account
+
+1. On the old site → **Backup → Export migration pack** → download zip locally.
+2. New Railway project from the same GitHub repo; attach volume at `/app/data`.
+3. Open `railway-variables.env` from the zip and paste into Railway → Variables (exact copy).
+4. Deploy once, login, **Backup → Import** the zip (`RESTORE`), then redeploy/restart.
+5. Never commit the zip or env file to git.
 
 **Upgrade checklist**
-1. `npm run db:backup` (or use Admin → Backup)
+1. `npm run db:backup` (or use Admin → Backup / Export migration pack)
 2. Download a copy to your laptop
 3. `git pull` (or upload new code)
 4. `npm run deploy:safe`
